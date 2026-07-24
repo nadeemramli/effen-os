@@ -11,6 +11,7 @@ import {
   Megaphone,
   Package,
   Palette,
+  PlugZap,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -243,6 +244,15 @@ export const ROUTES: RouteDef[] = [
     group: "Platform",
     status: "live",
     permission: "dq.view",
+  },
+  {
+    key: "setup",
+    label: "Setup (Live)",
+    path: "/setup/connections",
+    icon: PlugZap,
+    group: "Platform",
+    status: "live",
+    permission: "settings.manage",
   },
   {
     key: "audit",

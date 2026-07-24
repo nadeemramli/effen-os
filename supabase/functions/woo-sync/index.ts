@@ -14,7 +14,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const PAGE_SIZE = 100;
-const MAX_PAGES_PER_RUN = 10; // bounds run time; checkpoint carries the rest
+const DEFAULT_MAX_PAGES = 10; // bounds run time; checkpoint carries the rest
+const HARD_MAX_PAGES = 30; // manual backfill runs may raise up to this
 
 interface WooOrder {
   id: number;
@@ -36,18 +37,43 @@ interface WooOrder {
   line_items?: { sku?: string; name?: string; quantity?: number; total?: string }[];
 }
 
-Deno.serve(async (_req: Request) => {
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+function json(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+  });
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: CORS_HEADERS });
+  }
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  const { data: connections, error: connError } = await supabase
-    .from("integration_connections")
-    .select("*")
-    .eq("provider", "WooCommerce");
+  // Optional body: { connection_id?: number, max_pages?: number } — used by
+  // the setup UI's "Sync now" for targeted runs and faster backfills.
+  let body: { connection_id?: number; max_pages?: number } = {};
+  try {
+    body = await req.json();
+  } catch {
+    // empty body is fine
+  }
+  const maxPages = Math.min(Math.max(body.max_pages ?? DEFAULT_MAX_PAGES, 1), HARD_MAX_PAGES);
+
+  let query = supabase.from("integration_connections").select("*").eq("provider", "WooCommerce");
+  if (body.connection_id) query = query.eq("id", body.connection_id);
+  const { data: connections, error: connError } = await query;
   if (connError) {
-    return Response.json({ error: connError.message }, { status: 500 });
+    return json({ error: connError.message }, 500);
   }
 
   const { data: brands } = await supabase.from("brands").select("id, slug");
@@ -57,8 +83,20 @@ Deno.serve(async (_req: Request) => {
 
   for (const conn of connections ?? []) {
     const baseUrl: string | null = conn.config?.base_url ?? null;
-    const key = Deno.env.get(`${conn.secret_ref}_KEY`);
-    const secret = Deno.env.get(`${conn.secret_ref}_SECRET`);
+    // Secrets: Vault (written by the setup UI via set_woo_connection) first,
+    // Edge Function env secrets as a fallback for manually-managed keys.
+    let key: string | undefined;
+    let secret: string | undefined;
+    const { data: vaultSecrets } = await supabase.rpc("get_woo_secrets", {
+      p_connection_id: conn.id,
+    });
+    if (vaultSecrets?.[0]?.consumer_key && vaultSecrets?.[0]?.consumer_secret) {
+      key = vaultSecrets[0].consumer_key;
+      secret = vaultSecrets[0].consumer_secret;
+    } else {
+      key = Deno.env.get(`${conn.secret_ref}_KEY`);
+      secret = Deno.env.get(`${conn.secret_ref}_SECRET`);
+    }
 
     if (!baseUrl || !key || !secret) {
       results.push({ connection: conn.name, skipped: !baseUrl ? "no base_url" : "secrets missing" });
@@ -88,7 +126,7 @@ Deno.serve(async (_req: Request) => {
       let written = 0;
       let maxModified = checkpoint;
 
-      while (page <= MAX_PAGES_PER_RUN) {
+      while (page <= maxPages) {
         const url = new URL(`${baseUrl.replace(/\/$/, "")}/wp-json/wc/v3/orders`);
         url.searchParams.set("modified_after", checkpoint);
         url.searchParams.set("orderby", "modified");
@@ -198,5 +236,5 @@ Deno.serve(async (_req: Request) => {
     }
   }
 
-  return Response.json({ results });
+  return json({ results });
 });
