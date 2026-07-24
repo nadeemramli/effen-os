@@ -5,7 +5,7 @@
 -- function's writes run under its own service-role env, never this key.
 
 create extension if not exists pg_cron;
-create extension if not exists pg_net;
+create extension if not exists pg_net schema extensions;
 
 select cron.schedule(
   'woo-sync-every-15m',
