@@ -505,6 +505,80 @@ export interface NotificationTemplateInfo {
   note: string | null;
 }
 
+/* ---------- creative (S2) ---------- */
+
+export interface CreativeBrief {
+  id: string; // CRE-0001
+  title: string;
+  brandId: string;
+  stage: "idea" | "brief" | "production" | "review" | "live";
+  format: string; // e.g. "UGC video", "Static carousel"
+  angle: string;
+  campaignId: string | null;
+  adId: string | null;
+  ownerId: string;
+  dueAt: string;
+  fatigueReplacement: boolean;
+  claimsCheck: "not_required" | "pending" | "passed";
+  note: string | null;
+}
+
+/* ---------- production (P5) ---------- */
+
+export interface BomLine {
+  material: string;
+  uom: string;
+  perUnit: number;
+  onHand: number;
+}
+
+export interface WorkOrder {
+  id: string; // WO-0008
+  brandId: string;
+  sku: string;
+  productName: string;
+  quantity: number;
+  stage: "planned" | "materials" | "production" | "qc" | "fg_received";
+  batchNo: string;
+  expiryDate: string;
+  yieldPct: number | null;
+  qcState: "pending" | "passed" | "hold";
+  qcReason: string | null;
+  blockedBy: string | null;
+  dueAt: string;
+  bom: BomLine[];
+}
+
+/* ---------- finance / commission (P6) ---------- */
+
+export type CommissionTier = "junior" | "senior";
+
+export interface ChannelPull {
+  channel: "Fighter" | "Shopee" | "Lazada" | "TikTok";
+  state: "processed" | "processing_required" | "pending" | "blocked";
+  note: string | null;
+}
+
+/** One person's monthly statement, mirroring the operational P&L structure:
+ *  Sales (package) + COD + Sabah/Sarawak postage − product/delivery/return/
+ *  COD/marketing costs = profit → tiered commission. Money in minor units. */
+export interface CommissionStatement {
+  id: string; // COM-2607-HAI
+  period: string;
+  personName: string; // synthetic
+  tier: CommissionTier;
+  salesPackage: number;
+  cod: number;
+  ssPostage: number;
+  productCost: number;
+  deliveryCost: number;
+  returnCost: number;
+  codCost: number;
+  marketingCost: number;
+  status: "processing" | "pending_approval" | "approved" | "released";
+  channels: ChannelPull[];
+}
+
 /* ---------- reports ---------- */
 
 export interface ReportDefinition {

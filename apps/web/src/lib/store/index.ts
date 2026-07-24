@@ -65,6 +65,10 @@ export interface AppState extends SeedSnapshot {
     to: "picking" | "packed" | "handed_over",
     actorName: string,
   ) => void;
+  advanceCreative: (briefId: string, actorName: string) => void;
+  advanceWorkOrder: (workOrderId: string, actorName: string) => void;
+  setWorkOrderQc: (workOrderId: string, state: "passed" | "hold", reason: string | null, actorName: string) => void;
+  decideCommission: (statementId: string, to: "approved" | "released", actorName: string) => void;
   adjustStock: (sku: string, delta: number, reason: string, actorName: string) => void;
   toggleAutomationRule: (ruleId: string, actorName: string) => void;
   acknowledgeDqIssue: (id: string, actorName: string) => void;
@@ -324,6 +328,52 @@ export function createAppStore() {
             ...withAudit(s, actorName, "recommendation.assigned", `recommendation:${recId}`, `Owner → ${owner?.name ?? ownerId}`),
           };
         }),
+
+      advanceCreative: (briefId, actorName) =>
+        set((s) => {
+          const order = ["idea", "brief", "production", "review", "live"] as const;
+          const brief = s.creativeBriefs.find((b) => b.id === briefId);
+          if (!brief || brief.stage === "live") return s;
+          const next = order[order.indexOf(brief.stage) + 1]!;
+          return {
+            creativeBriefs: s.creativeBriefs.map((b) =>
+              b.id === briefId ? { ...b, stage: next } : b,
+            ),
+            ...withAudit(s, actorName, `creative.${next}`, `creative:${briefId}`, `${brief.title} → ${next}`),
+          };
+        }),
+
+      advanceWorkOrder: (workOrderId, actorName) =>
+        set((s) => {
+          const order = ["planned", "materials", "production", "qc", "fg_received"] as const;
+          const wo = s.workOrders.find((w) => w.id === workOrderId);
+          if (!wo || wo.stage === "fg_received") return s;
+          const next = order[order.indexOf(wo.stage) + 1]!;
+          return {
+            workOrders: s.workOrders.map((w) =>
+              w.id === workOrderId
+                ? { ...w, stage: next, blockedBy: null, yieldPct: next === "fg_received" ? w.yieldPct ?? 97.5 : w.yieldPct }
+                : w,
+            ),
+            ...withAudit(s, actorName, `work_order.${next}`, `wo:${workOrderId}`, `${wo.id} (${wo.sku}) → ${next}`),
+          };
+        }),
+
+      setWorkOrderQc: (workOrderId, state, reason, actorName) =>
+        set((s) => ({
+          workOrders: s.workOrders.map((w) =>
+            w.id === workOrderId ? { ...w, qcState: state, qcReason: reason } : w,
+          ),
+          ...withAudit(s, actorName, `work_order.qc_${state}`, `wo:${workOrderId}`, reason ?? `QC ${state}`),
+        })),
+
+      decideCommission: (statementId, to, actorName) =>
+        set((s) => ({
+          commissionStatements: s.commissionStatements.map((c) =>
+            c.id === statementId ? { ...c, status: to } : c,
+          ),
+          ...withAudit(s, actorName, `commission.${to}`, `commission:${statementId}`, `Statement ${to}`),
+        })),
 
       advanceFulfillment: (orderId, to, actorName) =>
         set((s) => {

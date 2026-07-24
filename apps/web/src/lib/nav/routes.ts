@@ -114,23 +114,8 @@ export const ROUTES: RouteDef[] = [
     path: "/creative",
     icon: Palette,
     group: "Growth",
-    status: "next-module",
+    status: "live",
     permission: "marketing.view",
-    nextModule: {
-      summary:
-        "The Creative Loop (S2): a creative calendar and supply pipeline that connects demand planning to production capacity, asset lineage, and per-creative performance.",
-      workflow: [
-        "Creative demand plan derives required asset volume from the media plan",
-        "Briefs move through production stages with owner and due date",
-        "Launched assets bind to campaigns/ads for lineage",
-        "Performance loops back: fatigue flags and winning-angle synthesis feed the next brief",
-      ],
-      unlocks: [
-        "Meta / TikTok creative-level insights (already read-connected)",
-        "Asset storage (GCS) and review flow",
-        "Iteratus idea radar import",
-      ],
-    },
   },
   {
     key: "catalog",
@@ -156,23 +141,8 @@ export const ROUTES: RouteDef[] = [
     path: "/production",
     icon: Factory,
     group: "Merchandise",
-    status: "next-module",
+    status: "live",
     permission: "catalog.view",
-    nextModule: {
-      summary:
-        "Demand-to-production planning (P5/MRP): BOMs, raw-material balance, work orders, batches, and yield — for brands that manufacture rather than trade.",
-      workflow: [
-        "Demand forecast converts to a master production schedule",
-        "MRP explodes BOMs into raw-material requirements vs on-hand",
-        "Work orders track batches, yield, and QC holds",
-        "Finished goods receipt lands stock into sellable inventory",
-      ],
-      unlocks: [
-        "BOM and inventory_items schema (raw material / packaging / WIP / finished good)",
-        "Supplier lead-time records",
-        "Batch/lot control with shelf life",
-      ],
-    },
   },
   {
     key: "finance",
@@ -180,23 +150,8 @@ export const ROUTES: RouteDef[] = [
     path: "/finance",
     icon: BadgeDollarSign,
     group: "Control",
-    status: "next-module",
+    status: "live",
     permission: "finance.fees.view",
-    nextModule: {
-      summary:
-        "Commerce reconciliation and contribution control (P6): settlements vs orders, gateway fee audit, commission runs, and the SQL Accounting export bridge. Not a ledger — SQL Accounting stays authoritative.",
-      workflow: [
-        "Daily: settlement files match against payment records; exceptions queue to Finance",
-        "Weekly: commission runs prepared, approved, exported",
-        "Monthly: cost versions update COGS; contribution restates with an audit trail",
-        "Every export to SQL Accounting is batch-controlled and reversible",
-      ],
-      unlocks: [
-        "Chip / Stripe settlement file ingestion (partially connected)",
-        "HitPay + Billplz connections",
-        "SQL Accounting journal export mapping",
-      ],
-    },
   },
   {
     key: "reports",
