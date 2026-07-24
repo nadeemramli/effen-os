@@ -29,13 +29,26 @@
 - Sender policy per brand stays (1 WA API per brand ↔ the brands table's
   sender-policy field).
 
-## Open point to resolve (flagged, not decided)
+## Resolved 2026-07-24: official Cloud API, no unofficial gateway
 
-Unofficial WhatsApp Web gateways (OpenWA/WAHA-style) carry **number-ban risk**
-and are outside WhatsApp's terms; the official Cloud API (per-brand numbers via
-a BSP) is the compliant route but constrains template/session messaging. The
-"1 WhatsApp API per brand" wording should be pinned to one of these before any
-gateway is connected — especially for Lipidri (health vertical, extra scrutiny).
+The numbers are registered through Meta Business Manager's WhatsApp setup —
+i.e. the **official Cloud API** (Meta-hosted). The earlier OpenWA-style
+gateway idea is dropped; no unofficial WhatsApp Web automation and no
+number-ban exposure.
+
+Consolidation architecture (Slice 2 candidate, time-sensitive):
+
+- One Meta App subscribed to all brand WABAs → single webhook endpoint
+  (Supabase Edge Function, signature-verified) → `wa_conversations` /
+  `wa_messages` tables keyed by brand and number.
+- Inbound arrives via the `messages` webhook field; delivery/read via
+  `statuses`; outbound content sent by the MBM flows/agent via echo fields —
+  transcripts in Fullkit show both sides.
+- **No history backfill exists in the Cloud API** — capture starts only when
+  webhooks connect, so connecting early preserves history.
+- Agent/flow monitoring: WABA analytics endpoints (conversation counts,
+  template performance) + webhook-derived response/handoff metrics give a
+  per-brand agent scoreboard inside Fullkit without rebuilding Meta tooling.
 
 ## Note
 
