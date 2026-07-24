@@ -23,6 +23,11 @@ export interface SessionState {
   mode: OperatingMode;
   brandId: string | "all";
   dateRange: DateRangeKey;
+  /** Signed-in Supabase user email (null in open demo mode). */
+  authEmail: string | null;
+  /** True when the role comes from a real membership and must not be switched
+   *  (non-admins); hq_admin keeps the switcher as an impersonation tool. */
+  roleLocked: boolean;
 }
 
 export interface AppState extends SeedSnapshot {
@@ -31,6 +36,7 @@ export interface AppState extends SeedSnapshot {
   seq: number;
 
   setRole: (role: RoleKey) => void;
+  setAuthSession: (auth: { email: string | null; role?: RoleKey; roleLocked?: boolean }) => void;
   setMode: (mode: OperatingMode) => void;
   setBrand: (brandId: string | "all") => void;
   setDateRange: (r: DateRangeKey) => void;
@@ -146,10 +152,26 @@ export function createAppStore() {
 
     return {
       ...seed,
-      session: { role: "hq_admin", mode: "demo", brandId: "all", dateRange: "7d" },
+      session: {
+        role: "hq_admin",
+        mode: "demo",
+        brandId: "all",
+        dateRange: "7d",
+        authEmail: null,
+        roleLocked: false,
+      },
       seq: 1,
 
       setRole: (role) => set((s) => ({ session: { ...s.session, role } })),
+      setAuthSession: ({ email, role, roleLocked }) =>
+        set((s) => ({
+          session: {
+            ...s.session,
+            authEmail: email,
+            role: role ?? s.session.role,
+            roleLocked: roleLocked ?? s.session.roleLocked,
+          },
+        })),
       setMode: (mode) => set((s) => ({ session: { ...s.session, mode } })),
       setBrand: (brandId) => set((s) => ({ session: { ...s.session, brandId } })),
       setDateRange: (dateRange) => set((s) => ({ session: { ...s.session, dateRange } })),

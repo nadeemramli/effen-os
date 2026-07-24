@@ -10,6 +10,7 @@
     "check:seed": "pnpm dlx tsx src/lib/seed/__check__.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.8",
     "@tanstack/react-table": "^8.21.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

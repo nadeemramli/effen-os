@@ -8,6 +8,7 @@ import {
   Building2,
   CalendarRange,
   ChevronDown,
+  LogOut,
   Moon,
   Plus,
   RotateCcw,
@@ -260,28 +261,47 @@ export function TopBar() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-64">
-            <DropdownMenuLabel className="flex items-center justify-between">
-              Demo role switcher
-              <Badge variant="outline" className="text-[10px] font-normal text-ai border-ai/30">
-                prototype only
-              </Badge>
-            </DropdownMenuLabel>
-            <p className="px-2 pb-1.5 text-xs text-muted-foreground">
-              Switch roles to see least-privilege navigation, fields, and actions.
-            </p>
-            <DropdownMenuRadioGroup
-              value={session.role}
-              onValueChange={(v) => {
-                setRole(v as RoleKey);
-                toast.info(`Viewing as ${ROLE_LABELS[v as RoleKey]}`);
-              }}
-            >
-              {(Object.keys(ROLE_LABELS) as RoleKey[]).map((r) => (
-                <DropdownMenuRadioItem key={r} value={r}>
-                  {ROLE_LABELS[r]}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
+            {session.authEmail && (
+              <>
+                <DropdownMenuLabel>
+                  Signed in
+                  <span className="block truncate text-xs font-normal text-muted-foreground">
+                    {session.authEmail} · {ROLE_LABELS[session.role]}
+                  </span>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+              </>
+            )}
+            {!session.roleLocked ? (
+              <>
+                <DropdownMenuLabel className="flex items-center justify-between">
+                  {session.authEmail ? "Impersonate role" : "Demo role switcher"}
+                  <Badge variant="outline" className="text-[10px] font-normal text-ai border-ai/30">
+                    {session.authEmail ? "HQ admin tool" : "prototype only"}
+                  </Badge>
+                </DropdownMenuLabel>
+                <p className="px-2 pb-1.5 text-xs text-muted-foreground">
+                  Switch roles to see least-privilege navigation, fields, and actions.
+                </p>
+                <DropdownMenuRadioGroup
+                  value={session.role}
+                  onValueChange={(v) => {
+                    setRole(v as RoleKey);
+                    toast.info(`Viewing as ${ROLE_LABELS[v as RoleKey]}`);
+                  }}
+                >
+                  {(Object.keys(ROLE_LABELS) as RoleKey[]).map((r) => (
+                    <DropdownMenuRadioItem key={r} value={r}>
+                      {ROLE_LABELS[r]}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </>
+            ) : (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                Your role is set by your workspace membership.
+              </p>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => setTheme(theme === "dark" ? "light" : "dark")}>
               {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
@@ -296,6 +316,18 @@ export function TopBar() {
               <RotateCcw className="size-4" />
               Reset demo data
             </DropdownMenuItem>
+            {session.authEmail && (
+              <DropdownMenuItem
+                onSelect={() => {
+                  void import("@/lib/supabase/client").then(({ getSupabase }) =>
+                    getSupabase().auth.signOut(),
+                  );
+                }}
+              >
+                <LogOut className="size-4" />
+                Sign out
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

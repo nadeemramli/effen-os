@@ -5,6 +5,7 @@ import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { Suspense } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AuthGate } from "@/components/auth/auth-gate";
 import { StoreProvider } from "@/lib/store/provider";
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -13,7 +14,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <StoreProvider>
         <NuqsAdapter>
           <TooltipProvider delayDuration={200}>
-            <Suspense>{children}</Suspense>
+            <AuthGate>
+              <Suspense>{children}</Suspense>
+            </AuthGate>
           </TooltipProvider>
         </NuqsAdapter>
         <Toaster position="bottom-right" />
