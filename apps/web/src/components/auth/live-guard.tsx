@@ -14,13 +14,12 @@ type LiveState = "checking" | "unconfigured" | "signed_out" | "ready";
  * power here by design.
  */
 export function LiveGuard({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<LiveState>("checking");
+  const [state, setState] = useState<LiveState>(() =>
+    isSupabaseConfigured() ? "checking" : "unconfigured",
+  );
 
   useEffect(() => {
-    if (!isSupabaseConfigured()) {
-      setState("unconfigured");
-      return;
-    }
+    if (!isSupabaseConfigured()) return;
     getSupabase()
       .auth.getSession()
       .then(({ data }) => setState(data.session ? "ready" : "signed_out"));

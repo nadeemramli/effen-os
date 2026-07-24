@@ -64,6 +64,7 @@ function dailyVolume(storeId: string, d: number): number {
   let v = base[storeId] ?? 0;
   if (storeId === "ST-lip-shopee" && d <= 1) v = 0; // token expired — orders missing
   if (storeId.startsWith("ST-ver") && d <= 11) v *= 0.7; // toner stockout drag
+  if (d === 0) v *= 0.4; // partial day: the demo clock is 09:00
   const trend = 0.96 + (0.08 * (34 - d)) / 34;
   const noise = 0.75 + rng() * 0.5;
   return Math.round(v * trend * noise);
@@ -325,8 +326,8 @@ for (let d = 34; d >= 0; d--) {
       const items = buildItems(store.id, d);
       if (items.length === 0) continue;
       const money = moneyFor(items, store.market);
-      const hour = intBetween(rng, 9, 22);
-      if (d === 0 && hour > 8) continue; // demo clock is 09:00 — today only has early orders
+      // Today's orders land before the 09:00 demo clock; other days spread 9am–10pm.
+      const hour = d === 0 ? intBetween(rng, 0, 8) : intBetween(rng, 9, 22);
       const placedAt = daysAgo(d, hour);
       if (new Date(placedAt).getTime() > DEMO_NOW.getTime()) continue;
       const customerId = pickCustomer(store.brandId, store.market);

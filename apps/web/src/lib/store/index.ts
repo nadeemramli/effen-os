@@ -60,6 +60,13 @@ export interface AppState extends SeedSnapshot {
   ) => void;
   assignRecommendation: (recId: string, ownerId: string, actorName: string) => void;
 
+  advanceFulfillment: (
+    orderId: string,
+    to: "picking" | "packed" | "handed_over",
+    actorName: string,
+  ) => void;
+  adjustStock: (sku: string, delta: number, reason: string, actorName: string) => void;
+  toggleAutomationRule: (ruleId: string, actorName: string) => void;
   acknowledgeDqIssue: (id: string, actorName: string) => void;
   retrySync: (integrationId: string, actorName: string) => void;
   connectAdAccount: (input: {
@@ -315,6 +322,77 @@ export function createAppStore() {
           return {
             recommendations: s.recommendations.map((r) => (r.id === recId ? { ...r, ownerId } : r)),
             ...withAudit(s, actorName, "recommendation.assigned", `recommendation:${recId}`, `Owner → ${owner?.name ?? ownerId}`),
+          };
+        }),
+
+      advanceFulfillment: (orderId, to, actorName) =>
+        set((s) => {
+          const order = s.orders.find((o) => o.id === orderId);
+          if (!order) return s;
+          const patch: Partial<Order> = { fulfillmentStatus: to };
+          const events: OrderStateEvent[] = [];
+          if (to === "picking") {
+            events.push(orderEvent(s, orderId, actorName, "fulfillment", "picking", "Pick started at KL fulfilment centre."));
+          }
+          if (to === "packed") {
+            patch.courier = order.courier ?? (order.market === "SG" ? "ninja_van" : "ninja_van");
+            patch.trackingNumber =
+              order.trackingNumber ?? `NVMY777${String(10000 + s.seq).slice(-5)}`;
+            patch.shipmentStatus = order.shipmentStatus === "not_shipped" ? "label_created" : order.shipmentStatus;
+            events.push(
+              orderEvent(s, orderId, actorName, "fulfillment", "packed", "Packed and weight-checked."),
+              orderEvent(s, orderId, actorName, "shipment", "label_created", `AWB ${patch.trackingNumber} created at pack station.`),
+            );
+          }
+          if (to === "handed_over") {
+            patch.nextAction = null;
+            events.push(
+              orderEvent(s, orderId, actorName, "fulfillment", "handed_over", `Handed to ${order.courier === "jnt" ? "J&T" : "Ninja Van"} on today's manifest. Awaiting first courier scan.`),
+            );
+          }
+          return {
+            orders: patchOrder(s.orders, orderId, patch),
+            orderEvents: [...s.orderEvents, ...events],
+            ...withAudit(s, actorName, `fulfilment.${to}`, `order:${orderId}`, events[0]?.message ?? to),
+          };
+        }),
+
+      adjustStock: (sku, delta, reason, actorName) =>
+        set((s) => {
+          let applied = false;
+          const products = s.products.map((p) => {
+            if (!p.variants.some((v) => v.sku === sku)) return p;
+            applied = true;
+            return {
+              ...p,
+              variants: p.variants.map((v) =>
+                v.sku === sku ? { ...v, onHand: Math.max(0, v.onHand + delta) } : v,
+              ),
+            };
+          });
+          if (!applied) return s;
+          return {
+            products,
+            ...withAudit(
+              s,
+              actorName,
+              "inventory.adjusted",
+              `sku:${sku}`,
+              `${delta > 0 ? "+" : ""}${delta} units · ${reason}`,
+            ),
+          };
+        }),
+
+      toggleAutomationRule: (ruleId, actorName) =>
+        set((s) => {
+          const rule = s.automationRules.find((r) => r.id === ruleId);
+          if (!rule) return s;
+          const next = rule.status === "active" ? "paused" : "active";
+          return {
+            automationRules: s.automationRules.map((r) =>
+              r.id === ruleId ? { ...r, status: next as "active" | "paused" } : r,
+            ),
+            ...withAudit(s, actorName, `automation.${next}`, `rule:${ruleId}`, `${rule.name} ${next}`),
           };
         }),
 

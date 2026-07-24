@@ -82,6 +82,9 @@ function BrandsInner() {
   }, []);
 
   useEffect(() => {
+    // Fetch-on-mount: every setState in reload() happens after an await,
+    // so nothing is set synchronously within the effect body.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload();
   }, [reload]);
 

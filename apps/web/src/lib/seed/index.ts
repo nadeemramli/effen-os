@@ -16,6 +16,7 @@ import {
   REPORTS,
   WORK_ITEMS,
 } from "./data/governance";
+import { AUTOMATION_RULES, NOTIFICATION_TEMPLATES } from "./data/automation";
 
 export const COGS_BY_VARIANT: Record<string, number> = Object.fromEntries(
   PRODUCTS.flatMap((p) => p.variants.map((v) => [v.id, v.cogs])),
@@ -78,6 +79,8 @@ export interface SeedSnapshot {
   decisions: typeof DECISIONS;
   dailyRows: DailyCommercialRow[];
   dailyPlan: DailyPlanPoint[];
+  automationRules: typeof AUTOMATION_RULES;
+  notificationTemplates: typeof NOTIFICATION_TEMPLATES;
   metricDefinitions: typeof METRIC_DEFINITIONS;
   dqIssues: typeof DQ_ISSUES;
   workItems: typeof WORK_ITEMS;
@@ -107,6 +110,8 @@ export function composeSeedSnapshot(): SeedSnapshot {
     decisions: DECISIONS,
     dailyRows: DAILY_ROWS,
     dailyPlan: DAILY_PLAN,
+    automationRules: AUTOMATION_RULES,
+    notificationTemplates: NOTIFICATION_TEMPLATES,
     metricDefinitions: METRIC_DEFINITIONS,
     dqIssues: DQ_ISSUES,
     workItems: WORK_ITEMS,

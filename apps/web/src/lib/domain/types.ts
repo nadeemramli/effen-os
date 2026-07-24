@@ -480,6 +480,31 @@ export interface AppNotification {
   read: boolean;
 }
 
+/* ---------- automation ---------- */
+
+export interface AutomationRule {
+  id: string; // e.g. R-12
+  name: string;
+  trigger: string;
+  description: string;
+  category: "order_review" | "payment" | "address" | "bundle" | "sla" | "lifecycle";
+  priority: number;
+  status: "active" | "paused";
+  ownerId: string;
+  brandScope: string[]; // empty = all brands
+}
+
+export interface NotificationTemplateInfo {
+  id: string; // e.g. T-02
+  name: string;
+  channel: "whatsapp" | "email";
+  purpose: "transactional" | "marketing";
+  status: "approved" | "pending_review" | "rejected";
+  codVariant: boolean;
+  brandIds: string[]; // empty = all brands
+  note: string | null;
+}
+
 /* ---------- reports ---------- */
 
 export interface ReportDefinition {

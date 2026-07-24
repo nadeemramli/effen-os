@@ -18,6 +18,7 @@ import {
   Tags,
   Truck,
   Users,
+  Zap,
 } from "lucide-react";
 import type { RoleKey } from "@/lib/domain/enums";
 import type { PermissionKey } from "@/lib/rbac/matrix";
@@ -77,23 +78,17 @@ export const ROUTES: RouteDef[] = [
     path: "/fulfilment",
     icon: Truck,
     group: "Commerce",
-    status: "next-module",
+    status: "live",
     permission: "orders.view",
-    nextModule: {
-      summary:
-        "A picking, packing, and handover workspace for the KL fulfilment centre — wave planning, packing verification, courier manifest, and exception handling in one queue.",
-      workflow: [
-        "Morning wave: system proposes pick batches from approved orders and stock locations",
-        "Pack station: scan-verify items per order, weight check, print AWB",
-        "Handover: courier manifest, POD capture, discrepancy log",
-        "Exceptions: address issues, failed pickups, and damaged stock route back to owners",
-      ],
-      unlocks: [
-        "Ninja Van / J&T label + manifest APIs (write scopes)",
-        "Barcode scanning hardware profile",
-        "Inventory locations & reservations (S3 spine)",
-      ],
-    },
+  },
+  {
+    key: "automations",
+    label: "Automations",
+    path: "/automations",
+    icon: Zap,
+    group: "Commerce",
+    status: "live",
+    permission: "orders.view",
   },
   {
     key: "marketing",
@@ -152,23 +147,8 @@ export const ROUTES: RouteDef[] = [
     path: "/inventory",
     icon: Boxes,
     group: "Merchandise",
-    status: "next-module",
+    status: "live",
     permission: "catalog.view",
-    nextModule: {
-      summary:
-        "Stock truth across locations (S3): on-hand, reserved, and available-to-promise per SKU, movement ledger, stocktakes, and replenishment signals.",
-      workflow: [
-        "Receive stock against POs; put-away to locations",
-        "Reservations commit on order approval; release on cancellation",
-        "Cycle counts post variances with reason codes",
-        "Cover-days and reorder-point alerts feed Prophit restock recommendations",
-      ],
-      unlocks: [
-        "Warehouse location schema + movement events",
-        "Supplier / PO records (P5)",
-        "Marketplace stock write-back (deferred, needs write scopes)",
-      ],
-    },
   },
   {
     key: "production",
