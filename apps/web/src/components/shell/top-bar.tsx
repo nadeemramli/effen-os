@@ -8,6 +8,7 @@ import {
   Building2,
   CalendarRange,
   ChevronDown,
+  KeyRound,
   LogOut,
   Moon,
   Plus,
@@ -50,12 +51,14 @@ import { formatRelative } from "@/lib/utils/dates";
 import { cn } from "@/lib/utils";
 import { ModePill } from "./mode-pill";
 import { GlobalSearch } from "./global-search";
+import { ChangePasswordDialog } from "@/components/auth/change-password-dialog";
 import { visibleRoutes } from "@/lib/nav/routes";
 
 export function TopBar() {
   const router = useRouter();
   const { theme, setTheme } = useTheme();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);
 
   const session = useAppStore((s) => s.session);
   const brands = useAppStore((s) => s.brands);
@@ -317,20 +320,27 @@ export function TopBar() {
               Reset demo data
             </DropdownMenuItem>
             {session.authEmail && (
-              <DropdownMenuItem
-                onSelect={() => {
-                  void import("@/lib/supabase/client").then(({ getSupabase }) =>
-                    getSupabase().auth.signOut(),
-                  );
-                }}
-              >
-                <LogOut className="size-4" />
-                Sign out
-              </DropdownMenuItem>
+              <>
+                <DropdownMenuItem onSelect={() => setPwOpen(true)}>
+                  <KeyRound className="size-4" />
+                  Change password
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    void import("@/lib/supabase/client").then(({ getSupabase }) =>
+                      getSupabase().auth.signOut(),
+                    );
+                  }}
+                >
+                  <LogOut className="size-4" />
+                  Sign out
+                </DropdownMenuItem>
+              </>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <ChangePasswordDialog open={pwOpen} onOpenChange={setPwOpen} />
     </header>
   );
 }

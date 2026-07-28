@@ -18,6 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LiveGuard } from "@/components/auth/live-guard";
+import { WhatsAppSection } from "@/components/setup/whatsapp-section";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import {
   fetchOrdersReadCount,
@@ -123,6 +124,9 @@ function ConnectionsInner() {
           <Link href="/setup/brands" className="text-sm text-info underline-offset-2 hover:underline">
             Brands & catalog
           </Link>
+          <Link href="/setup/orders" className="text-sm text-info underline-offset-2 hover:underline">
+            Mirrored orders
+          </Link>
           <Button size="sm" variant="outline" className="gap-1.5" disabled={syncing !== null} onClick={() => handleSync()}>
             {syncing === "all" ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <RefreshCcw className="size-3.5" aria-hidden />}
             Sync all now
@@ -213,6 +217,8 @@ function ConnectionsInner() {
           })}
         </div>
       )}
+
+      <WhatsAppSection />
 
       <Dialog open={editing !== null} onOpenChange={(o) => !o && setEditing(null)}>
         <DialogContent className="max-w-md">

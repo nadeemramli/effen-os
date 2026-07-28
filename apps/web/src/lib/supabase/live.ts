@@ -120,6 +120,100 @@ export async function triggerSync(connectionId?: number, maxPages = 30): Promise
   return data;
 }
 
+/* ---------- WhatsApp Cloud API ---------- */
+
+export interface LiveWaConnection {
+  id: number;
+  workspace_id: number;
+  status: string;
+  last_success_at: string | null;
+  notes: string | null;
+}
+
+export interface LiveWaNumber {
+  id: number;
+  phone_number_id: string;
+  display_number: string | null;
+  brand_id: number | null;
+  first_seen_at: string;
+}
+
+export async function fetchWaConnection(): Promise<LiveWaConnection | null> {
+  const { data, error } = await getSupabase()
+    .from("integration_connections")
+    .select("id, workspace_id, status, last_success_at, notes")
+    .eq("provider", "WhatsApp")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data as LiveWaConnection | null;
+}
+
+export async function fetchWaNumbers(): Promise<LiveWaNumber[]> {
+  const { data, error } = await getSupabase()
+    .from("wa_numbers")
+    .select("id, phone_number_id, display_number, brand_id, first_seen_at")
+    .order("first_seen_at");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LiveWaNumber[];
+}
+
+export async function fetchWaCounts(): Promise<{ conversations: number; messages: number }> {
+  const supabase = getSupabase();
+  const [c, m] = await Promise.all([
+    supabase.from("wa_conversations").select("id", { count: "exact", head: true }),
+    supabase.from("wa_messages").select("id", { count: "exact", head: true }),
+  ]);
+  return { conversations: c.count ?? 0, messages: m.count ?? 0 };
+}
+
+/** Stores secrets in Vault; returns the verify token for the Meta dashboard. */
+export async function saveWaConnection(appSecret: string, accessToken: string): Promise<string> {
+  const { data, error } = await getSupabase().rpc("set_wa_connection", {
+    p_app_secret: appSecret,
+    p_access_token: accessToken,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+export async function mapWaNumber(numberId: number, brandId: number): Promise<void> {
+  const { error } = await getSupabase().rpc("map_wa_number", {
+    p_number_id: numberId,
+    p_brand_id: brandId,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/* ---------- mirrored orders (read-side) ---------- */
+
+export interface LiveOrderRow {
+  id: number;
+  integration_id: number;
+  brand_id: number | null;
+  source_order_id: string;
+  order_number: string | null;
+  source_status: string;
+  currency_code: string;
+  total: number;
+  customer: { name?: string; email?: string | null; phone?: string | null; city?: string | null };
+  items: { sku: string | null; name: string | null; quantity: number; total: string }[];
+  raw: unknown;
+  placed_at: string | null;
+  synced_at: string;
+}
+
+export async function fetchLiveOrders(brandId: number | null, limit = 100): Promise<LiveOrderRow[]> {
+  let query = getSupabase()
+    .from("orders_read")
+    .select("id, integration_id, brand_id, source_order_id, order_number, source_status, currency_code, total, customer, items, raw, placed_at, synced_at")
+    .order("placed_at", { ascending: false })
+    .limit(limit);
+  if (brandId !== null) query = query.eq("brand_id", brandId);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LiveOrderRow[];
+}
+
 /* ---------- brands & catalog ---------- */
 
 export async function fetchLiveBrands(): Promise<LiveBrand[]> {
