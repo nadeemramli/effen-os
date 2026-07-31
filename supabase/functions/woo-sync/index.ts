@@ -129,6 +129,10 @@ Deno.serve(async (req: Request) => {
       while (page <= maxPages) {
         const url = new URL(`${baseUrl.replace(/\/$/, "")}/wp-json/wc/v3/orders`);
         url.searchParams.set("modified_after", checkpoint);
+        // Checkpoints are GMT (date_modified_gmt). Without this flag Woo
+        // compares modified_after against SITE-LOCAL times (UTC+8 here), so a
+        // store with >3000 orders modified inside the 8h skew loops forever.
+        url.searchParams.set("dates_are_gmt", "true");
         url.searchParams.set("orderby", "modified");
         url.searchParams.set("order", "asc");
         url.searchParams.set("per_page", String(PAGE_SIZE));
