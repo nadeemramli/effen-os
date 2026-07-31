@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
@@ -68,6 +69,7 @@ export function TopBar() {
   const notifications = useAppStore((s) => s.notifications);
   const setBrand = useAppStore((s) => s.setBrand);
   const setLiveBrand = useAppStore((s) => s.setLiveBrand);
+  const setLiveMarkets = useAppStore((s) => s.setLiveMarkets);
   const setDateRange = useAppStore((s) => s.setDateRange);
   const setRole = useAppStore((s) => s.setRole);
   const markRead = useAppStore((s) => s.markNotificationsRead);
@@ -79,6 +81,7 @@ export function TopBar() {
   const isLive = session.authEmail !== null;
   const [liveBrands, setLiveBrands] = useState<LiveBrand[]>([]);
   const [liveStale, setLiveStale] = useState<number | null>(null);
+  const [liveMarketOptions, setLiveMarketOptions] = useState<string[]>([]);
   useEffect(() => {
     if (!isLive) return;
     void (async () => {
@@ -86,6 +89,9 @@ export function TopBar() {
       setLiveBrands(b.filter((x) => x.status === "active"));
       // A configured connection is stale when its last success is older than
       // 3× its freshness SLA (matching freshnessOf's "stale" band).
+      setLiveMarketOptions(
+        [...new Set(c.map((x) => x.config?.country_code).filter((m): m is string => !!m))].sort(),
+      );
       const configured = c.filter((x) => x.status !== "pending_setup");
       setLiveStale(
         configured.filter(
@@ -127,6 +133,48 @@ export function TopBar() {
               ))}
             </SelectContent>
           </Select>
+        ) : null}
+        {isLive ? (
+          /* market checklist — view all countries or any combination */
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label="Market scope"
+            >
+              {session.liveMarkets.length === 0 || session.liveMarkets.length === liveMarketOptions.length
+                ? "All markets"
+                : session.liveMarkets.join(" + ")}
+              <ChevronDown className="size-3 opacity-60" aria-hidden />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-48">
+              <DropdownMenuLabel>Markets</DropdownMenuLabel>
+              {liveMarketOptions.map((m) => {
+                const checked = session.liveMarkets.length === 0 || session.liveMarkets.includes(m);
+                return (
+                  <DropdownMenuCheckboxItem
+                    key={m}
+                    checked={checked}
+                    onSelect={(e) => e.preventDefault()}
+                    onCheckedChange={(next) => {
+                      const current =
+                        session.liveMarkets.length === 0 ? [...liveMarketOptions] : [...session.liveMarkets];
+                      const updated = next ? [...new Set([...current, m])] : current.filter((x) => x !== m);
+                      // Everything checked (or nothing left) collapses back to "all".
+                      setLiveMarkets(
+                        updated.length === 0 || updated.length === liveMarketOptions.length ? [] : updated,
+                      );
+                    }}
+                  >
+                    {m === "MY" ? "Malaysia (MY)" : m === "SG" ? "Singapore (SG)" : m}
+                  </DropdownMenuCheckboxItem>
+                );
+              })}
+              <DropdownMenuSeparator />
+              <p className="px-2 pb-1.5 text-xs text-muted-foreground">
+                Store market for orders and spend; billing country for customers.
+              </p>
+            </DropdownMenuContent>
+          </DropdownMenu>
         ) : (
           <Select value={session.brandId} onValueChange={setBrand}>
             <SelectTrigger className="h-8 w-36 text-sm xl:w-44" aria-label="Brand scope">

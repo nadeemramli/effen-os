@@ -32,6 +32,8 @@ export interface SessionState {
    *  session exists; null = all brands. Live surfaces read this; the demo
    *  brandId above keeps serving the synthetic screens. */
   liveBrandId: number | null;
+  /** Live market scope (country codes, e.g. ["MY"]); empty = all markets. */
+  liveMarkets: string[];
 }
 
 export interface AppState extends SeedSnapshot {
@@ -44,6 +46,7 @@ export interface AppState extends SeedSnapshot {
   setMode: (mode: OperatingMode) => void;
   setBrand: (brandId: string | "all") => void;
   setLiveBrand: (brandId: number | null) => void;
+  setLiveMarkets: (markets: string[]) => void;
   setDateRange: (r: DateRangeKey) => void;
   markNotificationsRead: () => void;
   pushNotification: (n: Omit<AppNotification, "id" | "at" | "read">) => void;
@@ -176,6 +179,7 @@ export function createAppStore() {
         authEmail: null,
         roleLocked: false,
         liveBrandId: null,
+        liveMarkets: [],
       },
       seq: 1,
 
@@ -192,6 +196,7 @@ export function createAppStore() {
       setMode: (mode) => set((s) => ({ session: { ...s.session, mode } })),
       setBrand: (brandId) => set((s) => ({ session: { ...s.session, brandId } })),
       setLiveBrand: (liveBrandId) => set((s) => ({ session: { ...s.session, liveBrandId } })),
+      setLiveMarkets: (liveMarkets) => set((s) => ({ session: { ...s.session, liveMarkets } })),
       setDateRange: (dateRange) => set((s) => ({ session: { ...s.session, dateRange } })),
 
       markNotificationsRead: () =>

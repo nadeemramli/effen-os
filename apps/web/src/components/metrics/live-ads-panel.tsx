@@ -18,6 +18,7 @@ interface AccountRow {
   business_name: string | null;
   account_status: string | null;
   brand_id: number | null;
+  market: string | null;
   is_active: boolean;
 }
 
@@ -31,6 +32,7 @@ interface FactRow {
 export function LiveAdsPanel() {
   const [data, setData] = useState<{ accounts: AccountRow[]; facts: FactRow[]; brands: LiveBrand[] } | null>(null);
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
+  const liveMarkets = useAppStore((s) => s.session.liveMarkets);
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
@@ -38,7 +40,7 @@ export function LiveAdsPanel() {
       const { data: session } = await getSupabase().auth.getSession();
       if (!session.session) return;
       const [a, f, b] = await Promise.all([
-        getSupabase().from("ad_accounts_read").select("id, name, business_name, account_status, brand_id, is_active"),
+        getSupabase().from("ad_accounts_read").select("id, name, business_name, account_status, brand_id, market, is_active"),
         getSupabase().from("ad_daily_facts").select("account_ref, date, spend, purchases"),
         fetchLiveBrands(),
       ]);
@@ -50,9 +52,12 @@ export function LiveAdsPanel() {
 
   if (!data) return null;
 
-  // Top-bar live brand scope: keep only that brand's accounts (and their facts).
-  const scopedAccounts =
-    liveBrandId === null ? data.accounts : data.accounts.filter((a) => a.brand_id === liveBrandId);
+  // Top-bar live brand + market scope: keep only matching accounts (and their facts).
+  const scopedAccounts = data.accounts.filter(
+    (a) =>
+      (liveBrandId === null || a.brand_id === liveBrandId) &&
+      (liveMarkets.length === 0 || liveMarkets.includes(a.market ?? "")),
+  );
   const scopedIds = new Set(scopedAccounts.map((a) => a.id));
   const scopedFacts = data.facts.filter((f) => scopedIds.has(f.account_ref));
 

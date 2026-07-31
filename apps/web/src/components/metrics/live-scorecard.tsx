@@ -50,6 +50,7 @@ function ccyLine(byCcy: Record<string, number>): string {
 export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
   const [state, setState] = useState<State>({ kind: "checking" });
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
+  const liveMarkets = useAppStore((s) => s.session.liveMarkets);
 
   useEffect(() => {
     if (!isSupabaseConfigured()) {
@@ -83,8 +84,12 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
     );
   }
 
-  // Top-bar live brand scope applies to every window.
-  const rows = liveBrandId === null ? state.rows : state.rows.filter((r) => r.brand_id === liveBrandId);
+  // Top-bar live brand + market scope apply to every window.
+  const rows = state.rows.filter(
+    (r) =>
+      (liveBrandId === null || r.brand_id === liveBrandId) &&
+      (liveMarkets.length === 0 || liveMarkets.includes(r.market)),
+  );
   const today = sumBy(rows, "today");
   const yesterday = sumBy(rows, "yesterday");
   const d7 = sumBy(rows, "d7");

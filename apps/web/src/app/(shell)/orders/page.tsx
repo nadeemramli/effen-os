@@ -128,8 +128,9 @@ function storeLabel(conn: LiveWooConnection | undefined): string {
 function OrdersInner() {
   const [view, setView] = useQueryState("view", parseAsString.withDefault("all"));
   const [q, setQ] = useQueryState("q", parseAsString.withDefault(""));
-  // Brand scope comes from the top bar's live switcher, like every live surface.
+  // Brand + market scope come from the top bar's live controls, like every live surface.
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
+  const liveMarkets = useAppStore((s) => s.session.liveMarkets);
   const [store, setStore] = useQueryState("store", parseAsString.withDefault("any"));
   const [status, setStatus] = useQueryState("status", parseAsString.withDefault("any"));
   const [currency, setCurrency] = useQueryState("ccy", parseAsString.withDefault("any"));
@@ -171,6 +172,10 @@ function OrdersInner() {
         pageSize: PAGE_SIZE,
         brandId: liveBrandId,
         integrationId: store === "any" ? null : Number(store),
+        integrationIn:
+          liveMarkets.length > 0
+            ? connections.filter((c) => liveMarkets.includes(c.config?.country_code ?? "")).map((c) => c.id)
+            : null,
         status: status === "any" ? null : status,
         statusIn: status === "any" ? activeView.statusIn : null,
         currency: currency === "any" ? null : currency,
@@ -184,7 +189,7 @@ function OrdersInner() {
     } finally {
       setLoading(false);
     }
-  }, [page, liveBrandId, store, status, currency, ageHours, q, activeView]);
+  }, [page, liveBrandId, liveMarkets, connections, store, status, currency, ageHours, q, activeView]);
 
   useEffect(() => {
     // Server-side query re-runs on any filter/page change.
@@ -354,9 +359,11 @@ function OrdersInner() {
           <SelectTrigger className="h-8 w-44 text-xs" aria-label="Store"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="any">Any store</SelectItem>
-            {connections.map((c) => (
-              <SelectItem key={c.id} value={String(c.id)}>{storeLabel(c)}</SelectItem>
-            ))}
+            {connections
+              .filter((c) => liveMarkets.length === 0 || liveMarkets.includes(c.config?.country_code ?? ""))
+              .map((c) => (
+                <SelectItem key={c.id} value={String(c.id)}>{storeLabel(c)}</SelectItem>
+              ))}
           </SelectContent>
         </Select>
         <Select value={status} onValueChange={(v) => { void setStatus(v === "any" ? null : v); void setPage(null); }}>

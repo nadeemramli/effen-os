@@ -17,7 +17,7 @@ export interface LiveWooConnection {
   last_success_at: string | null;
   last_failure_at: string | null;
   error_count_24h: number;
-  config: { base_url?: string | null; brand_slug?: string | null };
+  config: { base_url?: string | null; brand_slug?: string | null; country_code?: string | null };
   notes: string | null;
 }
 
@@ -221,6 +221,8 @@ export interface LiveOrdersQuery {
   pageSize: number;
   brandId: number | null;
   integrationId: number | null;
+  /** Market scope: restrict to these connections (top-bar country checklist). */
+  integrationIn?: number[] | null;
   status: string | null;
   statusIn?: string[] | null; // saved-view status slices; ignored when `status` set
   currency: string | null;
@@ -242,6 +244,7 @@ export async function fetchLiveOrdersPage(q: LiveOrdersQuery): Promise<LiveOrder
     );
   if (q.brandId !== null) query = query.eq("brand_id", q.brandId);
   if (q.integrationId !== null) query = query.eq("integration_id", q.integrationId);
+  else if (q.integrationIn && q.integrationIn.length > 0) query = query.in("integration_id", q.integrationIn);
   if (q.status) query = query.eq("source_status", q.status);
   else if (q.statusIn && q.statusIn.length > 0) query = query.in("source_status", q.statusIn);
   if (q.currency) query = query.eq("currency_code", q.currency);
@@ -274,6 +277,7 @@ export async function fetchLiveOrdersPage(q: LiveOrdersQuery): Promise<LiveOrder
 export interface LiveScorecardRow {
   win: "today" | "yesterday" | "d7" | "d30";
   brand_id: number | null;
+  market: string;
   currency_code: string;
   orders: number;
   revenue: number;
@@ -310,6 +314,7 @@ export async function fetchLiveCustomers(q: {
   search: string;
   brandId: number | null;
   activity: string | null;
+  countries?: string[] | null;
 }): Promise<{ rows: LiveCustomerRow[]; total: number }> {
   const { data, error } = await getSupabase().rpc("live_customers", {
     p_page: q.page,
@@ -317,6 +322,7 @@ export async function fetchLiveCustomers(q: {
     p_search: q.search,
     p_brand_id: q.brandId,
     p_activity: q.activity,
+    p_countries: q.countries && q.countries.length > 0 ? q.countries : null,
   });
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as LiveCustomerRow[];

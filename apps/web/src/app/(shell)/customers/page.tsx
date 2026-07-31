@@ -69,8 +69,9 @@ function relative(iso: string | null): string {
 function CustomersInner() {
   const router = useRouter();
   const [q, setQ] = useQueryState("q", parseAsString.withDefault(""));
-  // Brand scope comes from the top bar's live switcher, like every live surface.
+  // Brand + market scope come from the top bar's live controls, like every live surface.
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
+  const liveMarkets = useAppStore((s) => s.session.liveMarkets);
   const [activity, setActivity] = useQueryState("activity", parseAsString.withDefault("any"));
   const [page, setPage] = useQueryState("page", parseAsInteger.withDefault(1));
 
@@ -100,6 +101,7 @@ function CustomersInner() {
         search: q,
         brandId: liveBrandId,
         activity: activity === "any" ? null : activity,
+        countries: liveMarkets,
       });
       setRows(result.rows);
       setTotal(result.total);
@@ -108,7 +110,7 @@ function CustomersInner() {
     } finally {
       setLoading(false);
     }
-  }, [page, q, liveBrandId, activity]);
+  }, [page, q, liveBrandId, liveMarkets, activity]);
 
   useEffect(() => {
     // Server-side query re-runs on any filter/page change.
