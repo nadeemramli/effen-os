@@ -286,6 +286,68 @@ export async function fetchLiveScorecard(): Promise<LiveScorecardRow[]> {
   return (data ?? []) as LiveScorecardRow[];
 }
 
+/* ---------- Customer 360 read-side ---------- */
+
+export interface LiveCustomerRow {
+  identity_key: string;
+  display_name: string | null;
+  phone: string | null;
+  email: string | null;
+  city: string | null;
+  country: string | null;
+  brand_ids: number[] | null;
+  total_orders: number;
+  recognized_orders: number;
+  first_order_at: string | null;
+  last_order_at: string | null;
+  revenue_by_currency: Record<string, number> | null;
+  total_count: number;
+}
+
+export async function fetchLiveCustomers(q: {
+  page: number;
+  pageSize: number;
+  search: string;
+  brandId: number | null;
+  activity: string | null;
+}): Promise<{ rows: LiveCustomerRow[]; total: number }> {
+  const { data, error } = await getSupabase().rpc("live_customers", {
+    p_page: q.page,
+    p_page_size: q.pageSize,
+    p_search: q.search,
+    p_brand_id: q.brandId,
+    p_activity: q.activity,
+  });
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as LiveCustomerRow[];
+  return { rows, total: rows[0]?.total_count ?? 0 };
+}
+
+export interface LiveCustomerDetail {
+  profile: Omit<LiveCustomerRow, "total_count"> & { workspace_id: number };
+  orders: {
+    id: number;
+    integration_id: number;
+    brand_id: number | null;
+    order_number: string | null;
+    source_order_id: string;
+    source_status: string;
+    currency_code: string;
+    total: number;
+    items: { sku: string | null; name: string | null; quantity: number; total: string }[];
+    placed_at: string | null;
+  }[];
+  wa_conversations: number;
+}
+
+export async function fetchLiveCustomerDetail(identityKey: string): Promise<LiveCustomerDetail | null> {
+  const { data, error } = await getSupabase().rpc("live_customer_detail", {
+    p_identity_key: identityKey,
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? null) as LiveCustomerDetail | null;
+}
+
 /* ---------- Ninja Van shipment read-side ---------- */
 
 export interface LiveNvShipment {
