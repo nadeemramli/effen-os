@@ -1,11 +1,10 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { parseAsString, useQueryState } from "nuqs";
-import { useMemo } from "react";
-import type { ColumnDef } from "@tanstack/react-table";
-import { Plus, X } from "lucide-react";
 import Link from "next/link";
+import { parseAsInteger, parseAsString, useQueryState } from "nuqs";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ColumnDef } from "@tanstack/react-table";
+import { ChevronLeft, ChevronRight, Loader2, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -15,169 +14,240 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { DataTable } from "@/components/tables/data-table";
-import { MoneyCell } from "@/components/tables/cells";
-import { StatusPill } from "@/components/status/status-pill";
+import { tonePill } from "@/components/status/status-pill";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
-import { RouteGuard } from "@/lib/rbac/guard";
-import type { Order } from "@/lib/domain/types";
-import { useActivePersona, useSession } from "@/hooks/use-session";
-import { useAppStore } from "@/lib/store/provider";
-import { hoursSince, formatRelative } from "@/lib/utils/dates";
+import { LiveGuard } from "@/components/auth/live-guard";
+import {
+  fetchLiveBrands,
+  fetchLiveOrdersPage,
+  fetchNvShipmentForOrder,
+  fetchWooConnections,
+  type LiveBrand,
+  type LiveNvEvent,
+  type LiveNvShipment,
+  type LiveOrderRow,
+  type LiveWooConnection,
+} from "@/lib/supabase/live";
+import type { StatusMeta } from "@/lib/domain/status-maps";
 import { cn } from "@/lib/utils";
 
-/* ---------- saved views ---------- */
+const PAGE_SIZE = 50;
 
-interface SavedView {
-  key: string;
-  label: string;
-  predicate: (o: Order, ctx: { personaId: string }) => boolean;
+/* ---------- state discipline over Woo's single source status ----------
+ * The six-state separation (order / payment / fulfilment / shipment /
+ * notification / return) survives, but honestly: each pill below is DERIVED
+ * from the store's source_status and labeled per dimension. Shipment state
+ * arrives separately from the Ninja Van read-side when a tracking id links.
+ */
+const WOO_STATE_PILLS: Record<string, { dim: string; meta: StatusMeta }[]> = {
+  pending: [
+    { dim: "order", meta: { label: "Awaiting payment", tone: "warning" } },
+    { dim: "payment", meta: { label: "Unpaid", tone: "neutral" } },
+  ],
+  "on-hold": [
+    { dim: "order", meta: { label: "On hold", tone: "warning" } },
+    { dim: "payment", meta: { label: "Verifying", tone: "warning" } },
+  ],
+  processing: [
+    { dim: "payment", meta: { label: "Paid", tone: "success" } },
+    { dim: "fulfilment", meta: { label: "To fulfil", tone: "info" } },
+  ],
+  completed: [
+    { dim: "order", meta: { label: "Completed", tone: "success" } },
+    { dim: "payment", meta: { label: "Paid", tone: "success" } },
+    { dim: "fulfilment", meta: { label: "Fulfilled", tone: "success" } },
+  ],
+  cancelled: [{ dim: "order", meta: { label: "Cancelled", tone: "neutral" } }],
+  refunded: [{ dim: "payment", meta: { label: "Refunded", tone: "neutral" } }],
+  failed: [{ dim: "payment", meta: { label: "Payment failed", tone: "destructive" } }],
+  "checkout-draft": [{ dim: "order", meta: { label: "Draft checkout", tone: "neutral" } }],
+};
+
+function statePills(sourceStatus: string) {
+  return (
+    WOO_STATE_PILLS[sourceStatus] ?? [
+      { dim: "order", meta: { label: sourceStatus, tone: "neutral" as const } },
+    ]
+  );
 }
 
-const SAVED_VIEWS: SavedView[] = [
-  { key: "my-work", label: "My work", predicate: (o, { personaId }) => o.ownerId === personaId && o.orderStatus !== "completed" && o.orderStatus !== "cancelled" },
-  { key: "unassigned", label: "Unassigned", predicate: (o) => !o.ownerId && (o.exceptionStatus !== "none" || o.orderStatus === "pending_review") },
-  { key: "new", label: "New", predicate: (o) => hoursSince(o.placedAt) <= 24 && !o.isDraft },
-  { key: "sla-risk", label: "SLA risk", predicate: (o) => o.slaRisk === "high" || o.slaRisk === "critical" || o.exceptionStatus === "shipment_exception" },
-  { key: "payment-exception", label: "Payment exception", predicate: (o) => o.exceptionStatus === "payment_exception" || o.paymentStatus === "failed" || o.paymentStatus === "pending_verification" },
-  { key: "fulfilment-exception", label: "Fulfilment exception", predicate: (o) => o.exceptionStatus === "fulfilment_exception" || o.exceptionStatus === "shipment_exception" || o.exceptionStatus === "address_issue" || o.fulfillmentStatus === "on_hold" },
-  { key: "failed-automation", label: "Failed automation", predicate: (o) => o.exceptionStatus === "automation_failed" || o.notificationStatus === "failed" },
-  { key: "in-transit", label: "In transit", predicate: (o) => o.shipmentStatus === "in_transit" || o.shipmentStatus === "out_for_delivery" },
-  { key: "returns", label: "Returns", predicate: (o) => o.returnStatus !== "none" },
-  { key: "exceptions", label: "All exceptions", predicate: (o) => o.exceptionStatus !== "none" },
-  { key: "all", label: "All", predicate: () => true },
+/* ---------- saved views = honest status slices over the live mirror ---------- */
+const SAVED_VIEWS: { key: string; label: string; statusIn: string[] | null; sinceHours: number | null }[] = [
+  { key: "all", label: "All", statusIn: null, sinceHours: null },
+  { key: "new", label: "New (24h)", statusIn: null, sinceHours: 24 },
+  { key: "needs-payment", label: "Needs payment", statusIn: ["pending", "on-hold", "failed"], sinceHours: null },
+  { key: "to-fulfil", label: "To fulfil", statusIn: ["processing"], sinceHours: null },
+  { key: "completed", label: "Completed", statusIn: ["completed"], sinceHours: null },
+  { key: "cancelled-refunded", label: "Cancelled / refunded", statusIn: ["cancelled", "refunded"], sinceHours: null },
 ];
 
 const AGE_OPTIONS = [
-  { key: "any", label: "Any age" },
-  { key: "24h", label: "< 24h" },
-  { key: "3d", label: "< 3 days" },
-  { key: "7d", label: "< 7 days" },
+  { key: "any", label: "Any age", hours: null },
+  { key: "24h", label: "< 24h", hours: 24 },
+  { key: "3d", label: "< 3 days", hours: 72 },
+  { key: "7d", label: "< 7 days", hours: 168 },
+  { key: "30d", label: "< 30 days", hours: 720 },
 ] as const;
 
-function OrdersInner() {
-  const router = useRouter();
-  const session = useSession();
-  const persona = useActivePersona();
-  const orders = useAppStore((s) => s.orders);
-  const customers = useAppStore((s) => s.customers);
-  const brands = useAppStore((s) => s.brands);
-  const stores = useAppStore((s) => s.stores);
-  const personas = useAppStore((s) => s.personas);
+const SOURCE_STATUSES = ["pending", "on-hold", "processing", "completed", "cancelled", "refunded", "failed"];
 
+function fmtRelativeNow(iso: string | null): string {
+  if (!iso) return "—";
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const min = Math.round(Math.abs(diffMs) / 60_000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hours = Math.round(min / 60);
+  if (hours < 48) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kuala_Lumpur" });
+}
+
+function fmtDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("en-MY", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kuala_Lumpur" });
+}
+
+/** Store label from the connection name: "WooCommerce — Synovil MY (synovil.com)" → "synovil.com". */
+function storeLabel(conn: LiveWooConnection | undefined): string {
+  if (!conn) return "—";
+  const m = conn.name.match(/\(([^)]+)\)/);
+  return m?.[1] ?? conn.name;
+}
+
+function OrdersInner() {
   const [view, setView] = useQueryState("view", parseAsString.withDefault("all"));
   const [q, setQ] = useQueryState("q", parseAsString.withDefault(""));
-  const [storeId, setStoreId] = useQueryState("store", parseAsString.withDefault("any"));
-  const [source, setSource] = useQueryState("source", parseAsString.withDefault("any"));
-  const [payState, setPayState] = useQueryState("pay", parseAsString.withDefault("any"));
-  const [shipState, setShipState] = useQueryState("ship", parseAsString.withDefault("any"));
-  const [gateway, setGateway] = useQueryState("gateway", parseAsString.withDefault("any"));
-  const [courier, setCourier] = useQueryState("courier", parseAsString.withDefault("any"));
-  const [owner, setOwner] = useQueryState("owner", parseAsString.withDefault("any"));
-  const [age, setAge] = useQueryState("age", parseAsString.withDefault("any"));
+  const [brand, setBrand] = useQueryState("brand", parseAsString.withDefault("any"));
+  const [store, setStore] = useQueryState("store", parseAsString.withDefault("any"));
+  const [status, setStatus] = useQueryState("status", parseAsString.withDefault("any"));
   const [currency, setCurrency] = useQueryState("ccy", parseAsString.withDefault("any"));
+  const [age, setAge] = useQueryState("age", parseAsString.withDefault("any"));
+  const [page, setPage] = useQueryState("page", parseAsInteger.withDefault(1));
 
-  const customerById = useMemo(() => new Map(customers.map((c) => [c.id, c])), [customers]);
-  const storeById = useMemo(() => new Map(stores.map((s) => [s.id, s])), [stores]);
+  const [brands, setBrands] = useState<LiveBrand[]>([]);
+  const [connections, setConnections] = useState<LiveWooConnection[]>([]);
+  const [rows, setRows] = useState<LiveOrderRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [detail, setDetail] = useState<LiveOrderRow | null>(null);
+  const [nv, setNv] = useState<{ shipment: LiveNvShipment; events: LiveNvEvent[] } | null | "loading">(null);
+  const [searchDraft, setSearchDraft] = useState(q);
+
+  const activeView = SAVED_VIEWS.find((v) => v.key === view) ?? SAVED_VIEWS[0]!;
   const brandById = useMemo(() => new Map(brands.map((b) => [b.id, b])), [brands]);
-  const personaById = useMemo(() => new Map(personas.map((p) => [p.id, p])), [personas]);
+  const connById = useMemo(() => new Map(connections.map((c) => [c.id, c])), [connections]);
 
-  const activeView = SAVED_VIEWS.find((v) => v.key === view) ?? SAVED_VIEWS[SAVED_VIEWS.length - 1]!;
+  useEffect(() => {
+    // Reference data once on mount; every setState happens after an await.
+    void (async () => {
+      const [b, c] = await Promise.all([fetchLiveBrands(), fetchWooConnections()]);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setBrands(b.filter((x) => x.status === "active"));
+      setConnections(c);
+    })();
+  }, []);
 
-  const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return orders.filter((o) => {
-      if (session.brandId !== "all" && o.brandId !== session.brandId) return false;
-      if (!activeView.predicate(o, { personaId: persona.id })) return false;
-      if (storeId !== "any" && o.storeId !== storeId) return false;
-      if (source !== "any" && o.sourceType !== source) return false;
-      if (payState !== "any" && o.paymentStatus !== payState) return false;
-      if (shipState !== "any" && o.shipmentStatus !== shipState) return false;
-      if (gateway !== "any" && o.paymentMethod !== gateway) return false;
-      if (courier !== "any" && o.courier !== courier) return false;
-      if (owner !== "any" && o.ownerId !== (owner === "none" ? null : owner)) return false;
-      if (currency !== "any" && o.currency !== currency) return false;
-      if (age !== "any") {
-        const h = hoursSince(o.placedAt);
-        if (age === "24h" && h > 24) return false;
-        if (age === "3d" && h > 72) return false;
-        if (age === "7d" && h > 168) return false;
-      }
-      if (needle) {
-        const c = customerById.get(o.customerId);
-        const hay = [
-          o.id,
-          o.sourceOrderId ?? "",
-          c?.displayName ?? "",
-          ...(c?.identities.map((i) => i.value) ?? []),
-          ...o.items.map((i) => i.sku),
-        ]
-          .join(" ")
-          .toLowerCase();
-        if (!hay.includes(needle)) return false;
-      }
-      return true;
-    });
-  }, [orders, session.brandId, activeView, persona.id, storeId, source, payState, shipState, gateway, courier, owner, currency, age, q, customerById]);
+  const ageHours = AGE_OPTIONS.find((a) => a.key === age)?.hours ?? null;
 
-  const filtersActive =
-    q !== "" || storeId !== "any" || source !== "any" || payState !== "any" || shipState !== "any" ||
-    gateway !== "any" || courier !== "any" || owner !== "any" || age !== "any" || currency !== "any";
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await fetchLiveOrdersPage({
+        page,
+        pageSize: PAGE_SIZE,
+        brandId: brand === "any" ? null : Number(brand),
+        integrationId: store === "any" ? null : Number(store),
+        status: status === "any" ? null : status,
+        statusIn: status === "any" ? activeView.statusIn : null,
+        currency: currency === "any" ? null : currency,
+        sinceHours: ageHours ?? activeView.sinceHours,
+        search: q,
+      });
+      setRows(result.rows);
+      setTotal(result.total);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, brand, store, status, currency, ageHours, q, activeView]);
 
-  const columns = useMemo<ColumnDef<Order, unknown>[]>(
+  useEffect(() => {
+    // Server-side query re-runs on any filter/page change.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void reload();
+  }, [reload]);
+
+  const openDetail = useCallback((o: LiveOrderRow) => {
+    setDetail(o);
+    setNv("loading");
+    const ref = o.order_number ?? o.source_order_id;
+    fetchNvShipmentForOrder(ref)
+      .then((res) => setNv(res))
+      .catch(() => setNv(null));
+  }, []);
+
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const filtersActive = q !== "" || brand !== "any" || store !== "any" || status !== "any" || currency !== "any" || age !== "any";
+
+  const columns = useMemo<ColumnDef<LiveOrderRow, unknown>[]>(
     () => [
       {
-        id: "id",
+        id: "order",
         header: "Order",
-        accessorKey: "id",
+        enableSorting: false,
         cell: ({ row }) => (
           <div>
-            <span className="font-medium">{row.original.id}</span>
-            {row.original.isDraft && (
-              <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">draft</span>
-            )}
-            <div className="text-[11px] text-muted-foreground">{row.original.sourceOrderId ?? row.original.sourceType}</div>
+            <span className="font-medium">#{row.original.order_number ?? row.original.source_order_id}</span>
+            <div className="text-[11px] text-muted-foreground">{storeLabel(connById.get(row.original.integration_id))}</div>
           </div>
         ),
       },
       {
         id: "customer",
         header: "Customer",
-        accessorFn: (o) => customerById.get(o.customerId)?.displayName ?? o.customerId,
+        enableSorting: false,
         cell: ({ row }) => {
-          const c = customerById.get(row.original.customerId);
+          const c = row.original.customer;
           return (
             <div>
-              <div>{c?.displayName ?? row.original.customerId}</div>
-              {row.original.isNewCustomer && <div className="text-[11px] text-info">new customer</div>}
+              <div>{c?.name || "—"}</div>
+              <div className="text-[11px] text-muted-foreground">{[c?.city, c?.country].filter(Boolean).join(", ")}</div>
             </div>
           );
         },
       },
       {
-        id: "store",
-        header: "Brand / store",
-        accessorFn: (o) => storeById.get(o.storeId)?.name ?? o.storeId,
-        cell: ({ row }) => {
-          const st = storeById.get(row.original.storeId);
-          const b = brandById.get(row.original.brandId);
-          return (
-            <div>
-              <div>{b?.name.replace(" (Demo)", "") ?? row.original.brandId}</div>
-              <div className="text-[11px] text-muted-foreground">{st?.name ?? row.original.storeId}</div>
-            </div>
-          );
-        },
+        id: "brand",
+        header: "Brand",
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span>{row.original.brand_id ? brandById.get(row.original.brand_id)?.name ?? "—" : "unmapped"}</span>
+        ),
       },
       {
         id: "items",
         header: "Items",
         enableSorting: false,
         cell: ({ row }) => {
-          const items = row.original.items;
+          const items = row.original.items ?? [];
           return (
-            <div className="max-w-44">
-              <div className="tnum truncate">{items[0]?.sku}{items[0] && ` ×${items[0].quantity}`}</div>
+            <div className="max-w-48">
+              <div className="tnum truncate">
+                {items[0] ? `${items[0].sku ?? items[0].name ?? "item"} ×${items[0].quantity}` : "—"}
+              </div>
               {items.length > 1 && (
                 <div className="text-[11px] text-muted-foreground">+{items.length - 1} more line{items.length > 2 ? "s" : ""}</div>
               )}
@@ -189,65 +259,45 @@ function OrdersInner() {
         id: "states",
         header: "States",
         enableSorting: false,
-        cell: ({ row }) => {
-          const o = row.original;
-          return (
-            <div className="flex max-w-80 flex-wrap gap-1">
-              <StatusPill dimension="order" value={o.orderStatus} />
-              <StatusPill dimension="payment" value={o.paymentStatus} />
-              <StatusPill dimension="fulfillment" value={o.fulfillmentStatus} />
-              <StatusPill dimension="shipment" value={o.shipmentStatus} />
-              {o.notificationStatus === "failed" && <StatusPill dimension="notification" value={o.notificationStatus} />}
-              {o.returnStatus !== "none" && <StatusPill dimension="return" value={o.returnStatus} />}
-            </div>
-          );
-        },
+        cell: ({ row }) => (
+          <div className="flex max-w-80 flex-wrap gap-1">
+            {statePills(row.original.source_status).map((p, i) => (
+              <span key={i}>{tonePill(p.meta)}</span>
+            ))}
+          </div>
+        ),
       },
       {
         id: "amount",
         header: "Amount",
-        accessorKey: "grandTotal",
-        cell: ({ row }) => <MoneyCell minor={row.original.grandTotal} currency={row.original.currency} />,
-      },
-      {
-        id: "owner",
-        header: "Owner",
-        accessorFn: (o) => (o.ownerId ? personaById.get(o.ownerId)?.name ?? o.ownerId : ""),
-        cell: ({ row }) =>
-          row.original.ownerId ? (
-            <span>{personaById.get(row.original.ownerId)?.name ?? row.original.ownerId}</span>
-          ) : (
-            <span className="text-muted-foreground">—</span>
-          ),
-      },
-      {
-        id: "age",
-        header: "Age",
-        accessorFn: (o) => -new Date(o.placedAt).getTime(),
+        enableSorting: false,
         cell: ({ row }) => (
-          <span className="tnum text-muted-foreground">{formatRelative(row.original.placedAt)}</span>
+          <span className="tnum">
+            {row.original.currency_code} {Number(row.original.total).toFixed(2)}
+          </span>
         ),
       },
       {
-        id: "next",
-        header: "Next action",
+        id: "placed",
+        header: "Placed",
         enableSorting: false,
-        cell: ({ row }) =>
-          row.original.nextAction ? (
-            <span className="block max-w-52 truncate text-warning">{row.original.nextAction}</span>
-          ) : (
-            <span className="text-muted-foreground">—</span>
-          ),
+        cell: ({ row }) => <span className="tnum text-muted-foreground">{fmtRelativeNow(row.original.placed_at)}</span>,
+      },
+      {
+        id: "synced",
+        header: "Synced",
+        enableSorting: false,
+        cell: ({ row }) => <span className="tnum text-[11px] text-muted-foreground">{fmtRelativeNow(row.original.synced_at)}</span>,
       },
     ],
-    [customerById, storeById, brandById, personaById],
+    [brandById, connById],
   );
 
   return (
     <PageBody className="max-w-none">
       <PageHeader
         title="Orders"
-        description={`${filtered.length.toLocaleString()} orders in view (full 35-day operational window — use the Age filter to narrow) · states shown separately, never merged`}
+        description={`Live mirror · ${total.toLocaleString()} orders in view across ${connections.length} connected stores · source stays authoritative · states derived per dimension, never merged`}
       >
         <Button asChild size="sm" className="gap-1.5">
           <Link href="/orders/new">
@@ -270,7 +320,11 @@ function OrdersInner() {
                 ? "border-transparent bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:bg-accent hover:text-foreground",
             )}
-            onClick={() => setView(v.key)}
+            onClick={() => {
+              void setView(v.key);
+              void setStatus(null);
+              void setPage(null);
+            }}
           >
             {v.label}
           </button>
@@ -279,92 +333,62 @@ function OrdersInner() {
 
       {/* filters */}
       <div className="flex flex-wrap items-center gap-2">
-        <Input
-          value={q}
-          onChange={(e) => setQ(e.target.value || null)}
-          placeholder="Search order, customer, phone, SKU…"
-          className="h-8 w-64 text-sm"
-          aria-label="Search orders"
-        />
-        <Select value={storeId} onValueChange={(v) => setStoreId(v === "any" ? null : v)}>
-          <SelectTrigger className="h-8 w-40 text-xs" aria-label="Store"><SelectValue /></SelectTrigger>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void setQ(searchDraft || null);
+            void setPage(null);
+          }}
+        >
+          <Input
+            value={searchDraft}
+            onChange={(e) => setSearchDraft(e.target.value)}
+            placeholder="Search order #, customer, phone, email…"
+            className="h-8 w-64 text-sm"
+            aria-label="Search orders"
+          />
+        </form>
+        <Select value={brand} onValueChange={(v) => { void setBrand(v === "any" ? null : v); void setPage(null); }}>
+          <SelectTrigger className="h-8 w-40 text-xs" aria-label="Brand"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="any">All brands</SelectItem>
+            {brands.map((b) => (
+              <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={store} onValueChange={(v) => { void setStore(v === "any" ? null : v); void setPage(null); }}>
+          <SelectTrigger className="h-8 w-44 text-xs" aria-label="Store"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="any">Any store</SelectItem>
-            {stores
-              .filter((s) => session.brandId === "all" || s.brandId === session.brandId)
-              .map((s) => (
-                <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-              ))}
-          </SelectContent>
-        </Select>
-        <Select value={source} onValueChange={(v) => setSource(v === "any" ? null : v)}>
-          <SelectTrigger className="h-8 w-36 text-xs" aria-label="Channel"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">Any channel</SelectItem>
-            {["woocommerce", "shopee", "lazada", "tiktok_shop", "whatsapp", "manual"].map((s) => (
-              <SelectItem key={s} value={s}>{s.replace("_", " ")}</SelectItem>
+            {connections.map((c) => (
+              <SelectItem key={c.id} value={String(c.id)}>{storeLabel(c)}</SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <Select value={payState} onValueChange={(v) => setPayState(v === "any" ? null : v)}>
-          <SelectTrigger className="h-8 w-40 text-xs" aria-label="Payment state"><SelectValue /></SelectTrigger>
+        <Select value={status} onValueChange={(v) => { void setStatus(v === "any" ? null : v); void setPage(null); }}>
+          <SelectTrigger className="h-8 w-40 text-xs" aria-label="Source status"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="any">Any payment state</SelectItem>
-            {["unpaid", "pending_verification", "paid", "cod_pending", "cod_collected", "failed", "refunded"].map((s) => (
-              <SelectItem key={s} value={s}>{s.replace(/_/g, " ")}</SelectItem>
+            <SelectItem value="any">Any source status</SelectItem>
+            {SOURCE_STATUSES.map((s) => (
+              <SelectItem key={s} value={s} className="capitalize">{s.replace("-", " ")}</SelectItem>
             ))}
           </SelectContent>
         </Select>
-        <Select value={shipState} onValueChange={(v) => setShipState(v === "any" ? null : v)}>
-          <SelectTrigger className="h-8 w-40 text-xs" aria-label="Shipment state"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">Any shipment state</SelectItem>
-            {["not_shipped", "label_created", "in_transit", "out_for_delivery", "delivered", "delivery_failed"].map((s) => (
-              <SelectItem key={s} value={s}>{s.replace(/_/g, " ")}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={gateway} onValueChange={(v) => setGateway(v === "any" ? null : v)}>
-          <SelectTrigger className="h-8 w-32 text-xs" aria-label="Gateway"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">Any gateway</SelectItem>
-            {["chip", "stripe", "cod", "marketplace"].map((s) => (
-              <SelectItem key={s} value={s}>{s}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={courier} onValueChange={(v) => setCourier(v === "any" ? null : v)}>
-          <SelectTrigger className="h-8 w-32 text-xs" aria-label="Courier"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">Any courier</SelectItem>
-            <SelectItem value="ninja_van">Ninja Van</SelectItem>
-            <SelectItem value="jnt">J&T</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={owner} onValueChange={(v) => setOwner(v === "any" ? null : v)}>
-          <SelectTrigger className="h-8 w-36 text-xs" aria-label="Assignee"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">Any assignee</SelectItem>
-            <SelectItem value="none">Unassigned</SelectItem>
-            {personas.map((p) => (
-              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={age} onValueChange={(v) => setAge(v === "any" ? null : v)}>
-          <SelectTrigger className="h-8 w-28 text-xs" aria-label="Age"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {AGE_OPTIONS.map((a) => (
-              <SelectItem key={a.key} value={a.key}>{a.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={currency} onValueChange={(v) => setCurrency(v === "any" ? null : v)}>
+        <Select value={currency} onValueChange={(v) => { void setCurrency(v === "any" ? null : v); void setPage(null); }}>
           <SelectTrigger className="h-8 w-28 text-xs" aria-label="Currency"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="any">MYR + SGD</SelectItem>
             <SelectItem value="MYR">MYR</SelectItem>
             <SelectItem value="SGD">SGD</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={age} onValueChange={(v) => { void setAge(v === "any" ? null : v); void setPage(null); }}>
+          <SelectTrigger className="h-8 w-28 text-xs" aria-label="Age"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {AGE_OPTIONS.map((a) => (
+              <SelectItem key={a.key} value={a.key}>{a.label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
         {filtersActive && (
@@ -373,8 +397,9 @@ function OrdersInner() {
             size="sm"
             className="h-8 gap-1 text-xs text-muted-foreground"
             onClick={() => {
-              setQ(null); setStoreId(null); setSource(null); setPayState(null); setShipState(null);
-              setGateway(null); setCourier(null); setOwner(null); setAge(null); setCurrency(null);
+              setSearchDraft("");
+              void setQ(null); void setBrand(null); void setStore(null);
+              void setStatus(null); void setCurrency(null); void setAge(null); void setPage(null);
             }}
           >
             <X className="size-3" aria-hidden /> Clear filters
@@ -382,26 +407,166 @@ function OrdersInner() {
         )}
       </div>
 
-      <DataTable
-        columns={columns}
-        data={filtered}
-        rowKey={(o) => o.id}
-        onRowClick={(o) => router.push(`/orders/${o.id}`)}
-        emptyTitle="No orders match"
-        emptyDescription={
-          view === "my-work"
-            ? `Nothing is assigned to ${persona.name} in this scope. Switch role or view to see more.`
-            : "Adjust the saved view or filters. If you expected marketplace orders here, check the Shopee connection — it is currently stale."
-        }
-      />
+      {loading && rows.length === 0 ? (
+        <div className="flex justify-center py-12"><Loader2 className="size-5 animate-spin text-muted-foreground" aria-label="Loading orders" /></div>
+      ) : error ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          Could not load the live orders mirror: {error}
+        </div>
+      ) : (
+        <>
+          <div className={cn(loading && "pointer-events-none opacity-60")}>
+            <DataTable
+              columns={columns}
+              data={rows}
+              pageSize={PAGE_SIZE}
+              rowKey={(o) => String(o.id)}
+              onRowClick={openDetail}
+              emptyTitle="No orders match"
+              emptyDescription="Adjust the saved view or filters. New orders appear within the 15-minute sync window; use Setup → Store connections → Sync now to pull immediately."
+            />
+          </div>
+          {/* server-side pagination */}
+          <div className="flex items-center justify-between px-1">
+            <span className="tnum text-xs text-muted-foreground">
+              {total.toLocaleString()} orders · page {Math.min(page, pageCount)} of {pageCount.toLocaleString()}
+            </span>
+            <div className="flex gap-1">
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-7"
+                disabled={page <= 1 || loading}
+                onClick={() => void setPage(page - 1 <= 1 ? null : page - 1)}
+                aria-label="Previous page"
+              >
+                <ChevronLeft className="size-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-7"
+                disabled={page >= pageCount || loading}
+                onClick={() => void setPage(page + 1)}
+                aria-label="Next page"
+              >
+                <ChevronRight className="size-3.5" />
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* live order detail */}
+      <Sheet open={detail !== null} onOpenChange={(o) => { if (!o) { setDetail(null); setNv(null); } }}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+          {detail && (
+            <>
+              <SheetHeader>
+                <SheetTitle>
+                  #{detail.order_number ?? detail.source_order_id} · {detail.brand_id ? brandById.get(detail.brand_id)?.name : "unmapped"}
+                </SheetTitle>
+                <SheetDescription>
+                  {detail.customer?.name || "Unknown customer"} · {detail.customer?.phone ?? "no phone"} ·{" "}
+                  {[detail.customer?.city, detail.customer?.country].filter(Boolean).join(", ") || "no address"}
+                </SheetDescription>
+              </SheetHeader>
+              <div className="space-y-4 px-4 pb-6">
+                <div className="flex flex-wrap gap-1">
+                  {statePills(detail.source_status).map((p, i) => (
+                    <span key={i}>{tonePill(p.meta, `${p.dim}: ${p.meta.label}`)}</span>
+                  ))}
+                </div>
+
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="pb-1 font-medium">Item</th>
+                      <th className="pb-1 text-right font-medium">Qty</th>
+                      <th className="pb-1 text-right font-medium">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(detail.items ?? []).map((i, idx) => (
+                      <tr key={idx} className="border-b last:border-0">
+                        <td className="py-1.5">{i.name ?? i.sku ?? "—"}</td>
+                        <td className="tnum py-1.5 text-right">{i.quantity}</td>
+                        <td className="tnum py-1.5 text-right">{i.total}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td className="pt-2 font-medium">Grand total</td>
+                      <td />
+                      <td className="tnum pt-2 text-right font-medium">
+                        {detail.currency_code} {Number(detail.total).toFixed(2)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                {/* shipment (Ninja Van read-side) */}
+                <div>
+                  <div className="mb-1 text-xs font-medium text-muted-foreground">Shipment</div>
+                  {nv === "loading" ? (
+                    <div className="text-xs text-muted-foreground">Checking Ninja Van mirror…</div>
+                  ) : nv ? (
+                    <div className="rounded-md border p-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="tnum font-medium">{nv.shipment.tracking_id}</span>
+                        {nv.shipment.status && tonePill({ label: nv.shipment.status, tone: nv.shipment.is_terminal ? "success" : "info" })}
+                      </div>
+                      <ul className="mt-2 space-y-1">
+                        {nv.events.map((ev) => (
+                          <li key={ev.id} className="flex justify-between text-muted-foreground">
+                            <span>{ev.status ?? "—"}</span>
+                            <span className="tnum">{fmtDateTime(ev.event_at)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">
+                      No Ninja Van events linked to this order yet — tracking appears here once the courier webhook
+                      reports a parcel with this order reference.
+                    </div>
+                  )}
+                </div>
+
+                {/* provenance */}
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                  <span className="text-muted-foreground">Source</span>
+                  <span>{storeLabel(connById.get(detail.integration_id))} · WooCommerce</span>
+                  <span className="text-muted-foreground">Source order id</span>
+                  <span className="tnum">{detail.source_order_id}</span>
+                  <span className="text-muted-foreground">Source status</span>
+                  <span className="capitalize">{detail.source_status}</span>
+                  <span className="text-muted-foreground">Placed</span>
+                  <span className="tnum">{fmtDateTime(detail.placed_at)}</span>
+                  <span className="text-muted-foreground">Last modified (source)</span>
+                  <span className="tnum">{fmtDateTime(detail.updated_at_source ?? null)}</span>
+                  <span className="text-muted-foreground">Synced</span>
+                  <span className="tnum">{fmtDateTime(detail.synced_at)}</span>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs font-medium text-muted-foreground">Raw source payload</div>
+                  <pre className="max-h-96 overflow-auto rounded-md border bg-muted/40 p-2 text-[10px] leading-relaxed">
+                    {JSON.stringify(detail.raw, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </PageBody>
   );
 }
 
 export default function OrdersPage() {
   return (
-    <RouteGuard permission="orders.view">
+    <LiveGuard>
       <OrdersInner />
-    </RouteGuard>
+    </LiveGuard>
   );
 }

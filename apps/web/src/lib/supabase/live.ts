@@ -195,10 +195,11 @@ export interface LiveOrderRow {
   source_status: string;
   currency_code: string;
   total: number;
-  customer: { name?: string; email?: string | null; phone?: string | null; city?: string | null };
+  customer: { name?: string; email?: string | null; phone?: string | null; city?: string | null; country?: string | null };
   items: { sku: string | null; name: string | null; quantity: number; total: string }[];
   raw: unknown;
   placed_at: string | null;
+  updated_at_source?: string | null;
   synced_at: string;
 }
 
@@ -212,6 +213,96 @@ export async function fetchLiveOrders(brandId: number | null, limit = 100): Prom
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   return (data ?? []) as LiveOrderRow[];
+}
+
+/** Server-side paginated + filtered orders query for the main Orders surface. */
+export interface LiveOrdersQuery {
+  page: number; // 1-based
+  pageSize: number;
+  brandId: number | null;
+  integrationId: number | null;
+  status: string | null;
+  statusIn?: string[] | null; // saved-view status slices; ignored when `status` set
+  currency: string | null;
+  sinceHours: number | null;
+  search: string;
+}
+
+export interface LiveOrdersPage {
+  rows: LiveOrderRow[];
+  total: number;
+}
+
+export async function fetchLiveOrdersPage(q: LiveOrdersQuery): Promise<LiveOrdersPage> {
+  let query = getSupabase()
+    .from("orders_read")
+    .select(
+      "id, integration_id, brand_id, source_order_id, order_number, source_status, currency_code, total, customer, items, raw, placed_at, updated_at_source, synced_at",
+      { count: "exact" },
+    );
+  if (q.brandId !== null) query = query.eq("brand_id", q.brandId);
+  if (q.integrationId !== null) query = query.eq("integration_id", q.integrationId);
+  if (q.status) query = query.eq("source_status", q.status);
+  else if (q.statusIn && q.statusIn.length > 0) query = query.in("source_status", q.statusIn);
+  if (q.currency) query = query.eq("currency_code", q.currency);
+  if (q.sinceHours !== null) {
+    query = query.gte("placed_at", new Date(Date.now() - q.sinceHours * 3_600_000).toISOString());
+  }
+  const needle = q.search.trim().replace(/[,()%]/g, "");
+  if (needle) {
+    query = query.or(
+      [
+        `order_number.ilike.%${needle}%`,
+        `source_order_id.ilike.%${needle}%`,
+        `customer->>name.ilike.%${needle}%`,
+        `customer->>phone.ilike.%${needle}%`,
+        `customer->>email.ilike.%${needle}%`,
+      ].join(","),
+    );
+  }
+  const from = (q.page - 1) * q.pageSize;
+  const { data, error, count } = await query
+    .order("placed_at", { ascending: false, nullsFirst: false })
+    .order("id", { ascending: false })
+    .range(from, from + q.pageSize - 1);
+  if (error) throw new Error(error.message);
+  return { rows: (data ?? []) as LiveOrderRow[], total: count ?? 0 };
+}
+
+/* ---------- Ninja Van shipment read-side ---------- */
+
+export interface LiveNvShipment {
+  id: number;
+  tracking_id: string;
+  order_ref: string | null;
+  status: string | null;
+  is_terminal: boolean;
+  last_event_at: string | null;
+}
+
+export interface LiveNvEvent {
+  id: number;
+  status: string | null;
+  previous_status: string | null;
+  event_at: string | null;
+}
+
+/** Loose linkage: Ninja Van's shipper order ref ↔ the store's order number. */
+export async function fetchNvShipmentForOrder(orderNumber: string): Promise<{ shipment: LiveNvShipment; events: LiveNvEvent[] } | null> {
+  const { data: shipment, error } = await getSupabase()
+    .from("nv_shipments")
+    .select("id, tracking_id, order_ref, status, is_terminal, last_event_at")
+    .eq("order_ref", orderNumber)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!shipment) return null;
+  const { data: events } = await getSupabase()
+    .from("nv_events")
+    .select("id, status, previous_status, event_at")
+    .eq("shipment_id", shipment.id)
+    .order("event_at", { ascending: false })
+    .limit(20);
+  return { shipment: shipment as LiveNvShipment, events: (events ?? []) as LiveNvEvent[] };
 }
 
 /* ---------- brands & catalog ---------- */
