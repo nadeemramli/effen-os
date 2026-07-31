@@ -22,6 +22,7 @@ import {
   ContributionTrend,
 } from "@/components/charts/commercial-charts";
 import { MetricCard } from "@/components/metrics/metric-card";
+import { LiveScorecard } from "@/components/metrics/live-scorecard";
 import { PageBody } from "@/components/shell/page-header";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
 import { useActivePersona, useSession } from "@/hooks/use-session";
@@ -239,8 +240,10 @@ export default function CommandCenterPage() {
         ))}
       </section>
 
-      {/* ---------- commercial scorecard ---------- */}
-      <section aria-label="Commercial scorecard" className="grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7">
+      {/* ---------- commercial scorecard: live mirror when signed in, demo otherwise ---------- */}
+      <LiveScorecard
+        fallback={
+          <section aria-label="Commercial scorecard" className="grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7">
         <MetricCard
           metricKey="net_revenue"
           value={formatMoney(totals.netRevenue, "MYR", { compact: true })}
@@ -264,15 +267,17 @@ export default function CommandCenterPage() {
           metricKey="new_customer_mix"
           value={totals.orders > 0 ? formatPercent(totals.newCustomerOrders / totals.orders, 0) : "—"}
         />
-        <MetricCard
-          metricKey="target_variance"
-          value={formatPercent(contributionVariance, 1, true)}
-          delta={{
-            text: contributionVariance >= 0 ? "on or above plan" : "below plan",
-            tone: contributionVariance >= 0 ? "success" : "destructive",
-          }}
-        />
-      </section>
+            <MetricCard
+              metricKey="target_variance"
+              value={formatPercent(contributionVariance, 1, true)}
+              delta={{
+                text: contributionVariance >= 0 ? "on or above plan" : "below plan",
+                tone: contributionVariance >= 0 ? "success" : "destructive",
+              }}
+            />
+          </section>
+        }
+      />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <ChartCard

@@ -269,6 +269,23 @@ export async function fetchLiveOrdersPage(q: LiveOrdersQuery): Promise<LiveOrder
   return { rows: (data ?? []) as LiveOrderRow[], total: count ?? 0 };
 }
 
+/* ---------- Command Centre scorecard ---------- */
+
+export interface LiveScorecardRow {
+  win: "today" | "yesterday" | "d7" | "d30";
+  brand_id: number | null;
+  currency_code: string;
+  orders: number;
+  revenue: number;
+}
+
+/** Recognized revenue (processing + completed) per MYT window × brand × currency. */
+export async function fetchLiveScorecard(): Promise<LiveScorecardRow[]> {
+  const { data, error } = await getSupabase().rpc("live_scorecard");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LiveScorecardRow[];
+}
+
 /* ---------- Ninja Van shipment read-side ---------- */
 
 export interface LiveNvShipment {
