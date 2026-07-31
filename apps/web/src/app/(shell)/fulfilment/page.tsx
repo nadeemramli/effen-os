@@ -1,230 +1,170 @@
 "use client";
 
-import Link from "next/link";
-import { useMemo, useState } from "react";
-import { ClipboardCheck, PackageCheck, ShieldAlert, Truck } from "lucide-react";
-import { toast } from "sonner";
+import { useEffect, useState } from "react";
+import { AlertTriangle, Loader2, PackageCheck, RefreshCw, Truck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ImpactPreviewDialog } from "@/components/dialogs/impact-preview-dialog";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
-import { StatusPill } from "@/components/status/status-pill";
+import { LiveGuard } from "@/components/auth/live-guard";
 import { EmptyState } from "@/components/states";
-import { useActivePersona, usePermission, useSession } from "@/hooks/use-session";
-import type { Order } from "@/lib/domain/types";
-import { RouteGuard } from "@/lib/rbac/guard";
-import { useAppStore } from "@/lib/store/provider";
-import { formatRelative } from "@/lib/utils/dates";
+import { fetchNvNetwork, type LiveNvShipment } from "@/lib/supabase/live";
 import { cn } from "@/lib/utils";
 
-function skuSummary(o: Order): string {
-  const first = o.items[0];
-  if (!first) return "—";
-  const more = o.items.length > 1 ? ` +${o.items.length - 1}` : "";
-  return `${first.sku} ×${first.quantity}${more}`;
+/* The live parcel network from the Ninja Van webhook mirror. Pick/pack/handover
+ * queues return when Fullkit creates consignments itself (Slice 3) — today
+ * Fighter creates them, so parcels carry Fighter references and per-order
+ * linkage lands with the Fighter bridge or the NV order-details API. */
+
+const EXCEPTION_WORDS = ["fail", "exception", "damaged", "lost", "on hold", "reschedule", "return"];
+
+function bucket(status: string | null, terminal: boolean): "delivered" | "exception" | "transit" {
+  const s = (status ?? "").toLowerCase();
+  if (s.includes("delivered") || (terminal && s.includes("completed"))) return "delivered";
+  if (EXCEPTION_WORDS.some((w) => s.includes(w))) return "exception";
+  return "transit";
+}
+
+function fmt(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("en-MY", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kuala_Lumpur" });
 }
 
 function FulfilmentInner() {
-  const session = useSession();
-  const persona = useActivePersona();
-  const canAct = usePermission("orders.approve");
-  const orders = useAppStore((s) => s.orders);
-  const brands = useAppStore((s) => s.brands);
-  const advanceFulfillment = useAppStore((s) => s.advanceFulfillment);
-  const [manifestOpen, setManifestOpen] = useState<"ninja_van" | "jnt" | null>(null);
+  const [data, setData] = useState<Awaited<ReturnType<typeof fetchNvNetwork>> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const scoped = useMemo(
-    () =>
-      orders.filter(
-        (o) =>
-          (session.brandId === "all" || o.brandId === session.brandId) &&
-          !o.isDraft &&
-          o.orderStatus === "approved",
-      ),
-    [orders, session.brandId],
-  );
+  const reload = () => {
+    setLoading(true);
+    fetchNvNetwork()
+      .then(setData)
+      .catch((e) => setError((e as Error).message))
+      .finally(() => setLoading(false));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(reload, []);
 
-  const toPick = scoped.filter((o) => o.fulfillmentStatus === "unfulfilled");
-  const picking = scoped.filter((o) => o.fulfillmentStatus === "picking");
-  const packed = scoped.filter((o) => o.fulfillmentStatus === "packed");
-  const exceptions = useMemo(
-    () =>
-      orders.filter(
-        (o) =>
-          (session.brandId === "all" || o.brandId === session.brandId) &&
-          (o.fulfillmentStatus === "on_hold" ||
-            o.exceptionStatus === "fulfilment_exception" ||
-            o.exceptionStatus === "address_issue" ||
-            o.exceptionStatus === "automation_failed"),
-      ),
-    [orders, session.brandId],
-  );
+  if (loading && !data) {
+    return (
+      <PageBody className="flex min-h-96 items-center justify-center">
+        <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading parcels" />
+      </PageBody>
+    );
+  }
 
-  const brandName = (id: string) => brands.find((b) => b.id === id)?.name.replace(" (Demo)", "") ?? id;
-  const manifestOrders = packed.filter((o) => (o.courier ?? "ninja_van") === manifestOpen);
-
-  const QUEUES: { title: string; icon: typeof ClipboardCheck; rows: Order[]; action: { label: string; to: "picking" | "packed" } | null; hint: string }[] = [
-    { title: "To pick", icon: ClipboardCheck, rows: toPick, action: { label: "Start pick", to: "picking" }, hint: "Approved orders waiting for a picker" },
-    { title: "Picking", icon: PackageCheck, rows: picking, action: { label: "Mark packed", to: "packed" }, hint: "Packing creates the AWB label" },
-    { title: "Packed — ready for handover", icon: Truck, rows: packed, action: null, hint: "Hand over via the courier manifest" },
-  ];
+  const shipments = data?.shipments ?? [];
+  const byStatus = new Map<string, LiveNvShipment[]>();
+  let delivered = 0, exceptions = 0, transit = 0;
+  for (const s of shipments) {
+    const key = s.status ?? "Unknown";
+    byStatus.set(key, [...(byStatus.get(key) ?? []), s]);
+    const b = bucket(s.status, s.is_terminal);
+    if (b === "delivered") delivered += 1;
+    else if (b === "exception") exceptions += 1;
+    else transit += 1;
+  }
 
   return (
-    <PageBody className="max-w-none">
+    <PageBody className="max-w-6xl">
       <PageHeader
         title="Fulfilment"
-        description="Pick → pack → handover for the KL fulfilment centre. Every move lands on the order's evidence timeline."
+        description="Live parcel network from the Ninja Van webhook mirror — every brand, every market, from webhook connection onward."
       >
-        <div className="flex gap-2">
-          {(["ninja_van", "jnt"] as const).map((c) => {
-            const count = packed.filter((o) => (o.courier ?? "ninja_van") === c).length;
-            return (
-              <Button
-                key={c}
-                size="sm"
-                variant="outline"
-                className="gap-1.5"
-                disabled={!canAct || count === 0}
-                onClick={() => setManifestOpen(c)}
-              >
-                <Truck className="size-3.5" aria-hidden />
-                {c === "jnt" ? "J&T" : "Ninja Van"} manifest
-                <Badge variant="secondary" className="tnum ml-1 h-4 px-1 text-[10px]">{count}</Badge>
-              </Button>
-            );
-          })}
-        </div>
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={reload} disabled={loading}>
+          <RefreshCw className={cn("size-3.5", loading && "animate-spin")} aria-hidden /> Refresh
+        </Button>
       </PageHeader>
 
-      {!canAct && (
-        <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          Your role can view the floor but not act — pick/pack/handover needs Operations or HQ Admin.
-        </p>
-      )}
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        {QUEUES.map((q) => (
-          <Card key={q.title}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="flex items-center gap-2 text-sm font-medium">
-                <q.icon className="size-4 text-muted-foreground" aria-hidden />
-                {q.title}
-              </CardTitle>
-              <Badge variant="outline" className="tnum text-xs">{q.rows.length}</Badge>
-            </CardHeader>
-            <CardContent className="space-y-0 divide-y">
-              <p className="pb-2 text-[11px] text-muted-foreground">{q.hint}</p>
-              {q.rows.slice(0, 8).map((o) => (
-                <div key={o.id} className="flex items-center gap-2.5 py-2 last:pb-0">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <Link href={`/orders/${o.id}`} className="text-sm font-medium text-info underline-offset-2 hover:underline">
-                        {o.id}
-                      </Link>
-                      <span className="truncate text-[11px] text-muted-foreground">
-                        {brandName(o.brandId)} · {skuSummary(o)}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                      <span className="tnum">{formatRelative(o.placedAt)}</span>
-                      {o.paymentStatus === "cod_pending" && <StatusPill dimension="payment" value="cod_pending" />}
-                      {o.trackingNumber && <span className="tnum">{o.trackingNumber}</span>}
-                    </div>
-                  </div>
-                  {q.action && canAct && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 shrink-0 text-xs"
-                      onClick={() => {
-                        advanceFulfillment(o.id, q.action!.to, persona.name);
-                        toast.success(`${o.id} → ${q.action!.to}`, {
-                          description: "Recorded on the order's evidence timeline.",
-                        });
-                      }}
-                    >
-                      {q.action.label}
-                    </Button>
-                  )}
+      {error ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+          Could not load the parcel mirror: {error}
+        </div>
+      ) : shipments.length === 0 ? (
+        <EmptyState
+          icon={Truck}
+          title="No parcels captured yet"
+          description="Capture starts from webhook registration — parcels appear here as Ninja Van reports movement. There is no history backfill."
+        />
+      ) : (
+        <>
+          {/* network summary */}
+          <section aria-label="Parcel summary" className="grid grid-cols-3 gap-3">
+            {[
+              { icon: Truck, label: "In network", value: transit, tone: "text-info" },
+              { icon: PackageCheck, label: "Delivered", value: delivered, tone: "text-success" },
+              { icon: AlertTriangle, label: "Exceptions", value: exceptions, tone: exceptions > 0 ? "text-warning" : "text-muted-foreground" },
+            ].map((c) => (
+              <div key={c.label} className="rounded-lg border bg-card p-3">
+                <div className="flex items-center justify-between">
+                  <c.icon className={cn("size-4", c.tone)} aria-hidden />
+                  <span className="tnum text-xl font-semibold">{c.value}</span>
                 </div>
-              ))}
-              {q.rows.length === 0 && (
-                <p className="py-4 text-center text-sm text-muted-foreground">Queue clear.</p>
-              )}
-              {q.rows.length > 8 && (
-                <p className="pt-2 text-[11px] text-muted-foreground">
-                  +{q.rows.length - 8} more — see{" "}
-                  <Link href="/orders?view=all" className="text-info underline-offset-2 hover:underline">Orders</Link>.
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+                <div className="mt-1 text-sm font-medium">{c.label}</div>
+              </div>
+            ))}
+          </section>
 
-      {/* exceptions */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="flex items-center gap-2 text-sm font-medium">
-            <ShieldAlert className="size-4 text-destructive" aria-hidden />
-            Fulfilment exceptions
-          </CardTitle>
-          <Badge variant="outline" className="tnum text-xs">{exceptions.length}</Badge>
-        </CardHeader>
-        <CardContent>
-          {exceptions.length === 0 ? (
-            <EmptyState title="No exceptions" description="Holds, address issues, and automation failures appear here." />
-          ) : (
-            <ul className="divide-y">
-              {exceptions.map((o) => (
-                <li key={o.id} className="flex items-center gap-3 py-2 first:pt-0 last:pb-0">
-                  <Link href={`/orders/${o.id}`} className="text-sm font-medium text-info underline-offset-2 hover:underline">{o.id}</Link>
-                  <StatusPill dimension="fulfillment" value={o.fulfillmentStatus} />
-                  <span className={cn("text-xs", o.exceptionStatus !== "none" ? "text-warning" : "text-muted-foreground")}>
-                    {o.exceptionStatus !== "none" ? o.exceptionStatus.replace(/_/g, " ") : "on hold"}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{o.nextAction}</span>
-                  <span className="tnum shrink-0 text-[11px] text-muted-foreground">{formatRelative(o.placedAt)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            {/* by status */}
+            <Card className="xl:col-span-2">
+              <CardHeader><CardTitle className="text-sm font-medium">Parcels by status</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                {[...byStatus.entries()]
+                  .sort(([, a], [, b]) => b.length - a.length)
+                  .map(([status, rows]) => (
+                    <div key={status}>
+                      <div className="mb-1 flex items-baseline justify-between">
+                        <span className="text-sm font-medium">{status}</span>
+                        <Badge variant="outline" className="tnum text-xs">{rows.length}</Badge>
+                      </div>
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                        {rows.slice(0, 8).map((s) => (
+                          <span key={s.id} className="tnum text-xs text-muted-foreground">
+                            {s.tracking_id}
+                          </span>
+                        ))}
+                        {rows.length > 8 && (
+                          <span className="text-xs text-muted-foreground">+{rows.length - 8} more</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+              </CardContent>
+            </Card>
 
-      {/* manifest handover */}
-      <ImpactPreviewDialog
-        open={manifestOpen !== null}
-        onOpenChange={(o) => !o && setManifestOpen(null)}
-        title={`Hand over ${manifestOrders.length} parcels to ${manifestOpen === "jnt" ? "J&T" : "Ninja Van"}?`}
-        description="Closes today's manifest for this courier and records the handover on every order."
-        impact={[
-          { label: "Parcels", value: String(manifestOrders.length) },
-          { label: "Fulfilment state", value: "packed → handed over", tone: "success" },
-          { label: "Shipment state", value: "awaits first courier scan" },
-        ]}
-        externalDestination="None in Demo mode — in Live mode this books the pickup via the courier API (write scope)."
-        reversibility="Reversible until the courier collects."
-        auditNote="Each order gets a fulfilment.handed_over event with your persona."
-        confirmLabel="Confirm handover"
-        onConfirm={() => {
-          for (const o of manifestOrders) {
-            advanceFulfillment(o.id, "handed_over", persona.name);
-          }
-          toast.success(`${manifestOrders.length} parcels handed over`, {
-            description: "Manifest recorded; shipment states await courier scans.",
-          });
-        }}
-      />
+            {/* recent events */}
+            <Card>
+              <CardHeader><CardTitle className="text-sm font-medium">Latest movements</CardTitle></CardHeader>
+              <CardContent className="space-y-0 divide-y">
+                {(data?.recentEvents ?? []).slice(0, 12).map((ev) => (
+                  <div key={ev.id} className="py-1.5 first:pt-0 last:pb-0">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="truncate text-xs font-medium">{ev.status ?? "—"}</span>
+                      <span className="tnum shrink-0 text-[11px] text-muted-foreground">{fmt(ev.event_at)}</span>
+                    </div>
+                    <span className="tnum text-[11px] text-muted-foreground">{ev.tracking_id}</span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </div>
+
+          <p className="text-[11px] text-muted-foreground">
+            Parcels reference Fighter&apos;s consignment ids, so per-order and per-customer linkage arrives with the
+            Fighter bridge or Ninja Van&apos;s order-details API — every captured parcel back-links the moment a mapping
+            exists. Pick / pack / handover queues return when Fullkit creates consignments itself (Slice 3 write pilot).
+          </p>
+        </>
+      )}
     </PageBody>
   );
 }
 
 export default function FulfilmentPage() {
   return (
-    <RouteGuard permission="orders.view">
+    <LiveGuard>
       <FulfilmentInner />
-    </RouteGuard>
+    </LiveGuard>
   );
 }

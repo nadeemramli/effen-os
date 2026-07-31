@@ -372,6 +372,33 @@ export interface LiveNvEvent {
   event_at: string | null;
 }
 
+/** Network overview for the live Fulfilment surface. */
+export async function fetchNvNetwork(): Promise<{
+  shipments: LiveNvShipment[];
+  recentEvents: { id: number; status: string | null; event_at: string | null; tracking_id: string }[];
+}> {
+  const supabase = getSupabase();
+  const [s, e] = await Promise.all([
+    supabase
+      .from("nv_shipments")
+      .select("id, tracking_id, order_ref, status, is_terminal, last_event_at")
+      .order("last_event_at", { ascending: false })
+      .limit(1000),
+    supabase
+      .from("nv_events")
+      .select("id, status, event_at, shipment_id")
+      .order("event_at", { ascending: false })
+      .limit(30),
+  ]);
+  if (s.error) throw new Error(s.error.message);
+  const shipments = (s.data ?? []) as LiveNvShipment[];
+  const byId = new Map(shipments.map((x) => [x.id, x.tracking_id]));
+  const recentEvents = ((e.data ?? []) as { id: number; status: string | null; event_at: string | null; shipment_id: number }[]).map(
+    (ev) => ({ id: ev.id, status: ev.status, event_at: ev.event_at, tracking_id: byId.get(ev.shipment_id) ?? "—" }),
+  );
+  return { shipments, recentEvents };
+}
+
 /** Loose linkage: Ninja Van's shipper order ref ↔ the store's order number. */
 export async function fetchNvShipmentForOrder(orderNumber: string): Promise<{ shipment: LiveNvShipment; events: LiveNvEvent[] } | null> {
   const { data: shipment, error } = await getSupabase()
