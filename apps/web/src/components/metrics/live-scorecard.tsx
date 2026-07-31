@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MetricCard } from "@/components/metrics/metric-card";
+import { useAppStore } from "@/lib/store/provider";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import {
   fetchLiveBrands,
@@ -48,6 +49,7 @@ function ccyLine(byCcy: Record<string, number>): string {
 
 export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
   const [state, setState] = useState<State>({ kind: "checking" });
+  const liveBrandId = useAppStore((s) => s.session.liveBrandId);
 
   useEffect(() => {
     if (!isSupabaseConfigured()) {
@@ -81,10 +83,12 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
     );
   }
 
-  const today = sumBy(state.rows, "today");
-  const yesterday = sumBy(state.rows, "yesterday");
-  const d7 = sumBy(state.rows, "d7");
-  const d30 = sumBy(state.rows, "d30");
+  // Top-bar live brand scope applies to every window.
+  const rows = liveBrandId === null ? state.rows : state.rows.filter((r) => r.brand_id === liveBrandId);
+  const today = sumBy(rows, "today");
+  const yesterday = sumBy(rows, "yesterday");
+  const d7 = sumBy(rows, "d7");
+  const d30 = sumBy(rows, "d30");
 
   const ordersDelta =
     yesterday.orders > 0
@@ -93,10 +97,11 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
 
   /* per-brand 7-day revenue, native currency */
   const brandLines = state.brands
+    .filter((b) => liveBrandId === null || b.id === liveBrandId)
     .map((b) => {
       const byCcy: Record<string, number> = {};
       let orders = 0;
-      for (const r of state.rows.filter((r) => r.win === "d7" && r.brand_id === b.id)) {
+      for (const r of rows.filter((r) => r.win === "d7" && r.brand_id === b.id)) {
         orders += Number(r.orders);
         byCcy[r.currency_code] = (byCcy[r.currency_code] ?? 0) + Number(r.revenue);
       }

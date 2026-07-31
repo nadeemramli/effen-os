@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useAppStore } from "@/lib/store/provider";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import { fetchLiveBrands, type LiveBrand } from "@/lib/supabase/live";
 
@@ -29,6 +30,7 @@ interface FactRow {
 
 export function LiveAdsPanel() {
   const [data, setData] = useState<{ accounts: AccountRow[]; facts: FactRow[]; brands: LiveBrand[] } | null>(null);
+  const liveBrandId = useAppStore((s) => s.session.liveBrandId);
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
@@ -48,7 +50,13 @@ export function LiveAdsPanel() {
 
   if (!data) return null;
 
-  const accountById = new Map(data.accounts.map((a) => [a.id, a]));
+  // Top-bar live brand scope: keep only that brand's accounts (and their facts).
+  const scopedAccounts =
+    liveBrandId === null ? data.accounts : data.accounts.filter((a) => a.brand_id === liveBrandId);
+  const scopedIds = new Set(scopedAccounts.map((a) => a.id));
+  const scopedFacts = data.facts.filter((f) => scopedIds.has(f.account_ref));
+
+  const accountById = new Map(scopedAccounts.map((a) => [a.id, a]));
   const brandName = (id: number | null) =>
     id === null ? "Unmapped accounts" : data.brands.find((b) => b.id === id)?.name ?? String(id);
 
@@ -56,7 +64,7 @@ export function LiveAdsPanel() {
   let totalSpend = 0;
   let knownPurchases = 0;
   let purchasesMissing = false;
-  for (const f of data.facts) {
+  for (const f of scopedFacts) {
     const acc = accountById.get(f.account_ref);
     const key = brandName(acc?.brand_id ?? null);
     const cur = byBrand.get(key) ?? { spend: 0, purchases: 0, accounts: new Set<number>() };
@@ -69,8 +77,9 @@ export function LiveAdsPanel() {
     knownPurchases += Number(f.purchases ?? 0);
   }
 
-  const activeAccounts = data.accounts.filter((a) => a.is_active).length;
-  const seededAccounts = new Set(data.facts.map((f) => f.account_ref)).size;
+  const activeAccounts = scopedAccounts.filter((a) => a.is_active).length;
+  const seededAccounts = new Set(scopedFacts.map((f) => f.account_ref)).size;
+  if (scopedFacts.length === 0) return null;
 
   return (
     <section aria-label="Live Meta spend" className="space-y-2 rounded-lg border bg-card p-4">

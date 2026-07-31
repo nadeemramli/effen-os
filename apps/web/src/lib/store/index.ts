@@ -28,6 +28,10 @@ export interface SessionState {
   /** True when the role comes from a real membership and must not be switched
    *  (non-admins); hq_admin keeps the switcher as an impersonation tool. */
   roleLocked: boolean;
+  /** Live brand scope (numeric brands.id) driven by the top bar when a real
+   *  session exists; null = all brands. Live surfaces read this; the demo
+   *  brandId above keeps serving the synthetic screens. */
+  liveBrandId: number | null;
 }
 
 export interface AppState extends SeedSnapshot {
@@ -39,6 +43,7 @@ export interface AppState extends SeedSnapshot {
   setAuthSession: (auth: { email: string | null; role?: RoleKey; roleLocked?: boolean }) => void;
   setMode: (mode: OperatingMode) => void;
   setBrand: (brandId: string | "all") => void;
+  setLiveBrand: (brandId: number | null) => void;
   setDateRange: (r: DateRangeKey) => void;
   markNotificationsRead: () => void;
   pushNotification: (n: Omit<AppNotification, "id" | "at" | "read">) => void;
@@ -170,6 +175,7 @@ export function createAppStore() {
         dateRange: "7d",
         authEmail: null,
         roleLocked: false,
+        liveBrandId: null,
       },
       seq: 1,
 
@@ -185,6 +191,7 @@ export function createAppStore() {
         })),
       setMode: (mode) => set((s) => ({ session: { ...s.session, mode } })),
       setBrand: (brandId) => set((s) => ({ session: { ...s.session, brandId } })),
+      setLiveBrand: (liveBrandId) => set((s) => ({ session: { ...s.session, liveBrandId } })),
       setDateRange: (dateRange) => set((s) => ({ session: { ...s.session, dateRange } })),
 
       markNotificationsRead: () =>

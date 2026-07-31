@@ -37,6 +37,7 @@ import {
   type LiveWooConnection,
 } from "@/lib/supabase/live";
 import type { StatusMeta } from "@/lib/domain/status-maps";
+import { useAppStore } from "@/lib/store/provider";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
@@ -127,7 +128,8 @@ function storeLabel(conn: LiveWooConnection | undefined): string {
 function OrdersInner() {
   const [view, setView] = useQueryState("view", parseAsString.withDefault("all"));
   const [q, setQ] = useQueryState("q", parseAsString.withDefault(""));
-  const [brand, setBrand] = useQueryState("brand", parseAsString.withDefault("any"));
+  // Brand scope comes from the top bar's live switcher, like every live surface.
+  const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const [store, setStore] = useQueryState("store", parseAsString.withDefault("any"));
   const [status, setStatus] = useQueryState("status", parseAsString.withDefault("any"));
   const [currency, setCurrency] = useQueryState("ccy", parseAsString.withDefault("any"));
@@ -167,7 +169,7 @@ function OrdersInner() {
       const result = await fetchLiveOrdersPage({
         page,
         pageSize: PAGE_SIZE,
-        brandId: brand === "any" ? null : Number(brand),
+        brandId: liveBrandId,
         integrationId: store === "any" ? null : Number(store),
         status: status === "any" ? null : status,
         statusIn: status === "any" ? activeView.statusIn : null,
@@ -182,7 +184,7 @@ function OrdersInner() {
     } finally {
       setLoading(false);
     }
-  }, [page, brand, store, status, currency, ageHours, q, activeView]);
+  }, [page, liveBrandId, store, status, currency, ageHours, q, activeView]);
 
   useEffect(() => {
     // Server-side query re-runs on any filter/page change.
@@ -200,7 +202,7 @@ function OrdersInner() {
   }, []);
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const filtersActive = q !== "" || brand !== "any" || store !== "any" || status !== "any" || currency !== "any" || age !== "any";
+  const filtersActive = q !== "" || store !== "any" || status !== "any" || currency !== "any" || age !== "any";
 
   const columns = useMemo<ColumnDef<LiveOrderRow, unknown>[]>(
     () => [
@@ -348,15 +350,6 @@ function OrdersInner() {
             aria-label="Search orders"
           />
         </form>
-        <Select value={brand} onValueChange={(v) => { void setBrand(v === "any" ? null : v); void setPage(null); }}>
-          <SelectTrigger className="h-8 w-40 text-xs" aria-label="Brand"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">All brands</SelectItem>
-            {brands.map((b) => (
-              <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
         <Select value={store} onValueChange={(v) => { void setStore(v === "any" ? null : v); void setPage(null); }}>
           <SelectTrigger className="h-8 w-44 text-xs" aria-label="Store"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -398,7 +391,7 @@ function OrdersInner() {
             className="h-8 gap-1 text-xs text-muted-foreground"
             onClick={() => {
               setSearchDraft("");
-              void setQ(null); void setBrand(null); void setStore(null);
+              void setQ(null); void setStore(null);
               void setStatus(null); void setCurrency(null); void setAge(null); void setPage(null);
             }}
           >

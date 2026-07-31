@@ -24,6 +24,7 @@ import {
   type LiveCustomerRow,
 } from "@/lib/supabase/live";
 import { maskPhone } from "@/lib/utils/mask";
+import { useAppStore } from "@/lib/store/provider";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
@@ -68,7 +69,8 @@ function relative(iso: string | null): string {
 function CustomersInner() {
   const router = useRouter();
   const [q, setQ] = useQueryState("q", parseAsString.withDefault(""));
-  const [brand, setBrand] = useQueryState("brand", parseAsString.withDefault("any"));
+  // Brand scope comes from the top bar's live switcher, like every live surface.
+  const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const [activity, setActivity] = useQueryState("activity", parseAsString.withDefault("any"));
   const [page, setPage] = useQueryState("page", parseAsInteger.withDefault(1));
 
@@ -96,7 +98,7 @@ function CustomersInner() {
         page,
         pageSize: PAGE_SIZE,
         search: q,
-        brandId: brand === "any" ? null : Number(brand),
+        brandId: liveBrandId,
         activity: activity === "any" ? null : activity,
       });
       setRows(result.rows);
@@ -106,7 +108,7 @@ function CustomersInner() {
     } finally {
       setLoading(false);
     }
-  }, [page, q, brand, activity]);
+  }, [page, q, liveBrandId, activity]);
 
   useEffect(() => {
     // Server-side query re-runs on any filter/page change.
@@ -115,7 +117,7 @@ function CustomersInner() {
   }, [reload]);
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const filtersActive = q !== "" || brand !== "any" || activity !== "any";
+  const filtersActive = q !== "" || activity !== "any";
 
   const columns = useMemo<ColumnDef<LiveCustomerRow, unknown>[]>(
     () => [
@@ -214,15 +216,6 @@ function CustomersInner() {
             aria-label="Search customers"
           />
         </form>
-        <Select value={brand} onValueChange={(v) => { void setBrand(v === "any" ? null : v); void setPage(null); }}>
-          <SelectTrigger className="h-8 w-40 text-xs" aria-label="Brand"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">All brands</SelectItem>
-            {brands.map((b) => (
-              <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
         <Select value={activity} onValueChange={(v) => { void setActivity(v === "any" ? null : v); void setPage(null); }}>
           <SelectTrigger className="h-8 w-48 text-xs" aria-label="Activity"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -233,7 +226,7 @@ function CustomersInner() {
         </Select>
         {filtersActive && (
           <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs text-muted-foreground"
-            onClick={() => { setSearchDraft(""); void setQ(null); void setBrand(null); void setActivity(null); void setPage(null); }}>
+            onClick={() => { setSearchDraft(""); void setQ(null); void setActivity(null); void setPage(null); }}>
             <X className="size-3" aria-hidden /> Clear
           </Button>
         )}

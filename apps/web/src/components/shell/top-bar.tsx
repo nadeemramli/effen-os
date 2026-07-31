@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Bell,
   Building2,
@@ -49,6 +49,7 @@ import { useAppStore } from "@/lib/store/provider";
 import { useActivePersona } from "@/hooks/use-session";
 import { formatRelative } from "@/lib/utils/dates";
 import { cn } from "@/lib/utils";
+import { fetchLiveBrands, fetchWooConnections, type LiveBrand } from "@/lib/supabase/live";
 import { ModePill } from "./mode-pill";
 import { GlobalSearch } from "./global-search";
 import { ChangePasswordDialog } from "@/components/auth/change-password-dialog";
@@ -66,14 +67,38 @@ export function TopBar() {
   const integrations = useAppStore((s) => s.integrations);
   const notifications = useAppStore((s) => s.notifications);
   const setBrand = useAppStore((s) => s.setBrand);
+  const setLiveBrand = useAppStore((s) => s.setLiveBrand);
   const setDateRange = useAppStore((s) => s.setDateRange);
   const setRole = useAppStore((s) => s.setRole);
   const markRead = useAppStore((s) => s.markNotificationsRead);
   const resetDemoData = useAppStore((s) => s.resetDemoData);
   const persona = useActivePersona();
 
-  const staleCount = integrations.filter((i) => i.status === "stale").length;
-  const unread = notifications.filter((n) => !n.read).length;
+  // Live scope: with a real session the brand switcher and freshness badge
+  // read the live workspace, not the synthetic seed.
+  const isLive = session.authEmail !== null;
+  const [liveBrands, setLiveBrands] = useState<LiveBrand[]>([]);
+  const [liveStale, setLiveStale] = useState<number | null>(null);
+  useEffect(() => {
+    if (!isLive) return;
+    void (async () => {
+      const [b, c] = await Promise.all([fetchLiveBrands(), fetchWooConnections()]);
+      setLiveBrands(b.filter((x) => x.status === "active"));
+      // A configured connection is stale when its last success is older than
+      // 3× its freshness SLA (matching freshnessOf's "stale" band).
+      const configured = c.filter((x) => x.status !== "pending_setup");
+      setLiveStale(
+        configured.filter(
+          (x) =>
+            !x.last_success_at ||
+            Date.now() - new Date(x.last_success_at).getTime() > 3 * 15 * 60_000,
+        ).length,
+      );
+    })();
+  }, [isLive]);
+
+  const staleCount = isLive ? (liveStale ?? 0) : integrations.filter((i) => i.status === "stale").length;
+  const unread = isLive ? 0 : notifications.filter((n) => !n.read).length;
   const canCreateOrder = visibleRoutes(session.role).some((r) => r.key === "orders");
   const canConnectAds = visibleRoutes(session.role).some((r) => r.key === "marketing");
 
@@ -85,19 +110,38 @@ export function TopBar() {
         <span className="hidden max-w-44 truncate text-sm font-medium 2xl:inline">
           {workspace.name}
         </span>
-        <Select value={session.brandId} onValueChange={setBrand}>
-          <SelectTrigger className="h-8 w-36 text-sm xl:w-44" aria-label="Brand scope">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All brands</SelectItem>
-            {brands.map((b) => (
-              <SelectItem key={b.id} value={b.id}>
-                {b.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {isLive ? (
+          <Select
+            value={session.liveBrandId === null ? "all" : String(session.liveBrandId)}
+            onValueChange={(v) => setLiveBrand(v === "all" ? null : Number(v))}
+          >
+            <SelectTrigger className="h-8 w-36 text-sm xl:w-44" aria-label="Brand scope (live)">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All brands</SelectItem>
+              {liveBrands.map((b) => (
+                <SelectItem key={b.id} value={String(b.id)}>
+                  {b.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <Select value={session.brandId} onValueChange={setBrand}>
+            <SelectTrigger className="h-8 w-36 text-sm xl:w-44" aria-label="Brand scope">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All brands</SelectItem>
+              {brands.map((b) => (
+                <SelectItem key={b.id} value={b.id}>
+                  {b.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       {/* date range */}
@@ -141,7 +185,7 @@ export function TopBar() {
       <div className="ml-auto flex shrink-0 items-center gap-2">
         {/* freshness */}
         <Link
-          href="/data-health"
+          href={isLive ? "/setup/connections" : "/data-health"}
           className={cn(
             "inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring",
             staleCount > 0
@@ -157,7 +201,17 @@ export function TopBar() {
           {staleCount > 0 ? `${staleCount} stale` : "All fresh"}
         </Link>
 
-        <ModePill />
+        {isLive ? (
+          <span
+            className="inline-flex h-7 items-center gap-1.5 rounded-full border border-info/30 bg-info/12 px-2.5 text-xs font-medium text-info"
+            title="Reads mirror the connected live sources (WooCommerce, Meta, WhatsApp, Ninja Van). Writes to external systems are not enabled yet."
+          >
+            <span className="size-1.5 rounded-full bg-info" aria-hidden />
+            Live · read-only
+          </span>
+        ) : (
+          <ModePill />
+        )}
 
         {/* create */}
         <DropdownMenu>
@@ -210,6 +264,12 @@ export function TopBar() {
                 Mark all read
               </Button>
             </div>
+            {isLive ? (
+              <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+                No live notifications yet — alerting arrives with the work-item layer.
+                Sync health lives on Setup → Store connections.
+              </p>
+            ) : (
             <ul className="max-h-96 overflow-y-auto">
               {notifications.map((n) => (
                 <li key={n.id} className="border-b last:border-0">
@@ -244,6 +304,7 @@ export function TopBar() {
                 </li>
               ))}
             </ul>
+            )}
           </PopoverContent>
         </Popover>
 
