@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartCard } from "@/components/charts/chart-card";
 import { ChartLegend, SpendRevenueTrend } from "@/components/charts/commercial-charts";
+import { LiveAdsPanel } from "@/components/metrics/live-ads-panel";
 import { MetricCard } from "@/components/metrics/metric-card";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { MoneyCell } from "@/components/tables/cells";
@@ -96,6 +97,9 @@ function MarketingInner() {
           <Link href="/marketing/accounts/new"><Plus className="size-3.5" aria-hidden /> Connect ad account</Link>
         </Button>
       </PageHeader>
+
+      {/* live Meta spend mirror — renders only with a real session + data */}
+      <LiveAdsPanel />
 
       {/* attribution caveat — always visible */}
       <p className="flex items-start gap-2 rounded-md border border-info/25 bg-info/10 px-3 py-2 text-xs text-info">
