@@ -29,19 +29,11 @@ import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
 
-const ACTIVITY_OPTIONS = [
-  { key: "any", label: "Any activity" },
-  { key: "new", label: "New (first order < 30d)" },
-  { key: "active", label: "Active (< 30d)" },
-  { key: "at_risk", label: "At risk (30–90d)" },
-  { key: "dormant", label: "Dormant (> 90d)" },
-] as const;
-
 function repeatState(orders: number): string {
   return orders >= 5 ? "loyal" : orders > 1 ? "repeat" : "first-time";
 }
 
-function lifecycle(last: string | null): { label: string; cls?: string } {
+function lifecycleOf(last: string | null): { label: string; cls?: string } {
   if (!last) return { label: "—" };
   const days = (Date.now() - new Date(last).getTime()) / 86_400_000;
   if (days <= 30) return { label: "active" };
@@ -72,7 +64,11 @@ function CustomersInner() {
   // Brand + market scope come from the top bar's live controls, like every live surface.
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
-  const [activity, setActivity] = useQueryState("activity", parseAsString.withDefault("any"));
+  const [lifecycle, setLifecycle] = useQueryState("lifecycle", parseAsString.withDefault("any"));
+  const [repeat, setRepeat] = useQueryState("repeat", parseAsString.withDefault("any"));
+  const [tier, setTier] = useQueryState("tier", parseAsString.withDefault("any"));
+  const [consent, setConsent] = useQueryState("consent", parseAsString.withDefault("any"));
+  const [risk, setRisk] = useQueryState("risk", parseAsString.withDefault("any"));
   const [page, setPage] = useQueryState("page", parseAsInteger.withDefault(1));
 
   const [brands, setBrands] = useState<LiveBrand[]>([]);
@@ -100,8 +96,10 @@ function CustomersInner() {
         pageSize: PAGE_SIZE,
         search: q,
         brandId: liveBrandId,
-        activity: activity === "any" ? null : activity,
+        activity: lifecycle === "any" ? null : lifecycle,
         countries: liveMarkets,
+        repeat: repeat === "any" ? null : repeat,
+        tier: tier === "any" ? null : tier,
       });
       setRows(result.rows);
       setTotal(result.total);
@@ -110,7 +108,7 @@ function CustomersInner() {
     } finally {
       setLoading(false);
     }
-  }, [page, q, liveBrandId, liveMarkets, activity]);
+  }, [page, q, liveBrandId, liveMarkets, lifecycle, repeat, tier]);
 
   useEffect(() => {
     // Server-side query re-runs on any filter/page change.
@@ -119,7 +117,7 @@ function CustomersInner() {
   }, [reload]);
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const filtersActive = q !== "" || activity !== "any";
+  const filtersActive = q !== "" || lifecycle !== "any" || repeat !== "any" || tier !== "any" || consent !== "any" || risk !== "any";
 
   const columns = useMemo<ColumnDef<LiveCustomerRow, unknown>[]>(
     () => [
@@ -161,7 +159,7 @@ function CustomersInner() {
         header: "Lifecycle",
         enableSorting: false,
         cell: ({ row }) => {
-          const lc = lifecycle(row.original.last_order_at);
+          const lc = lifecycleOf(row.original.last_order_at);
           return <span className={cn("capitalize", lc.cls)}>{lc.label}</span>;
         },
       },
@@ -234,17 +232,52 @@ function CustomersInner() {
             aria-label="Search customers"
           />
         </form>
-        <Select value={activity} onValueChange={(v) => { void setActivity(v === "any" ? null : v); void setPage(null); }}>
-          <SelectTrigger className="h-8 w-48 text-xs" aria-label="Activity"><SelectValue /></SelectTrigger>
+        <Select value={lifecycle} onValueChange={(v) => { void setLifecycle(v === "any" ? null : v); void setPage(null); }}>
+          <SelectTrigger className="h-8 w-36 text-xs" aria-label="Lifecycle"><SelectValue /></SelectTrigger>
           <SelectContent>
-            {ACTIVITY_OPTIONS.map((a) => (
-              <SelectItem key={a.key} value={a.key}>{a.label}</SelectItem>
+            <SelectItem value="any">Any lifecycle</SelectItem>
+            {["new", "active", "at_risk", "dormant", "provisional"].map((s) => (
+              <SelectItem key={s} value={s}>{s.replace("_", " ")}</SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+        <Select value={repeat} onValueChange={(v) => { void setRepeat(v === "any" ? null : v); void setPage(null); }}>
+          <SelectTrigger className="h-8 w-32 text-xs" aria-label="Repeat state"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="any">Any repeat</SelectItem>
+            <SelectItem value="first_time">First-time</SelectItem>
+            <SelectItem value="repeat">Repeat</SelectItem>
+            <SelectItem value="loyal">Loyal</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={tier} onValueChange={(v) => { void setTier(v === "any" ? null : v); void setPage(null); }}>
+          <SelectTrigger className="h-8 w-28 text-xs" aria-label="Value tier"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="any">Any tier</SelectItem>
+            {["vip", "high", "mid", "low"].map((t) => (
+              <SelectItem key={t} value={t}>{t.toUpperCase()}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={consent} onValueChange={(v) => { void setConsent(v === "any" ? null : v); }}>
+          <SelectTrigger className="h-8 w-44 text-xs" aria-label="Marketing consent"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="any">Any WA consent</SelectItem>
+            <SelectItem value="granted" disabled>WA marketing granted — source pending</SelectItem>
+            <SelectItem value="revoked" disabled>WA marketing revoked — source pending</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={risk} onValueChange={(v) => { void setRisk(v === "any" ? null : v); }}>
+          <SelectTrigger className="h-8 w-32 text-xs" aria-label="Risk"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="any">Any risk</SelectItem>
+            <SelectItem value="service" disabled>Service risk — source pending</SelectItem>
+            <SelectItem value="cod" disabled>COD risk — source pending</SelectItem>
           </SelectContent>
         </Select>
         {filtersActive && (
           <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs text-muted-foreground"
-            onClick={() => { setSearchDraft(""); void setQ(null); void setActivity(null); void setPage(null); }}>
+            onClick={() => { setSearchDraft(""); void setQ(null); void setLifecycle(null); void setRepeat(null); void setTier(null); void setConsent(null); void setRisk(null); void setPage(null); }}>
             <X className="size-3" aria-hidden /> Clear
           </Button>
         )}

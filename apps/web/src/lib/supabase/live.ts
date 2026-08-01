@@ -315,6 +315,8 @@ export async function fetchLiveCustomers(q: {
   brandId: number | null;
   activity: string | null;
   countries?: string[] | null;
+  repeat?: string | null;
+  tier?: string | null;
 }): Promise<{ rows: LiveCustomerRow[]; total: number }> {
   const { data, error } = await getSupabase().rpc("live_customers", {
     p_page: q.page,
@@ -323,6 +325,8 @@ export async function fetchLiveCustomers(q: {
     p_brand_id: q.brandId,
     p_activity: q.activity,
     p_countries: q.countries && q.countries.length > 0 ? q.countries : null,
+    p_repeat: q.repeat ?? null,
+    p_tier: q.tier ?? null,
   });
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as LiveCustomerRow[];
