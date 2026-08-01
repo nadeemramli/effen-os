@@ -12,32 +12,33 @@ import {
 } from "@/lib/supabase/live";
 
 /**
- * Commercial scorecard over the LIVE orders_read mirror. Renders only when a
- * real Supabase session exists (RLS authorizes the aggregate); otherwise the
- * caller's fallback (the demo scorecard) stays. Currencies are never merged —
- * MYR and SGD figures sit side by side until an FX policy is governed.
+ * The original seven-card commercial scorecard, fed by the live mirror when a
+ * real session exists (the demo scorecard is the signed-out fallback). Cards
+ * whose sources are not yet connected say so instead of faking numbers.
+ * Windows follow the top bar's Today / 7d / 30d toggle; brand and market
+ * scope follow the live switchers.
  */
+
+interface AdFact {
+  account_ref: number;
+  date: string;
+  spend: number | null;
+}
+interface AdAccount {
+  id: number;
+  brand_id: number | null;
+  market: string | null;
+}
 
 type State =
   | { kind: "checking" }
   | { kind: "no-session" }
-  | { kind: "ready"; rows: LiveScorecardRow[]; brands: LiveBrand[] }
+  | { kind: "ready"; rows: LiveScorecardRow[]; brands: LiveBrand[]; facts: AdFact[]; accounts: AdAccount[] }
   | { kind: "error"; message: string };
 
 function money(currency: string, n: number): string {
   const compact = n >= 100_000 ? `${(n / 1000).toFixed(0)}k` : n >= 10_000 ? `${(n / 1000).toFixed(1)}k` : n.toFixed(0);
   return `${currency === "MYR" ? "RM" : currency === "SGD" ? "S$" : currency} ${compact}`;
-}
-
-function sumBy(rows: LiveScorecardRow[], win: string): { orders: number; byCcy: Record<string, number> } {
-  const scoped = rows.filter((r) => r.win === win);
-  const byCcy: Record<string, number> = {};
-  let orders = 0;
-  for (const r of scoped) {
-    orders += Number(r.orders);
-    byCcy[r.currency_code] = (byCcy[r.currency_code] ?? 0) + Number(r.revenue);
-  }
-  return { orders, byCcy };
 }
 
 function ccyLine(byCcy: Record<string, number>): string {
@@ -51,6 +52,7 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
   const [state, setState] = useState<State>({ kind: "checking" });
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
+  const dateRange = useAppStore((s) => s.session.dateRange);
 
   useEffect(() => {
     if (!isSupabaseConfigured()) {
@@ -65,8 +67,13 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
         return;
       }
       try {
-        const [rows, brands] = await Promise.all([fetchLiveScorecard(), fetchLiveBrands()]);
-        setState({ kind: "ready", rows, brands: brands.filter((b) => b.status === "active") });
+        const [rows, brands, facts, accounts] = await Promise.all([
+          fetchLiveScorecard(),
+          fetchLiveBrands(),
+          getSupabase().from("ad_daily_facts").select("account_ref, date, spend").then((r) => (r.data ?? []) as AdFact[]),
+          getSupabase().from("ad_accounts_read").select("id, brand_id, market").then((r) => (r.data ?? []) as AdAccount[]),
+        ]);
+        setState({ kind: "ready", rows, brands: brands.filter((b) => b.status === "active"), facts, accounts });
       } catch (e) {
         setState({ kind: "error", message: (e as Error).message });
       }
@@ -76,91 +83,90 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
   if (state.kind === "no-session" || state.kind === "error") return <>{fallback}</>;
   if (state.kind === "checking") {
     return (
-      <section aria-label="Commercial scorecard" className="grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-4">
-        {Array.from({ length: 4 }, (_, i) => (
+      <section aria-label="Commercial scorecard" className="grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7">
+        {Array.from({ length: 7 }, (_, i) => (
           <div key={i} className="h-24 animate-pulse rounded-lg border bg-muted/30" />
         ))}
       </section>
     );
   }
 
-  // Top-bar live brand + market scope apply to every window.
+  const win = dateRange === "today" ? "today" : dateRange === "7d" ? "d7" : "d30";
+  const windowDays = dateRange === "today" ? 1 : dateRange === "7d" ? 7 : 30;
+
+  // Top-bar brand + market scope applies everywhere.
   const rows = state.rows.filter(
     (r) =>
+      r.win === win &&
       (liveBrandId === null || r.brand_id === liveBrandId) &&
       (liveMarkets.length === 0 || liveMarkets.includes(r.market)),
   );
-  const today = sumBy(rows, "today");
-  const yesterday = sumBy(rows, "yesterday");
-  const d7 = sumBy(rows, "d7");
-  const d30 = sumBy(rows, "d30");
+  const byCcy: Record<string, number> = {};
+  let orders = 0;
+  for (const r of rows) {
+    orders += Number(r.orders);
+    byCcy[r.currency_code] = (byCcy[r.currency_code] ?? 0) + Number(r.revenue);
+  }
 
-  const ordersDelta =
-    yesterday.orders > 0
-      ? `${today.orders >= yesterday.orders ? "+" : ""}${(((today.orders - yesterday.orders) / yesterday.orders) * 100).toFixed(0)}% vs yesterday`
-      : "no yesterday baseline";
+  // Ad spend for the same window and scope (Meta facts, all MYR-billed).
+  const accountById = new Map(state.accounts.map((a) => [a.id, a]));
+  const cutoff = new Date(Date.now() - windowDays * 86_400_000).toISOString().slice(0, 10);
+  let adSpend = 0;
+  for (const f of state.facts) {
+    const acc = accountById.get(f.account_ref);
+    if (!acc) continue;
+    if (liveBrandId !== null && acc.brand_id !== liveBrandId) continue;
+    if (liveMarkets.length > 0 && !liveMarkets.includes(acc.market ?? "")) continue;
+    if (f.date >= cutoff) adSpend += Number(f.spend ?? 0);
+  }
 
-  /* per-brand 7-day revenue, native currency */
-  const brandLines = state.brands
-    .filter((b) => liveBrandId === null || b.id === liveBrandId)
-    .map((b) => {
-      const byCcy: Record<string, number> = {};
-      let orders = 0;
-      for (const r of rows.filter((r) => r.win === "d7" && r.brand_id === b.id)) {
-        orders += Number(r.orders);
-        byCcy[r.currency_code] = (byCcy[r.currency_code] ?? 0) + Number(r.revenue);
-      }
-      return { name: b.name, orders, line: ccyLine(byCcy) };
-    })
-    .filter((b) => b.orders > 0)
-    .sort((a, b) => b.orders - a.orders);
+  const ccyKeys = Object.keys(byCcy);
+  const singleCcyRevenue = ccyKeys.length === 1 ? byCcy[ccyKeys[0]!]! : null;
+  const mer =
+    adSpend > 0 && singleCcyRevenue !== null && ccyKeys[0] === "MYR"
+      ? (singleCcyRevenue / adSpend).toFixed(2)
+      : null;
+
+  const windowHint = dateRange === "today" ? "Today (MYT) · live mirror" : `Last ${windowDays} days · live mirror`;
 
   return (
     <section aria-label="Commercial scorecard (live)" className="space-y-3">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7">
         <MetricCard
           metricKey="net_revenue"
-          label="Recognized revenue — today"
-          value={ccyLine(today.byCcy)}
-          hint="processing + completed · MYT day · live mirror"
+          value={ccyLine(byCcy)}
+          hint={`${windowHint} · recognized = processing + completed`}
         />
         <MetricCard
-          metricKey="orders"
-          label="Orders — today"
-          value={today.orders.toLocaleString()}
-          delta={{
-            text: ordersDelta,
-            tone: today.orders >= yesterday.orders ? "success" : "destructive",
-          }}
-          hint={`yesterday: ${yesterday.orders.toLocaleString()} orders · ${ccyLine(yesterday.byCcy)}`}
+          metricKey="contribution"
+          value="—"
+          hint="Arrives when COGS + fee sources connect"
         />
         <MetricCard
-          metricKey="net_revenue"
-          label="Recognized revenue — 7 days"
-          value={ccyLine(d7.byCcy)}
-          hint={`${d7.orders.toLocaleString()} orders`}
+          metricKey="ad_spend"
+          value={adSpend > 0 ? money("MYR", adSpend) : "—"}
+          hint={adSpend > 0 ? "Meta · seeded accounts · billed in MYR" : "Meta daily sync pending token"}
         />
         <MetricCard
-          metricKey="net_revenue"
-          label="Recognized revenue — 30 days"
-          value={ccyLine(d30.byCcy)}
-          hint={`${d30.orders.toLocaleString()} orders`}
+          metricKey="blended_mer"
+          value={mer ?? "—"}
+          hint={mer ? "MYR revenue ÷ Meta spend" : "Needs single-currency scope — pick a market"}
+        />
+        <MetricCard metricKey="orders" value={orders.toLocaleString()} hint={windowHint} />
+        <MetricCard
+          metricKey="new_customer_mix"
+          value="—"
+          hint="Derives once identity windowing lands"
+        />
+        <MetricCard
+          metricKey="target_variance"
+          value="—"
+          hint="Arrives with the Prophit plan model"
         />
       </div>
-      {brandLines.length > 0 && (
-        <div className="grid grid-cols-2 gap-x-6 gap-y-1 rounded-lg border bg-card px-4 py-3 text-sm lg:grid-cols-4">
-          {brandLines.map((b) => (
-            <div key={b.name} className="flex items-baseline justify-between gap-2">
-              <span className="truncate text-xs text-muted-foreground">{b.name} · 7d</span>
-              <span className="tnum whitespace-nowrap text-sm font-medium">{b.line}</span>
-            </div>
-          ))}
-        </div>
-      )}
       <p className="text-[11px] text-muted-foreground">
-        Live mirror of the connected WooCommerce stores · recognized = processing + completed at source ·
-        currencies shown separately (no FX policy governed yet) · ad spend, contribution, and plan variance
-        return when their live sources connect.
+        Live mirror of the connected stores · currencies never merged (no FX policy governed) · platform
+        attribution is not incrementality.
       </p>
     </section>
   );
