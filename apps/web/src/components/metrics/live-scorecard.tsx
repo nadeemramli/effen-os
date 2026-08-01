@@ -6,8 +6,10 @@ import { useAppStore } from "@/lib/store/provider";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import {
   fetchLiveBrands,
+  fetchLivePlanBaseline,
   fetchLiveScorecard,
   type LiveBrand,
+  type LivePlanBaselineRow,
   type LiveScorecardRow,
 } from "@/lib/supabase/live";
 
@@ -33,7 +35,7 @@ interface AdAccount {
 type State =
   | { kind: "checking" }
   | { kind: "no-session" }
-  | { kind: "ready"; rows: LiveScorecardRow[]; brands: LiveBrand[]; facts: AdFact[]; accounts: AdAccount[] }
+  | { kind: "ready"; rows: LiveScorecardRow[]; brands: LiveBrand[]; facts: AdFact[]; accounts: AdAccount[]; baseline: LivePlanBaselineRow[] }
   | { kind: "error"; message: string };
 
 function money(currency: string, n: number): string {
@@ -67,13 +69,14 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
         return;
       }
       try {
-        const [rows, brands, facts, accounts] = await Promise.all([
+        const [rows, brands, facts, accounts, baseline] = await Promise.all([
           fetchLiveScorecard(),
           fetchLiveBrands(),
           getSupabase().from("ad_daily_facts").select("account_ref, date, spend").then((r) => (r.data ?? []) as AdFact[]),
           getSupabase().from("ad_accounts_read").select("id, brand_id, market").then((r) => (r.data ?? []) as AdAccount[]),
+          fetchLivePlanBaseline(),
         ]);
-        setState({ kind: "ready", rows, brands: brands.filter((b) => b.status === "active"), facts, accounts });
+        setState({ kind: "ready", rows, brands: brands.filter((b) => b.status === "active"), facts, accounts, baseline });
       } catch (e) {
         setState({ kind: "error", message: (e as Error).message });
       }
@@ -120,6 +123,20 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
     if (f.date >= cutoff) adSpend += Number(f.spend ?? 0);
   }
 
+  // Baseline expectation for the same window and scope.
+  const baseRows = state.baseline.filter(
+    (r) =>
+      r.win === win &&
+      (liveBrandId === null || r.brand_id === liveBrandId) &&
+      (liveMarkets.length === 0 || liveMarkets.includes(r.market)),
+  );
+  const expByCcy: Record<string, number> = {};
+  let expOrders = 0;
+  for (const r of baseRows) {
+    expOrders += Number(r.expected_orders);
+    expByCcy[r.currency_code] = (expByCcy[r.currency_code] ?? 0) + Number(r.expected_revenue);
+  }
+
   const ccyKeys = Object.keys(byCcy);
   const singleCcyRevenue = ccyKeys.length === 1 ? byCcy[ccyKeys[0]!]! : null;
   const mer =
@@ -158,11 +175,29 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
           value="—"
           hint="Derives once identity windowing lands"
         />
-        <MetricCard
-          metricKey="target_variance"
-          value="—"
-          hint="Arrives with the Prophit plan model"
-        />
+        {(() => {
+          // Revenue variance when the scope is single-currency; orders variance otherwise.
+          const singleExp = ccyKeys.length === 1 ? expByCcy[ccyKeys[0]!] : undefined;
+          const revBased = singleExp !== undefined && singleExp > 0 && singleCcyRevenue !== null;
+          const expected = revBased ? singleExp! : expOrders;
+          const actual = revBased ? singleCcyRevenue! : orders;
+          if (!expected || expected <= 0) {
+            return <MetricCard metricKey="target_variance" value="—" hint="Baseline needs 4 weeks of history for this scope" />;
+          }
+          const v = (actual - expected) / expected;
+          const pct = `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
+          return (
+            <MetricCard
+              metricKey="target_variance"
+              value={pct}
+              delta={{
+                text: v >= 0 ? "on or above baseline" : "below baseline",
+                tone: v >= 0 ? "success" : "destructive",
+              }}
+              hint={`${revBased ? "Revenue" : "Orders"} vs 4-week same-weekday baseline · statistical, not a target${win === "today" ? " · partial day vs full-day baseline" : ""}`}
+            />
+          );
+        })()}
       </div>
       <p className="text-[11px] text-muted-foreground">
         Live mirror of the connected stores · currencies never merged (no FX policy governed) · platform

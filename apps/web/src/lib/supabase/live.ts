@@ -290,6 +290,22 @@ export async function fetchLiveScorecard(): Promise<LiveScorecardRow[]> {
   return (data ?? []) as LiveScorecardRow[];
 }
 
+export interface LivePlanBaselineRow {
+  win: "today" | "yesterday" | "d7" | "d30";
+  brand_id: number | null;
+  market: string;
+  currency_code: string;
+  expected_revenue: number;
+  expected_orders: number;
+}
+
+/** Statistical expectation: 4-week same-weekday average per brand × market × currency. */
+export async function fetchLivePlanBaseline(): Promise<LivePlanBaselineRow[]> {
+  const { data, error } = await getSupabase().rpc("live_plan_baseline");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LivePlanBaselineRow[];
+}
+
 /* ---------- Customer 360 read-side ---------- */
 
 export interface LiveCustomerRow {

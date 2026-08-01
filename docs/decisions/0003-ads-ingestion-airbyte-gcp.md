@@ -87,6 +87,17 @@ a visible "banned-account history via export" note in Marketing.
 5. CSV export convention for banned accounts (bucket path, filename with
    account id + date range, column dialect per platform export version).
 
+## Amendment (2026-08-01): orders join the warehouse too
+
+Accepted: operational read-models flow **Supabase → BigQuery** so spend and
+revenue live in one analytical home (MER / aMER / CAC-by-cohort modeling
+happens where the ads facts are). Mechanism: Airbyte's Postgres source
+reading Supabase through a dedicated read-only role (no new code in
+Fullkit), syncing `orders_read`, `ad_accounts_read`, `ad_daily_facts`,
+`nv_shipments`, and the customers mart. Division of labor stays sharp:
+BigQuery = analytics home; Supabase = operational serving; Fullkit Reports
+stay governed/operational and do not become a BI tool.
+
 ## Note on "GSC"
 
 This ADR interprets the source-of-truth bucket as **GCS (Google Cloud
