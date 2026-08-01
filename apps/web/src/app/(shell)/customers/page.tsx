@@ -184,12 +184,28 @@ function CustomersInner() {
         cell: ({ row }) => <span className="tnum">{revenueLine(row.original.revenue_by_currency)}</span>,
       },
       {
+        id: "tier",
+        header: "Tier",
+        enableSorting: false,
+        cell: ({ row }) => {
+          const total = Object.values(row.original.revenue_by_currency ?? {}).reduce((s, v) => s + Number(v), 0);
+          const tier = total >= 3000 ? "vip" : total >= 1000 ? "high" : total >= 300 ? "mid" : "low";
+          return <span className="text-xs uppercase">{tier}</span>;
+        },
+      },
+      {
         id: "last",
         header: "Last order",
         enableSorting: false,
         cell: ({ row }) => (
           <span className="tnum text-muted-foreground">{relative(row.original.last_order_at)}</span>
         ),
+      },
+      {
+        id: "risk",
+        header: "Risk",
+        enableSorting: false,
+        cell: () => <span className="text-[11px] text-muted-foreground">—</span>,
       },
     ],
     [brandById],
