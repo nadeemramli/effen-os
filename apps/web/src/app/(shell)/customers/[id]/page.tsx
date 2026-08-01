@@ -47,7 +47,8 @@ function lifecycle(last: string | null): string {
 
 function tierOf(revenue: Record<string, number> | null): string {
   const total = Object.values(revenue ?? {}).reduce((s, v) => s + Number(v), 0);
-  return total >= 3000 ? "vip" : total >= 1000 ? "high" : total >= 300 ? "mid" : "low";
+  // Thresholds calibrated to the live value distribution (p99/p95/p75).
+  return total >= 900 ? "vip" : total >= 600 ? "high" : total >= 230 ? "mid" : "low";
 }
 
 function revenueLine(byCcy: Record<string, number> | null): string {

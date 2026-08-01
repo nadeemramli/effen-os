@@ -187,8 +187,9 @@ function CustomersInner() {
         enableSorting: false,
         cell: ({ row }) => {
           const total = Object.values(row.original.revenue_by_currency ?? {}).reduce((s, v) => s + Number(v), 0);
-          const tier = total >= 3000 ? "vip" : total >= 1000 ? "high" : total >= 300 ? "mid" : "low";
-          return <span className="text-xs uppercase">{tier}</span>;
+          // Thresholds calibrated to the live value distribution (p99/p95/p75).
+          const t = total >= 900 ? "vip" : total >= 600 ? "high" : total >= 230 ? "mid" : "low";
+          return <span className="text-xs uppercase">{t}</span>;
         },
       },
       {
