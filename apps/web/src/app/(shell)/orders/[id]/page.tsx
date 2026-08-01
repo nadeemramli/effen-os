@@ -16,6 +16,7 @@ import { getSupabase } from "@/lib/supabase/client";
 import {
   fetchLiveBrands,
   fetchNvShipmentForOrder,
+  fetchOrderCorrection,
   fetchShipReadiness,
   fetchWooConnections,
   SHIP_ISSUE_LABELS,
@@ -24,8 +25,10 @@ import {
   type LiveNvShipment,
   type LiveOrderRow,
   type LiveWooConnection,
+  type OrderCorrection,
   type ShipReadinessRow,
 } from "@/lib/supabase/live";
+import { FixShippingDialog } from "@/components/dialogs/fix-shipping-dialog";
 import type { StatusMeta } from "@/lib/domain/status-maps";
 import { cn } from "@/lib/utils";
 
@@ -76,6 +79,12 @@ function relative(iso: string | null): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
+/** Connection freshness against the 15-minute SLA (3× = aging). */
+function freshnessMeta(lastSuccessAt: string | null): StatusMeta {
+  const fresh = lastSuccessAt !== null && Date.now() - new Date(lastSuccessAt).getTime() < 45 * 60_000;
+  return fresh ? { label: "fresh", tone: "success" } : { label: "aging", tone: "warning" };
+}
+
 function identityKeyOf(o: LiveOrderRow): string | null {
   const phone = (o.customer?.phone ?? "").replace(/[^0-9]/g, "");
   if (phone) return phone;
@@ -87,6 +96,7 @@ interface WooRaw {
   payment_method_title?: string;
   shipping_total?: string;
   discount_total?: string;
+  billing?: { address_1?: string; first_name?: string; last_name?: string };
 }
 
 function OrderDetailInner() {
@@ -96,6 +106,9 @@ function OrderDetailInner() {
   const [connections, setConnections] = useState<LiveWooConnection[]>([]);
   const [nv, setNv] = useState<{ shipment: LiveNvShipment; events: LiveNvEvent[] } | null>(null);
   const [readiness, setReadiness] = useState<ShipReadinessRow | null | "unknown">("unknown");
+  const [correction, setCorrection] = useState<OrderCorrection | null>(null);
+  const [fixOpen, setFixOpen] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     // Fetch-on-mount; every setState happens after an await.
@@ -117,6 +130,7 @@ function OrderDetailInner() {
       if (row) {
         const ref = row.order_number ?? row.source_order_id;
         fetchNvShipmentForOrder(ref).then(setNv).catch(() => setNv(null));
+        fetchOrderCorrection(row.id).then(setCorrection).catch(() => setCorrection(null));
         if (["pending", "on-hold", "processing"].includes(row.source_status)) {
           // Membership check against the flagged list; absence = ship-ready.
           fetchShipReadiness(30)
@@ -125,7 +139,7 @@ function OrderDetailInner() {
         }
       }
     })();
-  }, [params.id]);
+  }, [params.id, reloadKey]);
 
   const conn = useMemo(
     () => (order && order !== "loading" ? connections.find((c) => c.id === order.integration_id) : undefined),
@@ -306,6 +320,8 @@ function OrderDetailInner() {
                     <span className="text-muted-foreground">Ship-readiness</span>
                     {readiness === null ? (
                       tonePill({ label: "Ship-ready", tone: "success" })
+                    ) : readiness.issues.length === 0 ? (
+                      tonePill({ label: "Corrected · staged", tone: "info" })
                     ) : (
                       <span className="flex flex-col items-end gap-1">
                         <span className="flex flex-wrap justify-end gap-1">
@@ -318,6 +334,24 @@ function OrderDetailInner() {
                         ))}
                       </span>
                     )}
+                  </div>
+                )}
+                {correction && (
+                  <div className="rounded-md border border-info/25 bg-info/10 px-2 py-1.5 text-xs">
+                    <div className="font-medium text-info">Correction recorded in Fullkit</div>
+                    <ul className="mt-1 space-y-0.5 text-muted-foreground">
+                      {Object.entries(correction.corrected).map(([k, v]) => (
+                        <li key={k}>
+                          <span className="capitalize">{k.replace("_1", "").replace("_", " ")}</span>:{" "}
+                          <span className="line-through">{correction.original?.[k] || "—"}</span> → <span className="text-foreground">{v}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    {correction.note && <p className="mt-1 text-muted-foreground">Note: {correction.note}</p>}
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {correction.corrected_by} · {fmtDateTime(correction.corrected_at)} · staged until write propagation
+                      is enabled (the courier label still uses the source values today).
+                    </p>
                   </div>
                 )}
                 <div className="flex justify-between"><span className="text-muted-foreground">Fulfilment</span><span>{order.source_status === "completed" ? "Fulfilled" : order.source_status === "processing" ? "To fulfil (Fighter operates)" : "—"}</span></div>
@@ -344,11 +378,7 @@ function OrderDetailInner() {
                   <Link href="/setup/connections" className="text-muted-foreground underline-offset-2 hover:underline">
                     {conn?.name ?? "connection"}
                   </Link>
-                  {conn && tonePill(
-                    conn.last_success_at && Date.now() - new Date(conn.last_success_at).getTime() < 45 * 60_000
-                      ? { label: "fresh", tone: "success" }
-                      : { label: "aging", tone: "warning" },
-                  )}
+                  {conn && tonePill(freshnessMeta(conn.last_success_at))}
                 </div>
                 <div className="flex justify-between text-xs text-muted-foreground">
                   <span>Last modified at source</span><span className="tnum">{fmtDateTime(order.updated_at_source ?? null)}</span>
@@ -390,6 +420,11 @@ function OrderDetailInner() {
           <Card>
             <CardHeader><CardTitle className="text-sm font-medium">Actions</CardTitle></CardHeader>
             <CardContent className="space-y-2">
+              {["pending", "on-hold", "processing"].includes(order.source_status) && (
+                <Button size="sm" className="w-full justify-start" onClick={() => setFixOpen(true)}>
+                  {correction ? "Edit shipping correction" : "Fix shipping details"}
+                </Button>
+              )}
               {["Assign owner", "Resend confirmation", "Add note"].map((a) => (
                 <Button key={a} variant="outline" size="sm" className="w-full justify-start" disabled>
                   {a}
@@ -399,8 +434,9 @@ function OrderDetailInner() {
                 Cancel order
               </Button>
               <p className="rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">
-                Live mode is read-only — the source store stays authoritative. Actions unlock with the
-                Slice 3 write pilot (approval-gated, audited).
+                Shipping fixes are recorded here in Fullkit (audited) — no external system is written.
+                Propagation to the store and courier, and the remaining actions, unlock with the Slice 3
+                write pilot.
               </p>
             </CardContent>
           </Card>
@@ -420,6 +456,27 @@ function OrderDetailInner() {
           </Card>
         </div>
       </div>
+
+      <FixShippingDialog
+        open={fixOpen}
+        onOpenChange={setFixOpen}
+        orderId={order.id}
+        orderLabel={`#${order.order_number ?? order.source_order_id}`}
+        current={{
+          name: correction?.corrected.name ?? order.customer?.name ?? "",
+          phone: correction?.corrected.phone ?? order.customer?.phone ?? "",
+          address_1: correction?.corrected.address_1 ?? raw.billing?.address_1 ?? "",
+          postcode: correction?.corrected.postcode ?? order.customer?.postcode ?? "",
+          city: correction?.corrected.city ?? order.customer?.city ?? "",
+        }}
+        suggestions={readiness !== "unknown" && readiness ? readiness.suggestions : undefined}
+        issues={
+          readiness !== "unknown" && readiness
+            ? readiness.issues.map((i) => SHIP_ISSUE_LABELS[i] ?? i)
+            : undefined
+        }
+        onSaved={() => setReloadKey((k) => k + 1)}
+      />
     </PageBody>
   );
 }

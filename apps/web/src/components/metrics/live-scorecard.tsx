@@ -38,6 +38,11 @@ type State =
   | { kind: "ready"; rows: LiveScorecardRow[]; brands: LiveBrand[]; facts: AdFact[]; accounts: AdAccount[]; baseline: LivePlanBaselineRow[] }
   | { kind: "error"; message: string };
 
+/** ISO date N days back — the lower bound for a spend window. */
+function cutoffDate(windowDays: number): string {
+  return new Date(Date.now() - windowDays * 86_400_000).toISOString().slice(0, 10);
+}
+
 function money(currency: string, n: number): string {
   const compact = n >= 100_000 ? `${(n / 1000).toFixed(0)}k` : n >= 10_000 ? `${(n / 1000).toFixed(1)}k` : n.toFixed(0);
   return `${currency === "MYR" ? "RM" : currency === "SGD" ? "S$" : currency} ${compact}`;
@@ -113,7 +118,7 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
 
   // Ad spend for the same window and scope (Meta facts, all MYR-billed).
   const accountById = new Map(state.accounts.map((a) => [a.id, a]));
-  const cutoff = new Date(Date.now() - windowDays * 86_400_000).toISOString().slice(0, 10);
+  const cutoff = cutoffDate(windowDays);
   let adSpend = 0;
   for (const f of state.facts) {
     const acc = accountById.get(f.account_ref);

@@ -195,7 +195,7 @@ export interface LiveOrderRow {
   source_status: string;
   currency_code: string;
   total: number;
-  customer: { name?: string; email?: string | null; phone?: string | null; city?: string | null; country?: string | null };
+  customer: { name?: string; email?: string | null; phone?: string | null; city?: string | null; postcode?: string | null; country?: string | null };
   items: { sku: string | null; name: string | null; quantity: number; total: string }[];
   raw: unknown;
   placed_at: string | null;
@@ -385,16 +385,61 @@ export interface ShipReadinessRow {
   source_status: string;
   issues: string[];
   suggestions: Record<string, string>;
+  correction_status: "staged" | "applied" | null;
   total_checked: number;
   total_flagged: number;
+  total_corrected: number;
 }
 
-/** Red-lane orders (validation issues) among recent pre-ship orders. */
-export async function fetchShipReadiness(days = 14): Promise<{ rows: ShipReadinessRow[]; checked: number; flagged: number }> {
+/** Red-lane orders (unresolved issues) plus corrected-but-unpropagated ones. */
+export async function fetchShipReadiness(
+  days = 14,
+): Promise<{ rows: ShipReadinessRow[]; checked: number; flagged: number; corrected: number }> {
   const { data, error } = await getSupabase().rpc("live_ship_readiness", { p_days: days });
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as ShipReadinessRow[];
-  return { rows, checked: rows[0]?.total_checked ?? 0, flagged: rows[0]?.total_flagged ?? 0 };
+  return {
+    rows,
+    checked: rows[0]?.total_checked ?? 0,
+    flagged: rows[0]?.total_flagged ?? 0,
+    corrected: rows[0]?.total_corrected ?? 0,
+  };
+}
+
+/* ---------- fix-in-OS: shipping corrections (internal write, audited) ---------- */
+
+export interface OrderCorrection {
+  order_read_id: number;
+  corrected: Record<string, string>;
+  original: Record<string, string>;
+  status: "staged" | "applied" | "rejected";
+  note: string | null;
+  corrected_by: string | null;
+  corrected_at: string;
+}
+
+export async function fetchOrderCorrection(orderId: number): Promise<OrderCorrection | null> {
+  const { data, error } = await getSupabase()
+    .from("order_corrections")
+    .select("order_read_id, corrected, original, status, note, corrected_by, corrected_at")
+    .eq("order_read_id", orderId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data ?? null) as OrderCorrection | null;
+}
+
+/** Records the operator's fix in Fullkit. Does NOT touch Woo or Ninja Van. */
+export async function saveOrderCorrection(
+  orderId: number,
+  corrected: Record<string, string>,
+  note?: string,
+): Promise<void> {
+  const { error } = await getSupabase().rpc("save_order_correction", {
+    p_order_id: orderId,
+    p_corrected: corrected,
+    p_note: note ?? null,
+  });
+  if (error) throw new Error(error.message);
 }
 
 export const SHIP_ISSUE_LABELS: Record<string, string> = {

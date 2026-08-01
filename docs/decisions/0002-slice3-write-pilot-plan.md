@@ -71,6 +71,23 @@ green lane. Auto-correction beyond representation (semantic guessing)
 is explicitly rejected — a plausible-but-wrong address misdelivers
 silently, which is worse than a flagged one.*
 
+*Also live since 2026-08-01: **fix-in-OS**. Operators correct flagged
+shipping details inside Fullkit (HQ-admin/operations gated, audited,
+original value retained) rather than in eight separate wp-admins. The
+correction is an INTERNAL write — Fullkit's own DB — and re-grades the
+gate immediately, so a corrected order leaves the red lane and shows as
+"corrected · staged". The courier label still uses the source values
+until propagation exists, and the UI says so on every corrected order.*
+
+**Phase 1a — write-back-to-Woo (recommended FIRST external write).**
+Narrower and lower-risk than consignment creation, and independent of the
+NV/Fighter transition: push staged corrections to the order in
+WooCommerce, so whoever generates the label (Fighter today, Fullkit later)
+reads the corrected values and the store stays the single source of truth.
+Needs only a write-scoped Woo REST key for the pilot store; no NV
+approval, no Fighter scope change. Closes the operator loop end-to-end:
+flagged → fixed in the OS → corrected at source.
+
 **Phase 1 — Shadow writes (no external effect).** For the pilot brand,
 Fullkit *generates* the NV consignment payload for every eligible order —
 built, validated, stored, **never sent** — and diffs daily against what

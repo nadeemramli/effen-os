@@ -57,7 +57,7 @@ function FulfilmentInner() {
   const [toPick, setToPick] = useState<{ rows: LiveOrderRow[]; total: number }>({ rows: [], total: 0 });
   const [holds, setHolds] = useState<{ rows: LiveOrderRow[]; total: number }>({ rows: [], total: 0 });
   const [network, setNetwork] = useState<Awaited<ReturnType<typeof fetchNvNetwork>> | null>(null);
-  const [readiness, setReadiness] = useState<{ rows: ShipReadinessRow[]; checked: number; flagged: number }>({ rows: [], checked: 0, flagged: 0 });
+  const [readiness, setReadiness] = useState<{ rows: ShipReadinessRow[]; checked: number; flagged: number; corrected: number }>({ rows: [], checked: 0, flagged: 0, corrected: 0 });
   const [brands, setBrands] = useState<LiveBrand[]>([]);
   const [connections, setConnections] = useState<LiveWooConnection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -199,7 +199,8 @@ function FulfilmentInner() {
           <>
             {" "}<span className="font-medium text-foreground">
               Ship-readiness gate: {(readiness.checked - readiness.flagged).toLocaleString()} of {readiness.checked.toLocaleString()} pre-ship
-              orders (14d) pass validation · {readiness.flagged.toLocaleString()} need fixing below.
+              orders (14d) pass validation · {readiness.flagged.toLocaleString()} need fixing below
+              {readiness.corrected > 0 && ` · ${readiness.corrected.toLocaleString()} corrected in Fullkit, staged`}.
             </span>
           </>
         )}
@@ -286,10 +287,14 @@ function FulfilmentInner() {
                   <Link href={`/orders/${r.id}`} className="text-sm font-medium text-info underline-offset-2 hover:underline">
                     #{r.order_number}
                   </Link>
-                  {tonePill({ label: "not ship-ready", tone: "warning" })}
+                  {r.issues.length === 0
+                    ? tonePill({ label: "corrected · staged", tone: "info" })
+                    : tonePill({ label: "not ship-ready", tone: "warning" })}
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                    {r.issues.map((i) => SHIP_ISSUE_LABELS[i] ?? i).join(" · ")}
-                    {Object.keys(r.suggestions ?? {}).length > 0 && " — fix suggested on the order page"}
+                    {r.issues.length === 0
+                      ? "Fixed in Fullkit — reaches the courier when write propagation is enabled"
+                      : r.issues.map((i) => SHIP_ISSUE_LABELS[i] ?? i).join(" · ")}
+                    {r.issues.length > 0 && Object.keys(r.suggestions ?? {}).length > 0 && " — fix suggested on the order page"}
                   </span>
                   <span className="tnum shrink-0 text-[11px] text-muted-foreground">{relative(r.placed_at)}</span>
                 </li>

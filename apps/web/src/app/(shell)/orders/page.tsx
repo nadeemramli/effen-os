@@ -15,13 +15,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { DataTable } from "@/components/tables/data-table";
 import { tonePill } from "@/components/status/status-pill";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
@@ -29,11 +22,8 @@ import { LiveGuard } from "@/components/auth/live-guard";
 import {
   fetchLiveBrands,
   fetchLiveOrdersPage,
-  fetchNvShipmentForOrder,
   fetchWooConnections,
   type LiveBrand,
-  type LiveNvEvent,
-  type LiveNvShipment,
   type LiveOrderRow,
   type LiveWooConnection,
 } from "@/lib/supabase/live";
@@ -114,11 +104,6 @@ function fmtRelativeNow(iso: string | null): string {
   return new Date(iso).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kuala_Lumpur" });
 }
 
-function fmtDateTime(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("en-MY", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kuala_Lumpur" });
-}
-
 /** Store label from the connection name: "WooCommerce — Synovil MY (synovil.com)" → "synovil.com". */
 function storeLabel(conn: LiveWooConnection | undefined): string {
   if (!conn) return "—";
@@ -145,8 +130,6 @@ function OrdersInner() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [detail, setDetail] = useState<LiveOrderRow | null>(null);
-  const [nv, setNv] = useState<{ shipment: LiveNvShipment; events: LiveNvEvent[] } | null | "loading">(null);
   const [searchDraft, setSearchDraft] = useState(q);
 
   const activeView = SAVED_VIEWS.find((v) => v.key === view) ?? SAVED_VIEWS[0]!;
@@ -199,14 +182,6 @@ function OrdersInner() {
     void reload();
   }, [reload]);
 
-  const openDetail = useCallback((o: LiveOrderRow) => {
-    setDetail(o);
-    setNv("loading");
-    const ref = o.order_number ?? o.source_order_id;
-    fetchNvShipmentForOrder(ref)
-      .then((res) => setNv(res))
-      .catch(() => setNv(null));
-  }, []);
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const filtersActive = q !== "" || store !== "any" || status !== "any" || currency !== "any" || age !== "any";
@@ -482,108 +457,6 @@ function OrdersInner() {
         </>
       )}
 
-      {/* live order detail */}
-      <Sheet open={detail !== null} onOpenChange={(o) => { if (!o) { setDetail(null); setNv(null); } }}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-          {detail && (
-            <>
-              <SheetHeader>
-                <SheetTitle>
-                  #{detail.order_number ?? detail.source_order_id} · {detail.brand_id ? brandById.get(detail.brand_id)?.name : "unmapped"}
-                </SheetTitle>
-                <SheetDescription>
-                  {detail.customer?.name || "Unknown customer"} · {detail.customer?.phone ?? "no phone"} ·{" "}
-                  {[detail.customer?.city, detail.customer?.country].filter(Boolean).join(", ") || "no address"}
-                </SheetDescription>
-              </SheetHeader>
-              <div className="space-y-4 px-4 pb-6">
-                <div className="flex flex-wrap gap-1">
-                  {statePills(detail.source_status).map((p, i) => (
-                    <span key={i}>{tonePill(p.meta, `${p.dim}: ${p.meta.label}`)}</span>
-                  ))}
-                </div>
-
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b text-left text-muted-foreground">
-                      <th className="pb-1 font-medium">Item</th>
-                      <th className="pb-1 text-right font-medium">Qty</th>
-                      <th className="pb-1 text-right font-medium">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(detail.items ?? []).map((i, idx) => (
-                      <tr key={idx} className="border-b last:border-0">
-                        <td className="py-1.5">{i.name ?? i.sku ?? "—"}</td>
-                        <td className="tnum py-1.5 text-right">{i.quantity}</td>
-                        <td className="tnum py-1.5 text-right">{i.total}</td>
-                      </tr>
-                    ))}
-                    <tr>
-                      <td className="pt-2 font-medium">Grand total</td>
-                      <td />
-                      <td className="tnum pt-2 text-right font-medium">
-                        {detail.currency_code} {Number(detail.total).toFixed(2)}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-
-                {/* shipment (Ninja Van read-side) */}
-                <div>
-                  <div className="mb-1 text-xs font-medium text-muted-foreground">Shipment</div>
-                  {nv === "loading" ? (
-                    <div className="text-xs text-muted-foreground">Checking Ninja Van mirror…</div>
-                  ) : nv ? (
-                    <div className="rounded-md border p-2 text-xs">
-                      <div className="flex items-center justify-between">
-                        <span className="tnum font-medium">{nv.shipment.tracking_id}</span>
-                        {nv.shipment.status && tonePill({ label: nv.shipment.status, tone: nv.shipment.is_terminal ? "success" : "info" })}
-                      </div>
-                      <ul className="mt-2 space-y-1">
-                        {nv.events.map((ev) => (
-                          <li key={ev.id} className="flex justify-between text-muted-foreground">
-                            <span>{ev.status ?? "—"}</span>
-                            <span className="tnum">{fmtDateTime(ev.event_at)}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : (
-                    <div className="text-xs text-muted-foreground">
-                      No Ninja Van events linked to this order yet — tracking appears here once the courier webhook
-                      reports a parcel with this order reference.
-                    </div>
-                  )}
-                </div>
-
-                {/* provenance */}
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                  <span className="text-muted-foreground">Source</span>
-                  <span>{storeLabel(connById.get(detail.integration_id))} · WooCommerce</span>
-                  <span className="text-muted-foreground">Source order id</span>
-                  <span className="tnum">{detail.source_order_id}</span>
-                  <span className="text-muted-foreground">Source status</span>
-                  <span className="capitalize">{detail.source_status}</span>
-                  <span className="text-muted-foreground">Placed</span>
-                  <span className="tnum">{fmtDateTime(detail.placed_at)}</span>
-                  <span className="text-muted-foreground">Last modified (source)</span>
-                  <span className="tnum">{fmtDateTime(detail.updated_at_source ?? null)}</span>
-                  <span className="text-muted-foreground">Synced</span>
-                  <span className="tnum">{fmtDateTime(detail.synced_at)}</span>
-                </div>
-
-                <div>
-                  <div className="mb-1 text-xs font-medium text-muted-foreground">Raw source payload</div>
-                  <pre className="max-h-96 overflow-auto rounded-md border bg-muted/40 p-2 text-[10px] leading-relaxed">
-                    {JSON.stringify(detail.raw, null, 2)}
-                  </pre>
-                </div>
-              </div>
-            </>
-          )}
-        </SheetContent>
-      </Sheet>
     </PageBody>
   );
 }
