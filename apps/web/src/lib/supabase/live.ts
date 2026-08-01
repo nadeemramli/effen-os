@@ -374,6 +374,37 @@ export async function fetchLiveCustomerDetail(identityKey: string): Promise<Live
   return (data ?? null) as LiveCustomerDetail | null;
 }
 
+/* ---------- ship-readiness validation gate (read-only) ---------- */
+
+export interface ShipReadinessRow {
+  id: number;
+  order_number: string;
+  brand_id: number | null;
+  market: string;
+  placed_at: string | null;
+  source_status: string;
+  issues: string[];
+  suggestions: Record<string, string>;
+  total_checked: number;
+  total_flagged: number;
+}
+
+/** Red-lane orders (validation issues) among recent pre-ship orders. */
+export async function fetchShipReadiness(days = 14): Promise<{ rows: ShipReadinessRow[]; checked: number; flagged: number }> {
+  const { data, error } = await getSupabase().rpc("live_ship_readiness", { p_days: days });
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as ShipReadinessRow[];
+  return { rows, checked: rows[0]?.total_checked ?? 0, flagged: rows[0]?.total_flagged ?? 0 };
+}
+
+export const SHIP_ISSUE_LABELS: Record<string, string> = {
+  name_incomplete: "name incomplete",
+  phone_invalid: "phone invalid",
+  postcode_format: "postcode format",
+  address_incomplete: "address incomplete",
+  city_missing: "city missing",
+};
+
 /* ---------- Ninja Van shipment read-side ---------- */
 
 export interface LiveNvShipment {

@@ -14,11 +14,14 @@ import {
   fetchLiveBrands,
   fetchLiveOrdersPage,
   fetchNvNetwork,
+  fetchShipReadiness,
   fetchWooConnections,
+  SHIP_ISSUE_LABELS,
   type LiveBrand,
   type LiveNvShipment,
   type LiveOrderRow,
   type LiveWooConnection,
+  type ShipReadinessRow,
 } from "@/lib/supabase/live";
 import { useAppStore } from "@/lib/store/provider";
 
@@ -54,6 +57,7 @@ function FulfilmentInner() {
   const [toPick, setToPick] = useState<{ rows: LiveOrderRow[]; total: number }>({ rows: [], total: 0 });
   const [holds, setHolds] = useState<{ rows: LiveOrderRow[]; total: number }>({ rows: [], total: 0 });
   const [network, setNetwork] = useState<Awaited<ReturnType<typeof fetchNvNetwork>> | null>(null);
+  const [readiness, setReadiness] = useState<{ rows: ShipReadinessRow[]; checked: number; flagged: number }>({ rows: [], checked: 0, flagged: 0 });
   const [brands, setBrands] = useState<LiveBrand[]>([]);
   const [connections, setConnections] = useState<LiveWooConnection[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,16 +72,18 @@ function FulfilmentInner() {
           ? conns.filter((c) => liveMarkets.includes(c.config?.country_code ?? "")).map((c) => c.id)
           : null;
       const base = { page: 1, pageSize: 8, brandId: liveBrandId, integrationId: null, integrationIn, currency: null, sinceHours: null, search: "" };
-      const [pick, hold, nv, b] = await Promise.all([
+      const [pick, hold, nv, b, ready] = await Promise.all([
         fetchLiveOrdersPage({ ...base, status: "processing" }),
         fetchLiveOrdersPage({ ...base, status: null, statusIn: ["on-hold", "failed"] }),
         fetchNvNetwork(),
         fetchLiveBrands(),
+        fetchShipReadiness(14),
       ]);
       setToPick(pick);
       setHolds(hold);
       setNetwork(nv);
       setBrands(b);
+      setReadiness(ready);
     } finally {
       setLoading(false);
     }
@@ -189,6 +195,14 @@ function FulfilmentInner() {
       <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
         Live read-only floor: order queues mirror the stores, parcel stages mirror Ninja Van. Pick/pack/handover
         actions arrive with the Slice 3 write pilot.
+        {readiness.checked > 0 && (
+          <>
+            {" "}<span className="font-medium text-foreground">
+              Ship-readiness gate: {(readiness.checked - readiness.flagged).toLocaleString()} of {readiness.checked.toLocaleString()} pre-ship
+              orders (14d) pass validation · {readiness.flagged.toLocaleString()} need fixing below.
+            </span>
+          </>
+        )}
       </p>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -243,10 +257,10 @@ function FulfilmentInner() {
             <ShieldAlert className="size-4 text-destructive" aria-hidden />
             Fulfilment exceptions
           </CardTitle>
-          <Badge variant="outline" className="tnum text-xs">{holds.total + nvExceptions.length}</Badge>
+          <Badge variant="outline" className="tnum text-xs">{holds.total + nvExceptions.length + readiness.flagged}</Badge>
         </CardHeader>
         <CardContent>
-          {holds.total + nvExceptions.length === 0 ? (
+          {holds.total + nvExceptions.length + readiness.flagged === 0 ? (
             <EmptyState title="No exceptions" description="Holds, address issues, and automation failures appear here." />
           ) : (
             <ul className="divide-y">
@@ -265,6 +279,19 @@ function FulfilmentInner() {
                   )}
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{nextAction(o)}</span>
                   <span className="tnum shrink-0 text-[11px] text-muted-foreground">{relative(o.placed_at)}</span>
+                </li>
+              ))}
+              {readiness.rows.map((r) => (
+                <li key={`sr-${r.id}`} className="flex items-center gap-3 py-2 first:pt-0 last:pb-0">
+                  <Link href={`/orders/${r.id}`} className="text-sm font-medium text-info underline-offset-2 hover:underline">
+                    #{r.order_number}
+                  </Link>
+                  {tonePill({ label: "not ship-ready", tone: "warning" })}
+                  <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                    {r.issues.map((i) => SHIP_ISSUE_LABELS[i] ?? i).join(" · ")}
+                    {Object.keys(r.suggestions ?? {}).length > 0 && " — fix suggested on the order page"}
+                  </span>
+                  <span className="tnum shrink-0 text-[11px] text-muted-foreground">{relative(r.placed_at)}</span>
                 </li>
               ))}
               {nvExceptions.map((s) => (

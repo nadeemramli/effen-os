@@ -60,6 +60,17 @@ capture continues account-wide; daily reconciliation report
 (Woo orders ↔ Fighter-refs ↔ NV parcels, counts by brand/day) built inside
 Fullkit so drift is measurable before anything changes.
 
+*Live since 2026-08-01: the **ship-readiness validation gate** — every
+pre-ship order graded with market-aware deterministic rules (name, phone
+format per MY/SG, postcode format, address substance, city where
+applicable). Three lanes: green auto-pass (~88% of the last 14 days'
+1,712 pre-ship orders), yellow representation-only suggestions (shown,
+never auto-applied), red human-fix queue on the Fulfilment floor with
+per-order reasons. Read-only; the future auto-send to NV consumes the
+green lane. Auto-correction beyond representation (semantic guessing)
+is explicitly rejected — a plausible-but-wrong address misdelivers
+silently, which is worse than a flagged one.*
+
 **Phase 1 — Shadow writes (no external effect).** For the pilot brand,
 Fullkit *generates* the NV consignment payload for every eligible order —
 built, validated, stored, **never sent** — and diffs daily against what

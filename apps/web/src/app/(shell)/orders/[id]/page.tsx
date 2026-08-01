@@ -16,12 +16,15 @@ import { getSupabase } from "@/lib/supabase/client";
 import {
   fetchLiveBrands,
   fetchNvShipmentForOrder,
+  fetchShipReadiness,
   fetchWooConnections,
+  SHIP_ISSUE_LABELS,
   type LiveBrand,
   type LiveNvEvent,
   type LiveNvShipment,
   type LiveOrderRow,
   type LiveWooConnection,
+  type ShipReadinessRow,
 } from "@/lib/supabase/live";
 import type { StatusMeta } from "@/lib/domain/status-maps";
 import { cn } from "@/lib/utils";
@@ -92,6 +95,7 @@ function OrderDetailInner() {
   const [brands, setBrands] = useState<LiveBrand[]>([]);
   const [connections, setConnections] = useState<LiveWooConnection[]>([]);
   const [nv, setNv] = useState<{ shipment: LiveNvShipment; events: LiveNvEvent[] } | null>(null);
+  const [readiness, setReadiness] = useState<ShipReadinessRow | null | "unknown">("unknown");
 
   useEffect(() => {
     // Fetch-on-mount; every setState happens after an await.
@@ -113,6 +117,12 @@ function OrderDetailInner() {
       if (row) {
         const ref = row.order_number ?? row.source_order_id;
         fetchNvShipmentForOrder(ref).then(setNv).catch(() => setNv(null));
+        if (["pending", "on-hold", "processing"].includes(row.source_status)) {
+          // Membership check against the flagged list; absence = ship-ready.
+          fetchShipReadiness(30)
+            .then((r) => setReadiness(r.rows.find((x) => x.id === row.id) ?? null))
+            .catch(() => setReadiness("unknown"));
+        }
       }
     })();
   }, [params.id]);
@@ -291,6 +301,25 @@ function OrderDetailInner() {
             <Card>
               <CardHeader><CardTitle className="text-sm font-medium">Fulfilment & shipment</CardTitle></CardHeader>
               <CardContent className="space-y-1.5 text-sm">
+                {["pending", "on-hold", "processing"].includes(order.source_status) && readiness !== "unknown" && (
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-muted-foreground">Ship-readiness</span>
+                    {readiness === null ? (
+                      tonePill({ label: "Ship-ready", tone: "success" })
+                    ) : (
+                      <span className="flex flex-col items-end gap-1">
+                        <span className="flex flex-wrap justify-end gap-1">
+                          {readiness.issues.map((i) => (
+                            <span key={i}>{tonePill({ label: SHIP_ISSUE_LABELS[i] ?? i, tone: "warning" })}</span>
+                          ))}
+                        </span>
+                        {Object.entries(readiness.suggestions ?? {}).map(([k, v]) => (
+                          <span key={k} className="tnum text-[11px] text-muted-foreground">suggested {k.replace("_", " ")}: {v}</span>
+                        ))}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div className="flex justify-between"><span className="text-muted-foreground">Fulfilment</span><span>{order.source_status === "completed" ? "Fulfilled" : order.source_status === "processing" ? "To fulfil (Fighter operates)" : "—"}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Courier</span><span>{nv ? "Ninja Van" : "—"}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Tracking</span><span className="tnum">{nv?.shipment.tracking_id ?? "—"}</span></div>
