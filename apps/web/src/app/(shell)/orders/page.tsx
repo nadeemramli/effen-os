@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { parseAsInteger, parseAsString, useQueryState } from "nuqs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -126,6 +127,7 @@ function storeLabel(conn: LiveWooConnection | undefined): string {
 }
 
 function OrdersInner() {
+  const router = useRouter();
   const [view, setView] = useQueryState("view", parseAsString.withDefault("all"));
   const [q, setQ] = useQueryState("q", parseAsString.withDefault(""));
   // Brand + market scope come from the top bar's live controls, like every live surface.
@@ -285,10 +287,33 @@ function OrdersInner() {
         ),
       },
       {
+        id: "owner",
+        header: "Owner",
+        enableSorting: false,
+        cell: () => <span className="text-muted-foreground">—</span>,
+      },
+      {
         id: "placed",
-        header: "Placed",
+        header: "Age",
         enableSorting: false,
         cell: ({ row }) => <span className="tnum text-muted-foreground">{fmtRelativeNow(row.original.placed_at)}</span>,
+      },
+      {
+        id: "next",
+        header: "Next action",
+        enableSorting: false,
+        cell: ({ row }) => {
+          const s = row.original.source_status;
+          const action =
+            s === "pending" ? "Verify payment reference" :
+            s === "on-hold" ? "Review hold" :
+            s === "failed" ? "Follow up failed payment" : null;
+          return action ? (
+            <span className="block max-w-52 truncate text-warning">{action}</span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          );
+        },
       },
       {
         id: "synced",
@@ -421,7 +446,7 @@ function OrdersInner() {
               data={rows}
               pageSize={PAGE_SIZE}
               rowKey={(o) => String(o.id)}
-              onRowClick={openDetail}
+              onRowClick={(o) => router.push(`/orders/${o.id}`)}
               emptyTitle="No orders match"
               emptyDescription="Adjust the saved view or filters. New orders appear within the 15-minute sync window; use Setup → Store connections → Sync now to pull immediately."
             />

@@ -1,106 +1,167 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
-import { ArrowLeft, ExternalLink, ShieldAlert } from "lucide-react";
-import { toast } from "sonner";
+import { useParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Loader2, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
-import { ImpactPreviewDialog } from "@/components/dialogs/impact-preview-dialog";
 import { PageBody } from "@/components/shell/page-header";
-import { MoneyCell } from "@/components/tables/cells";
-import { FreshnessBadge } from "@/components/status/freshness-badge";
-import { SixStateStrip } from "@/components/status/six-state-strip";
-import { EvidenceTimeline } from "@/components/timeline/evidence-timeline";
+import { tonePill } from "@/components/status/status-pill";
 import { EmptyState } from "@/components/states";
-import { useRepo } from "@/hooks/use-repo";
-import { usePermission, useSession } from "@/hooks/use-session";
-import { formatMoney } from "@/lib/domain/money";
-import { RouteGuard } from "@/lib/rbac/guard";
-import { useAppStore } from "@/lib/store/provider";
-import { formatDateTime, formatRelative } from "@/lib/utils/dates";
+import { LiveGuard } from "@/components/auth/live-guard";
+import { getSupabase } from "@/lib/supabase/client";
+import {
+  fetchLiveBrands,
+  fetchNvShipmentForOrder,
+  fetchWooConnections,
+  type LiveBrand,
+  type LiveNvEvent,
+  type LiveNvShipment,
+  type LiveOrderRow,
+  type LiveWooConnection,
+} from "@/lib/supabase/live";
+import type { StatusMeta } from "@/lib/domain/status-maps";
 import { cn } from "@/lib/utils";
+
+/* Original order-detail layout, fed by the live orders_read mirror. Actions
+ * stay visible but disabled until the Slice 3 write pilot. */
+
+const WOO_STATES: Record<string, { dim: string; meta: StatusMeta }[]> = {
+  pending: [
+    { dim: "Order", meta: { label: "Awaiting payment", tone: "warning" } },
+    { dim: "Payment", meta: { label: "Unpaid", tone: "neutral" } },
+  ],
+  "on-hold": [
+    { dim: "Order", meta: { label: "On hold", tone: "warning" } },
+    { dim: "Payment", meta: { label: "Verifying", tone: "warning" } },
+  ],
+  processing: [
+    { dim: "Order", meta: { label: "Confirmed", tone: "success" } },
+    { dim: "Payment", meta: { label: "Paid", tone: "success" } },
+    { dim: "Fulfilment", meta: { label: "To fulfil", tone: "info" } },
+  ],
+  completed: [
+    { dim: "Order", meta: { label: "Completed", tone: "success" } },
+    { dim: "Payment", meta: { label: "Paid", tone: "success" } },
+    { dim: "Fulfilment", meta: { label: "Fulfilled", tone: "success" } },
+  ],
+  cancelled: [{ dim: "Order", meta: { label: "Cancelled", tone: "neutral" } }],
+  refunded: [{ dim: "Payment", meta: { label: "Refunded", tone: "neutral" } }],
+  failed: [{ dim: "Payment", meta: { label: "Payment failed", tone: "destructive" } }],
+};
+
+function nextActionFor(status: string): string | null {
+  if (status === "pending") return "Verify payment reference";
+  if (status === "on-hold") return "Review hold — verify payment or release";
+  if (status === "failed") return "Follow up failed payment with buyer";
+  return null;
+}
+
+function fmtDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("en-MY", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kuala_Lumpur" });
+}
+
+function relative(iso: string | null): string {
+  if (!iso) return "—";
+  const h = Math.round((Date.now() - new Date(iso).getTime()) / 3_600_000);
+  if (h < 1) return "just now";
+  if (h < 48) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+function identityKeyOf(o: LiveOrderRow): string | null {
+  const phone = (o.customer?.phone ?? "").replace(/[^0-9]/g, "");
+  if (phone) return phone;
+  const email = (o.customer?.email ?? "").toLowerCase();
+  return email || null;
+}
+
+interface WooRaw {
+  payment_method_title?: string;
+  shipping_total?: string;
+  discount_total?: string;
+}
 
 function OrderDetailInner() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
-  const repo = useRepo();
-  const session = useSession();
+  const [order, setOrder] = useState<LiveOrderRow | null | "loading">("loading");
+  const [brands, setBrands] = useState<LiveBrand[]>([]);
+  const [connections, setConnections] = useState<LiveWooConnection[]>([]);
+  const [nv, setNv] = useState<{ shipment: LiveNvShipment; events: LiveNvEvent[] } | null>(null);
 
-  const order = useAppStore((s) => s.orders.find((o) => o.id === params.id));
-  const allEvents = useAppStore((s) => s.orderEvents);
-  const events = useMemo(
-    () => allEvents.filter((e) => e.orderId === params.id),
-    [allEvents, params.id],
+  useEffect(() => {
+    // Fetch-on-mount; every setState happens after an await.
+    void (async () => {
+      const [{ data }, b, c] = await Promise.all([
+        getSupabase()
+          .from("orders_read")
+          .select("id, integration_id, brand_id, source_order_id, order_number, source_status, currency_code, total, customer, items, raw, placed_at, updated_at_source, synced_at")
+          .eq("id", Number(params.id))
+          .maybeSingle(),
+        fetchLiveBrands(),
+        fetchWooConnections(),
+      ]);
+      const row = (data ?? null) as LiveOrderRow | null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setOrder(row);
+      setBrands(b);
+      setConnections(c);
+      if (row) {
+        const ref = row.order_number ?? row.source_order_id;
+        fetchNvShipmentForOrder(ref).then(setNv).catch(() => setNv(null));
+      }
+    })();
+  }, [params.id]);
+
+  const conn = useMemo(
+    () => (order && order !== "loading" ? connections.find((c) => c.id === order.integration_id) : undefined),
+    [order, connections],
   );
-  const customer = useAppStore((s) => s.customers.find((c) => c.id === order?.customerId));
-  const brand = useAppStore((s) => s.brands.find((b) => b.id === order?.brandId));
-  const store = useAppStore((s) => s.stores.find((st) => st.id === order?.storeId));
-  const personas = useAppStore((s) => s.personas);
-  const campaign = useAppStore((s) => s.campaigns.find((c) => c.id === order?.campaignId));
-  const integration = useAppStore((s) => s.integrations.find((i) => i.id === order?.integrationId));
-  const courierIntegration = useAppStore((s) =>
-    s.integrations.find((i) => (order?.courier === "jnt" ? i.id === "INT-jnt" : i.id === "INT-ninja-van")),
-  );
 
-  const canAssign = usePermission("orders.assign");
-  const canApprove = usePermission("orders.approve");
-  const canCancel = usePermission("orders.cancel");
-  const canNotify = usePermission("orders.notify");
-  const canSeeFees = usePermission("finance.fees.view");
-
-  const [assignOpen, setAssignOpen] = useState(false);
-  const [assignee, setAssignee] = useState<string>("USR-ida");
-  const [noteOpen, setNoteOpen] = useState(false);
-  const [note, setNote] = useState("");
-  const [cancelOpen, setCancelOpen] = useState(false);
-  const [escalateOpen, setEscalateOpen] = useState(false);
-  const [approveOpen, setApproveOpen] = useState(false);
-
-  const phone = useMemo(
-    () => customer?.identities.find((i) => i.type === "phone")?.value,
-    [customer],
-  );
+  if (order === "loading") {
+    return (
+      <PageBody className="flex min-h-96 items-center justify-center">
+        <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading order" />
+      </PageBody>
+    );
+  }
 
   if (!order) {
     return (
       <PageBody className="max-w-3xl">
         <EmptyState
           title="Order not found"
-          description={`No order with ID “${params.id}” exists in the seeded dataset. If this came from a Shopee link, the stale Shopee sync may not have imported it yet.`}
+          description="No mirrored order with this id. New orders land within the 15-minute sync window."
           action={{ label: "Back to orders", href: "/orders" }}
         />
       </PageBody>
     );
   }
 
-  const owner = personas.find((p) => p.id === order.ownerId);
-  const isOpenOrder = order.orderStatus !== "completed" && order.orderStatus !== "cancelled";
-  const gatewayFee = order.paymentMethod === "marketplace"
-    ? Math.round((order.grandTotal - order.refundedTotal) * 0.1)
-    : order.paymentMethod === "cod"
-      ? 500
-      : Math.round((order.grandTotal - order.refundedTotal) * 0.025) + 100;
+  const brand = brands.find((b) => b.id === order.brand_id);
+  const raw = (order.raw ?? {}) as WooRaw;
+  const states = WOO_STATES[order.source_status] ?? [{ dim: "Order", meta: { label: order.source_status, tone: "neutral" as const } }];
+  const nextAction = nextActionFor(order.source_status);
+  const storeLabel = conn?.name.match(/\(([^)]+)\)/)?.[1] ?? "—";
+  const market = conn?.config?.country_code ?? "—";
+  const idKey = identityKeyOf(order);
+  const isException = order.source_status === "failed" || order.source_status === "on-hold";
+  const shippingTotal = Number(raw.shipping_total ?? 0);
+  const discountTotal = Number(raw.discount_total ?? 0);
+  const itemsTotal = (order.items ?? []).reduce((s, i) => s + Number(i.total ?? 0), 0);
+
+  const timeline: { at: string | null; actor: string; label: string; tone?: string }[] = [
+    { at: order.placed_at, actor: storeLabel, label: "Order placed at source" },
+    ...(nv?.events ?? []).slice().reverse().map((ev) => ({
+      at: ev.event_at, actor: "Ninja Van", label: ev.status ?? "movement",
+    })),
+    { at: order.updated_at_source ?? null, actor: storeLabel, label: `Source status → ${order.source_status}` },
+    { at: order.synced_at, actor: "woo-sync connector", label: "Mirrored into Fullkit", tone: "text-muted-foreground" },
+  ];
 
   return (
     <PageBody className="max-w-none">
@@ -111,27 +172,25 @@ function OrderDetailInner() {
             <Button asChild variant="ghost" size="icon" className="size-7" aria-label="Back to orders">
               <Link href="/orders"><ArrowLeft className="size-4" /></Link>
             </Button>
-            <h1 className="text-lg font-semibold tracking-tight">{order.id}</h1>
-            {order.isDraft && <Badge variant="outline">Draft</Badge>}
-            {order.exceptionStatus !== "none" && (
+            <h1 className="text-lg font-semibold tracking-tight">#{order.order_number ?? order.source_order_id}</h1>
+            {isException && (
               <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-destructive">
                 <ShieldAlert className="size-3" aria-hidden />
-                {order.exceptionStatus.replace(/_/g, " ")}
+                {order.source_status === "failed" ? "payment exception" : "on hold"}
               </Badge>
             )}
-            <Badge variant="outline" className="border-ai/30 bg-ai/10 text-ai capitalize">{session.mode} mode</Badge>
+            <Badge variant="outline" className="border-info/30 bg-info/10 text-info">Live · read-only</Badge>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            {brand?.name} · {store?.name} · {order.sourceType.replace("_", " ")}
-            {order.sourceOrderId && ` · ${order.sourceOrderId}`} · placed {formatRelative(order.placedAt)}
+            {brand?.name ?? "unmapped"} · {storeLabel} · woocommerce · {order.source_order_id} · placed {relative(order.placed_at)}
           </p>
           <p className="mt-0.5 text-sm">
             <span className="text-muted-foreground">Owner: </span>
-            {owner ? owner.name : <span className="text-muted-foreground">unassigned</span>}
-            {order.nextAction && (
+            <span className="text-muted-foreground">unassigned — work-item layer arrives with Slice 3</span>
+            {nextAction && (
               <>
                 <span className="text-muted-foreground"> · Next: </span>
-                <span className="text-warning">{order.nextAction}</span>
+                <span className="text-warning">{nextAction}</span>
               </>
             )}
           </p>
@@ -143,7 +202,18 @@ function OrderDetailInner() {
           {/* six states */}
           <Card>
             <CardHeader><CardTitle className="text-sm font-medium">States</CardTitle></CardHeader>
-            <CardContent><SixStateStrip order={order} /></CardContent>
+            <CardContent>
+              <div className="flex flex-wrap gap-1.5">
+                {states.map((s, i) => (
+                  <span key={i}>{tonePill(s.meta, `${s.dim}: ${s.meta.label}`)}</span>
+                ))}
+                {nv?.shipment && tonePill({ label: `Shipment: ${nv.shipment.status ?? "in network"}`, tone: nv.shipment.is_terminal ? "success" : "info" })}
+              </div>
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Derived per dimension from the source status — never merged. Shipment state joins from the
+                Ninja Van mirror once parcel↔order linkage lands.
+              </p>
+            </CardContent>
           </Card>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -151,27 +221,19 @@ function OrderDetailInner() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-sm font-medium">Customer</CardTitle>
-                {customer && (
+                {idKey && (
                   <Button asChild variant="ghost" size="sm" className="h-7 px-2 text-xs">
-                    <Link href={`/customers/${customer.id}`}>Customer 360</Link>
+                    <Link href={`/customers/${encodeURIComponent(idKey)}`}>Customer 360</Link>
                   </Button>
                 )}
               </CardHeader>
               <CardContent className="space-y-1.5 text-sm">
-                <div className="font-medium">{customer?.displayName}</div>
-                <div className="tnum text-muted-foreground">{phone}</div>
+                <div className="font-medium">{order.customer?.name || "Unknown"}</div>
+                <div className="tnum text-muted-foreground">{order.customer?.phone ?? "—"}</div>
                 <div className="text-muted-foreground">
-                  {customer?.addresses.find((a) => a.isDefault)?.line1},{" "}
-                  {customer?.addresses.find((a) => a.isDefault)?.city},{" "}
-                  {customer?.addresses.find((a) => a.isDefault)?.postcode}{" "}
-                  {customer?.addresses.find((a) => a.isDefault)?.country}
+                  {[order.customer?.city, order.customer?.country].filter(Boolean).join(", ") || "—"}
                 </div>
-                <div className="flex gap-2 pt-1 text-xs text-muted-foreground">
-                  <span className="tnum">{customer?.lifetimeOrders ?? 0} lifetime orders</span>
-                  <span>·</span>
-                  <span className="capitalize">{customer?.repeatState.replace("_", " ")}</span>
-                  {order.isNewCustomer && (<><span>·</span><span className="text-info">first order</span></>)}
-                </div>
+                <div className="pt-1 text-xs text-muted-foreground">{order.customer?.email ?? ""}</div>
               </CardContent>
             </Card>
 
@@ -179,24 +241,11 @@ function OrderDetailInner() {
             <Card>
               <CardHeader><CardTitle className="text-sm font-medium">Payment</CardTitle></CardHeader>
               <CardContent className="space-y-1.5 text-sm">
-                <div className="flex justify-between"><span className="text-muted-foreground">Method</span><span className="capitalize">{order.paymentMethod}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">State</span><span className="capitalize">{order.paymentStatus.replace(/_/g, " ")}</span></div>
-                {canSeeFees ? (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Est. gateway/commission fee</span>
-                    <MoneyCell minor={gatewayFee} currency={order.currency} />
-                  </div>
-                ) : (
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>Fees</span><span>visible to Finance role</span>
-                  </div>
-                )}
-                {order.refundedTotal > 0 && (
-                  <div className="flex justify-between text-destructive">
-                    <span>Refunded</span>
-                    <MoneyCell minor={order.refundedTotal} currency={order.currency} />
-                  </div>
-                )}
+                <div className="flex justify-between"><span className="text-muted-foreground">Method</span><span>{raw.payment_method_title ?? "—"}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">State</span><span className="capitalize">{order.source_status.replace(/-/g, " ")}</span></div>
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Gateway/commission fees</span><span>arrive with the payments read-side</span>
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -211,34 +260,28 @@ function OrderDetailInner() {
                     <th className="pb-2 font-medium">Item</th>
                     <th className="pb-2 font-medium">SKU</th>
                     <th className="pb-2 text-right font-medium">Qty</th>
-                    <th className="pb-2 text-right font-medium">Unit</th>
                     <th className="pb-2 text-right font-medium">Line</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {order.items.map((it) => (
-                    <tr key={it.sku} className="border-b last:border-0">
-                      <td className="py-2">{it.nameSnapshot}</td>
-                      <td className="py-2">
-                        <Link href={`/catalog/products?sku=${it.sku}`} className="tnum text-info underline-offset-2 hover:underline">
-                          {it.sku}
-                        </Link>
-                      </td>
+                  {(order.items ?? []).map((it, i) => (
+                    <tr key={i} className="border-b last:border-0">
+                      <td className="py-2">{it.name ?? "—"}</td>
+                      <td className="tnum py-2">{it.sku ?? "—"}</td>
                       <td className="tnum py-2 text-right">{it.quantity}</td>
-                      <td className="py-2 text-right"><MoneyCell minor={it.unitPrice} currency={order.currency} /></td>
-                      <td className="py-2 text-right"><MoneyCell minor={it.lineTotal} currency={order.currency} /></td>
+                      <td className="tnum py-2 text-right">{order.currency_code} {Number(it.total).toFixed(2)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
               <div className="mt-3 ml-auto max-w-56 space-y-1 text-sm">
-                <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><MoneyCell minor={order.subtotal} currency={order.currency} /></div>
-                {order.discountTotal > 0 && (
-                  <div className="flex justify-between"><span className="text-muted-foreground">Discount</span><MoneyCell minor={-order.discountTotal} currency={order.currency} /></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Items</span><span className="tnum">{order.currency_code} {itemsTotal.toFixed(2)}</span></div>
+                {discountTotal > 0 && (
+                  <div className="flex justify-between"><span className="text-muted-foreground">Discount</span><span className="tnum">−{order.currency_code} {discountTotal.toFixed(2)}</span></div>
                 )}
-                <div className="flex justify-between"><span className="text-muted-foreground">Shipping</span><MoneyCell minor={order.shippingTotal} currency={order.currency} /></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Shipping</span><span className="tnum">{order.currency_code} {shippingTotal.toFixed(2)}</span></div>
                 <Separator />
-                <div className="flex justify-between font-medium"><span>Total</span><MoneyCell minor={order.grandTotal} currency={order.currency} /></div>
+                <div className="flex justify-between font-medium"><span>Total</span><span className="tnum">{order.currency_code} {Number(order.total).toFixed(2)}</span></div>
               </div>
             </CardContent>
           </Card>
@@ -248,16 +291,14 @@ function OrderDetailInner() {
             <Card>
               <CardHeader><CardTitle className="text-sm font-medium">Fulfilment & shipment</CardTitle></CardHeader>
               <CardContent className="space-y-1.5 text-sm">
-                <div className="flex justify-between"><span className="text-muted-foreground">Fulfilment</span><span className="capitalize">{order.fulfillmentStatus.replace(/_/g, " ")}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Courier</span><span>{order.courier === "ninja_van" ? "Ninja Van" : order.courier === "jnt" ? "J&T Express" : "—"}</span></div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Tracking</span>
-                  <span className="tnum">{order.trackingNumber ?? "—"}</span>
-                </div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Shipment</span><span className="capitalize">{order.shipmentStatus.replace(/_/g, " ")}</span></div>
-                {order.exceptionStatus === "shipment_exception" && (
-                  <p className="mt-1 rounded-md border border-destructive/25 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
-                    No courier movement for over 48h — linked to the Ninja Van webhook gap on 21 Jul.
+                <div className="flex justify-between"><span className="text-muted-foreground">Fulfilment</span><span>{order.source_status === "completed" ? "Fulfilled" : order.source_status === "processing" ? "To fulfil (Fighter operates)" : "—"}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Courier</span><span>{nv ? "Ninja Van" : "—"}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Tracking</span><span className="tnum">{nv?.shipment.tracking_id ?? "—"}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Shipment</span><span>{nv?.shipment.status ?? "—"}</span></div>
+                {!nv && (
+                  <p className="mt-1 rounded-md border bg-muted/40 px-2 py-1.5 text-xs text-muted-foreground">
+                    Parcels currently carry Fighter consignment ids — tracking links here once the Fighter
+                    bridge or NV order-details API provides the mapping.
                   </p>
                 )}
               </CardContent>
@@ -267,32 +308,22 @@ function OrderDetailInner() {
             <Card>
               <CardHeader><CardTitle className="text-sm font-medium">Source & integration health</CardTitle></CardHeader>
               <CardContent className="space-y-2 text-sm">
-                <div className="flex justify-between"><span className="text-muted-foreground">Source system</span><span className="capitalize">{order.sourceType.replace("_", " ")}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Source ID</span><span className="tnum">{order.sourceOrderId ?? "—"}</span></div>
-                {campaign && (
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Attributed campaign</span>
-                    <Link href={`/marketing?campaign=${campaign.id}`} className="truncate text-info underline-offset-2 hover:underline">
-                      {campaign.name}
-                    </Link>
-                  </div>
-                )}
-                {integration && (
-                  <div className="flex items-center justify-between gap-2">
-                    <Link href={`/integrations/${integration.id}`} className="text-muted-foreground underline-offset-2 hover:underline">
-                      {integration.name}
-                    </Link>
-                    <FreshnessBadge lastSuccessAt={integration.lastSuccessAt} slaMinutes={integration.freshnessSlaMinutes} />
-                  </div>
-                )}
-                {order.courier && courierIntegration && (
-                  <div className="flex items-center justify-between gap-2">
-                    <Link href={`/integrations/${courierIntegration.id}`} className="text-muted-foreground underline-offset-2 hover:underline">
-                      {courierIntegration.name}
-                    </Link>
-                    <FreshnessBadge lastSuccessAt={courierIntegration.lastSuccessAt} slaMinutes={courierIntegration.freshnessSlaMinutes} />
-                  </div>
-                )}
+                <div className="flex justify-between"><span className="text-muted-foreground">Source system</span><span>WooCommerce</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Source ID</span><span className="tnum">{order.source_order_id}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Store</span><span>{storeLabel}</span></div>
+                <div className="flex items-center justify-between gap-2">
+                  <Link href="/setup/connections" className="text-muted-foreground underline-offset-2 hover:underline">
+                    {conn?.name ?? "connection"}
+                  </Link>
+                  {conn && tonePill(
+                    conn.last_success_at && Date.now() - new Date(conn.last_success_at).getTime() < 45 * 60_000
+                      ? { label: "fresh", tone: "success" }
+                      : { label: "aging", tone: "warning" },
+                  )}
+                </div>
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Last modified at source</span><span className="tnum">{fmtDateTime(order.updated_at_source ?? null)}</span>
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -305,7 +336,23 @@ function OrderDetailInner() {
                 Every user, system, connector, rule, and courier event — one object, one timeline.
               </p>
             </CardHeader>
-            <CardContent><EvidenceTimeline events={events} /></CardContent>
+            <CardContent>
+              <ul className="space-y-3">
+                {timeline
+                  .filter((t) => t.at)
+                  .sort((a, b) => new Date(a.at!).getTime() - new Date(b.at!).getTime())
+                  .map((t, i) => (
+                    <li key={i} className="flex items-start gap-2.5">
+                      <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-info" aria-hidden />
+                      <div className="min-w-0 flex-1">
+                        <div className={cn("text-sm", t.tone)}>{t.label}</div>
+                        <div className="text-xs text-muted-foreground">{t.actor}</div>
+                      </div>
+                      <span className="tnum shrink-0 text-xs text-muted-foreground">{fmtDateTime(t.at)}</span>
+                    </li>
+                  ))}
+              </ul>
+            </CardContent>
           </Card>
         </div>
 
@@ -314,200 +361,35 @@ function OrderDetailInner() {
           <Card>
             <CardHeader><CardTitle className="text-sm font-medium">Actions</CardTitle></CardHeader>
             <CardContent className="space-y-2">
-              {canAssign && isOpenOrder && (
-                <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => setAssignOpen(true)}>
-                  Assign owner
+              {["Assign owner", "Resend confirmation", "Add note"].map((a) => (
+                <Button key={a} variant="outline" size="sm" className="w-full justify-start" disabled>
+                  {a}
                 </Button>
-              )}
-              {canApprove && order.orderStatus === "pending_review" && (
-                <Button size="sm" className="w-full justify-start" onClick={() => setApproveOpen(true)}>
-                  Review & approve
-                </Button>
-              )}
-              {canNotify && (order.notificationStatus === "failed" || order.notificationStatus === "queued") && (
-                <Button
-                  variant="outline" size="sm" className="w-full justify-start"
-                  onClick={async () => {
-                    await repo.resendOrderNotification(order.id);
-                    toast.success("Confirmation re-sent", { description: "WhatsApp template T-02 · recorded in the timeline" });
-                  }}
-                >
-                  Resend confirmation
-                </Button>
-              )}
-              {order.exceptionStatus === "shipment_exception" && (
-                <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => setEscalateOpen(true)}>
-                  Escalate with courier
-                </Button>
-              )}
-              <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => setNoteOpen(true)}>
-                Add note
+              ))}
+              <Button variant="outline" size="sm" className="w-full justify-start text-destructive" disabled>
+                Cancel order
               </Button>
-              {canCancel && isOpenOrder && !order.isDraft && (
-                <Button variant="outline" size="sm" className="w-full justify-start text-destructive" onClick={() => setCancelOpen(true)}>
-                  Cancel order
-                </Button>
-              )}
-              {order.isDraft && (
-                <p className="rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">
-                  Draft orders are completed from the order form. Fulfilment actions unlock after review.
-                </p>
-              )}
-              {!isOpenOrder && (
-                <p className="rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">
-                  This order is {order.orderStatus}. Only notes remain available; refunds are handled from the return record.
-                </p>
-              )}
-              {!canAssign && !canApprove && !canCancel && (
-                <p className="rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">
-                  Your demo role can view this order but not act on it. Switch to Sales/CS, Operations, or HQ Admin.
-                </p>
-              )}
+              <p className="rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">
+                Live mode is read-only — the source store stays authoritative. Actions unlock with the
+                Slice 3 write pilot (approval-gated, audited).
+              </p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader><CardTitle className="text-sm font-medium">Scope</CardTitle></CardHeader>
             <CardContent className="space-y-1.5 text-xs text-muted-foreground">
-              <div className="flex justify-between"><span>Brand</span><span className="text-foreground">{brand?.name.replace(" (Demo)", "")}</span></div>
-              <div className="flex justify-between"><span>Market</span><span className="text-foreground">{order.market}</span></div>
-              <div className="flex justify-between"><span>Store</span><span className="text-foreground">{store?.name}</span></div>
-              <div className="flex justify-between"><span>Channel</span><span className="text-foreground capitalize">{store?.channelType}</span></div>
-              <div className="flex justify-between"><span>Currency</span><span className="text-foreground">{order.currency}</span></div>
-              <div className="flex justify-between"><span>Legal entity</span><span className="text-foreground">{order.legalEntityId === "LE-my" ? "EFFEN International Sdn Bhd" : "EFFEN Commerce Pte Ltd (Demo)"}</span></div>
-              <div className="flex justify-between"><span>Placed</span><span className="tnum text-foreground">{formatDateTime(order.placedAt)}</span></div>
+              <div className="flex justify-between"><span>Brand</span><span className="text-foreground">{brand?.name ?? "unmapped"}</span></div>
+              <div className="flex justify-between"><span>Market</span><span className="text-foreground">{market}</span></div>
+              <div className="flex justify-between"><span>Store</span><span className="text-foreground">{storeLabel}</span></div>
+              <div className="flex justify-between"><span>Channel</span><span className="text-foreground">website</span></div>
+              <div className="flex justify-between"><span>Currency</span><span className="text-foreground">{order.currency_code}</span></div>
+              <div className="flex justify-between"><span>Legal entity</span><span className="text-foreground">{market === "SG" ? "EFFEN Commerce Pte Ltd" : "EFFEN International Sdn Bhd"}</span></div>
+              <div className="flex justify-between"><span>Placed</span><span className="tnum text-foreground">{fmtDateTime(order.placed_at)}</span></div>
+              <div className="flex justify-between"><span>Synced</span><span className="tnum text-foreground">{fmtDateTime(order.synced_at)}</span></div>
             </CardContent>
           </Card>
         </div>
-      </div>
-
-      {/* ---------- dialogs ---------- */}
-      <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Assign owner</DialogTitle>
-            <DialogDescription>The owner is accountable for the next action on {order.id}.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-1.5">
-            <Label htmlFor="assignee">Assignee</Label>
-            <Select value={assignee} onValueChange={setAssignee}>
-              <SelectTrigger id="assignee"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {personas.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.name} — {p.title}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAssignOpen(false)}>Cancel</Button>
-            <Button
-              onClick={async () => {
-                await repo.assignOrder(order.id, assignee);
-                setAssignOpen(false);
-                toast.success(`Assigned to ${personas.find((p) => p.id === assignee)?.name}`);
-              }}
-            >
-              Assign
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={noteOpen} onOpenChange={setNoteOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add note</DialogTitle>
-            <DialogDescription>Notes land on the evidence timeline and in the audit trail.</DialogDescription>
-          </DialogHeader>
-          <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="e.g. Customer confirmed availability for redelivery on Friday." />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setNoteOpen(false)}>Cancel</Button>
-            <Button
-              disabled={!note.trim()}
-              onClick={async () => {
-                await repo.addOrderNote(order.id, note.trim());
-                setNote("");
-                setNoteOpen(false);
-                toast.success("Note added to the timeline");
-              }}
-            >
-              Add note
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <ImpactPreviewDialog
-        open={approveOpen}
-        onOpenChange={setApproveOpen}
-        title={`Approve ${order.id}?`}
-        description="Approval releases the order to fulfilment."
-        impact={[
-          { label: "Order state", value: "pending review → approved", tone: "success" },
-          { label: "Fulfilment", value: "joins the pick queue" },
-          { label: "Stock", value: `${order.items.reduce((s, i) => s + i.quantity, 0)} units reserved` },
-        ]}
-        externalDestination="None in Demo mode — in Live mode this would notify the fulfilment centre."
-        reversibility="Reversible until packing starts."
-        auditNote="Recorded as order.approved with your demo persona."
-        confirmLabel="Approve order"
-        onConfirm={async () => {
-          await repo.approveOrder(order.id);
-          toast.success(`${order.id} approved`);
-        }}
-      />
-
-      <ImpactPreviewDialog
-        open={cancelOpen}
-        onOpenChange={setCancelOpen}
-        title={`Cancel ${order.id}?`}
-        description="Cancellation stops fulfilment and releases reserved stock."
-        impact={[
-          { label: "Order state", value: `${order.orderStatus.replace(/_/g, " ")} → cancelled`, tone: "destructive" },
-          { label: "Payment", value: order.paymentStatus === "paid" ? "refund case opens for Finance" : "no charge captured" },
-          { label: "Contribution impact", value: `−${formatMoney(order.grandTotal, order.currency)}`, tone: "destructive" },
-        ]}
-        externalDestination="None in Demo mode — in Live mode the source store and customer would be notified."
-        reversibility="Not reversible. A new order must be created instead."
-        auditNote="Recorded as order.cancelled with your rationale."
-        confirmLabel="Cancel order"
-        requireNote
-        notePlaceholder="Reason for cancellation (required)"
-        destructive
-        onConfirm={async (reason) => {
-          await repo.cancelOrder(order.id, reason);
-          toast.success(`${order.id} cancelled`);
-        }}
-      />
-
-      <ImpactPreviewDialog
-        open={escalateOpen}
-        onOpenChange={setEscalateOpen}
-        title="Escalate with Ninja Van?"
-        description="Opens a trace request with the courier account manager for this AWB."
-        impact={[
-          { label: "Trace request", value: order.trackingNumber ?? "—" },
-          { label: "Customer", value: "proactive delay notice (approved template)" },
-          { label: "SLA clock", value: "pauses while the trace is open" },
-        ]}
-        externalDestination="None in Demo mode — in Live mode this raises a ticket in the Ninja Van portal."
-        reversibility="Reversible — the trace can be withdrawn."
-        auditNote="Recorded as a timeline note with reason code COURIER_ESCALATED."
-        confirmLabel="Escalate"
-        onConfirm={async () => {
-          await repo.addOrderNote(
-            order.id,
-            `Escalated to Ninja Van account manager — trace opened for ${order.trackingNumber}. Proactive delay notice sent to customer.`,
-          );
-          toast.success("Escalated with Ninja Van", { description: "Trace request recorded on the timeline" });
-        }}
-      />
-
-      <div className="flex justify-start">
-        <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" onClick={() => router.push("/orders")}>
-          <ExternalLink className="size-3.5 rotate-180" aria-hidden /> Back to orders
-        </Button>
       </div>
     </PageBody>
   );
@@ -515,8 +397,8 @@ function OrderDetailInner() {
 
 export default function OrderDetailPage() {
   return (
-    <RouteGuard permission="orders.view">
+    <LiveGuard>
       <OrderDetailInner />
-    </RouteGuard>
+    </LiveGuard>
   );
 }
