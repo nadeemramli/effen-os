@@ -8,9 +8,11 @@ import {
   fetchLiveBrands,
   fetchLivePlanBaseline,
   fetchLiveScorecard,
+  fetchLiveUnitEconomics,
   type LiveBrand,
   type LivePlanBaselineRow,
   type LiveScorecardRow,
+  type LiveUnitEconRow,
 } from "@/lib/supabase/live";
 
 /**
@@ -35,7 +37,7 @@ interface AdAccount {
 type State =
   | { kind: "checking" }
   | { kind: "no-session" }
-  | { kind: "ready"; rows: LiveScorecardRow[]; brands: LiveBrand[]; facts: AdFact[]; accounts: AdAccount[]; baseline: LivePlanBaselineRow[] }
+  | { kind: "ready"; rows: LiveScorecardRow[]; brands: LiveBrand[]; facts: AdFact[]; accounts: AdAccount[]; baseline: LivePlanBaselineRow[]; econ: LiveUnitEconRow[] }
   | { kind: "error"; message: string };
 
 /** ISO date N days back — the lower bound for a spend window. */
@@ -74,14 +76,15 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
         return;
       }
       try {
-        const [rows, brands, facts, accounts, baseline] = await Promise.all([
+        const [rows, brands, facts, accounts, baseline, econ] = await Promise.all([
           fetchLiveScorecard(),
           fetchLiveBrands(),
           getSupabase().from("ad_daily_facts").select("account_ref, date, spend").then((r) => (r.data ?? []) as AdFact[]),
           getSupabase().from("ad_accounts_read").select("id, brand_id, market").then((r) => (r.data ?? []) as AdAccount[]),
           fetchLivePlanBaseline(),
+          fetchLiveUnitEconomics(),
         ]);
-        setState({ kind: "ready", rows, brands: brands.filter((b) => b.status === "active"), facts, accounts, baseline });
+        setState({ kind: "ready", rows, brands: brands.filter((b) => b.status === "active"), facts, accounts, baseline, econ });
       } catch (e) {
         setState({ kind: "error", message: (e as Error).message });
       }
@@ -159,11 +162,46 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
           value={ccyLine(byCcy)}
           hint={`${windowHint} · recognized = processing + completed`}
         />
-        <MetricCard
-          metricKey="contribution"
-          value="—"
-          hint="Arrives when COGS + fee sources connect"
-        />
+        {(() => {
+          // Product contribution = item revenue − COGS, from confirmed SKU
+          // mappings and effective-dated costs. Shown only when coverage is
+          // honest (≥90% of units costed, per currency, currencies unmerged).
+          const econRows = state.econ.filter(
+            (r) =>
+              r.win === win &&
+              (liveBrandId === null || r.brand_id === liveBrandId) &&
+              (liveMarkets.length === 0 || liveMarkets.includes(r.market)),
+          );
+          const byC: Record<string, { rev: number; cogs: number; units: number; costed: number }> = {};
+          for (const r of econRows) {
+            const e = (byC[r.currency_code] ??= { rev: 0, cogs: 0, units: 0, costed: 0 });
+            e.rev += Number(r.revenue);
+            e.cogs += Number(r.cogs);
+            e.units += Number(r.units);
+            e.costed += Number(r.costed_units);
+          }
+          const totUnits = Object.values(byC).reduce((s, e) => s + e.units, 0);
+          const totCosted = Object.values(byC).reduce((s, e) => s + e.costed, 0);
+          if (totUnits === 0) {
+            return <MetricCard metricKey="contribution" value="—" hint="No recognized items in this window" />;
+          }
+          if (totCosted === 0) {
+            return <MetricCard metricKey="contribution" value="—" hint="Map store SKUs & set variant costs in Catalog to unlock" />;
+          }
+          const pct = `${((totCosted / totUnits) * 100).toFixed(0)}%`;
+          const allCovered = Object.values(byC).every((e) => e.units === 0 || e.costed / e.units >= 0.9);
+          if (!allCovered) {
+            return <MetricCard metricKey="contribution" value="—" hint={`COGS coverage ${pct} — finish mappings & costs in Catalog`} />;
+          }
+          const contrib = Object.fromEntries(Object.entries(byC).map(([c, e]) => [c, e.rev - e.cogs]));
+          return (
+            <MetricCard
+              metricKey="contribution"
+              value={ccyLine(contrib)}
+              hint={`Item revenue − COGS · coverage ${pct} · before fees & shipping`}
+            />
+          );
+        })()}
         <MetricCard
           metricKey="ad_spend"
           value={adSpend > 0 ? money("MYR", adSpend) : "—"}

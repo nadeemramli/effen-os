@@ -618,3 +618,100 @@ export async function updateLiveVariant(
   const { error } = await getSupabase().from("product_variants").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
   if (error) throw new Error(error.message);
 }
+
+// ── Merchandise: COGS spine (aliases, effective-dated costs, unit econ) ─────
+
+export interface MerchVariant {
+  id: number;
+  sku: string;
+  name: string;
+  price: number | null;
+  currency_code: string | null;
+  cost: number | null;
+  cost_currency: string | null;
+  cost_effective_from: string | null;
+  aliases: { integration_id: number; alias: string }[];
+  units_14d: number;
+  units_30d: number;
+  units_90d: number;
+  last_sold_at: string | null;
+}
+
+export interface MerchProduct {
+  id: number;
+  brand_id: number;
+  name: string;
+  category: string | null;
+  status: string;
+  variants: MerchVariant[];
+}
+
+export async function fetchLiveMerchandise(): Promise<MerchProduct[]> {
+  const { data, error } = await getSupabase().rpc("live_merchandise");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as MerchProduct[];
+}
+
+export interface SkuMappingRow {
+  integration_id: number;
+  brand_id: number | null;
+  market: string;
+  currency_code: string | null;
+  store_sku: string;
+  item_name: string | null;
+  units: number;
+  orders: number;
+  last_sold_at: string | null;
+}
+
+export async function fetchSkuMappingQueue(): Promise<SkuMappingRow[]> {
+  const { data, error } = await getSupabase().rpc("live_sku_mapping_queue");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as SkuMappingRow[];
+}
+
+export async function mapVariantAlias(integrationId: number, alias: string, variantId: number): Promise<void> {
+  const { error } = await getSupabase().rpc("map_variant_alias", {
+    p_integration_id: integrationId,
+    p_alias: alias,
+    p_variant_id: variantId,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function saveVariantCost(
+  variantId: number,
+  cost: number,
+  currency: string,
+  effectiveFrom?: string,
+  note?: string,
+): Promise<void> {
+  const params: Record<string, unknown> = {
+    p_variant_id: variantId,
+    p_cost: cost,
+    p_currency: currency,
+  };
+  if (effectiveFrom) params.p_effective_from = effectiveFrom;
+  if (note) params.p_note = note;
+  const { error } = await getSupabase().rpc("save_variant_cost", params);
+  if (error) throw new Error(error.message);
+}
+
+export interface LiveUnitEconRow {
+  win: string;
+  brand_id: number | null;
+  market: string;
+  currency_code: string;
+  revenue: number;
+  orders: number;
+  units: number;
+  mapped_units: number;
+  costed_units: number;
+  cogs: number;
+}
+
+export async function fetchLiveUnitEconomics(): Promise<LiveUnitEconRow[]> {
+  const { data, error } = await getSupabase().rpc("live_unit_economics");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LiveUnitEconRow[];
+}

@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { ArrowRight, Building2, Globe, ShieldCheck, Store } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowRight, Building2, Loader2, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -14,25 +14,80 @@ import {
 } from "@/components/ui/sheet";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
-import { RouteGuard } from "@/lib/rbac/guard";
-import type { Brand } from "@/lib/domain/types";
-import { useAppStore } from "@/lib/store/provider";
+import { LiveGuard } from "@/components/auth/live-guard";
+import {
+  fetchLegalEntities,
+  fetchLiveBrands,
+  fetchLiveMerchandise,
+  fetchWooConnections,
+  type LiveBrand,
+  type LiveWooConnection,
+  type MerchProduct,
+} from "@/lib/supabase/live";
 import { cn } from "@/lib/utils";
 
+/** "WooCommerce — Synovil MY (synovil.com)" → "synovil.com". */
+function domainOf(conn: LiveWooConnection): string {
+  const m = conn.name.match(/\(([^)]+)\)/);
+  return m?.[1] ?? conn.name;
+}
+
+type Data = {
+  brands: LiveBrand[];
+  connections: LiveWooConnection[];
+  legalEntities: { id: number; legal_name: string }[];
+  products: MerchProduct[];
+};
+
 function BrandsInner() {
-  const brands = useAppStore((s) => s.brands);
-  const stores = useAppStore((s) => s.stores);
-  const legalEntities = useAppStore((s) => s.legalEntities);
-  const products = useAppStore((s) => s.products);
-  const integrations = useAppStore((s) => s.integrations);
-  const dqIssues = useAppStore((s) => s.dqIssues);
-  const [selected, setSelected] = useState<Brand | null>(null);
+  const [data, setData] = useState<Data | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<LiveBrand | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [brands, connections, legalEntities, products] = await Promise.all([
+          fetchLiveBrands(),
+          fetchWooConnections(),
+          fetchLegalEntities(),
+          fetchLiveMerchandise(),
+        ]);
+        setData({ brands: brands.filter((b) => b.status === "active"), connections, legalEntities, products });
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    })();
+  }, []);
+
+  // Connections don't carry brand ids; the store domain does (synovilsg.com → Synovil).
+  const connectionsForBrand = useMemo(
+    () => (brand: LiveBrand) =>
+      data?.connections.filter((c) => domainOf(c).toLowerCase().includes(brand.name.toLowerCase())) ?? [],
+    [data],
+  );
+
+  if (error) {
+    return (
+      <PageBody>
+        <PageHeader title="Brands & Catalog" description="Live brand directory." />
+        <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
+      </PageBody>
+    );
+  }
+  if (!data) {
+    return (
+      <PageBody className="flex min-h-96 items-center justify-center">
+        <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading brands" />
+      </PageBody>
+    );
+  }
 
   return (
     <PageBody>
       <PageHeader
         title="Brands & Catalog"
-        description="Brand directory — legal entities, channels, policies, and catalog governance."
+        description="Live brand directory — legal entities, connected storefronts, and catalog & COGS coverage."
       >
         <Link href="/catalog/products" className="inline-flex items-center gap-1 text-sm text-info underline-offset-2 hover:underline">
           Product catalog <ArrowRight className="size-3.5" aria-hidden />
@@ -40,12 +95,14 @@ function BrandsInner() {
       </PageHeader>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {brands.map((b) => {
-          const brandStores = stores.filter((s) => s.brandId === b.id);
-          const brandProducts = products.filter((p) => p.brandId === b.id);
-          const le = legalEntities.find((l) => l.id === b.legalEntityId);
-          const brandIntegrations = integrations.filter((i) => i.brandScope.length === 0 || i.brandScope.includes(b.id));
-          const issues = dqIssues.filter((i) => i.status !== "resolved" && brandIntegrations.some((bi) => bi.id === i.integrationId));
+        {data.brands.map((b) => {
+          const conns = connectionsForBrand(b);
+          const markets = [...new Set(conns.map((c) => c.config.country_code ?? "MY"))].sort();
+          const currencies = markets.map((m) => (m === "SG" ? "SGD" : "MYR"));
+          const brandProducts = data.products.filter((p) => p.brand_id === b.id);
+          const variants = brandProducts.flatMap((p) => p.variants);
+          const costed = variants.filter((v) => v.cost !== null).length;
+          const le = data.legalEntities.find((l) => l.id === b.default_legal_entity_id);
           return (
             <button
               key={b.id}
@@ -55,114 +112,113 @@ function BrandsInner() {
             >
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold">{b.name}</span>
-                    {b.isDemo && <Badge variant="outline" className="text-[10px] text-muted-foreground">synthetic demo brand</Badge>}
+                  <span className="text-sm font-semibold">{b.name}</span>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {b.category ?? "commerce"} · {le?.legal_name ?? "—"}
                   </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">{b.category} · {le?.name}</div>
                 </div>
-                <Badge variant="outline" className={cn("capitalize", b.status === "active" ? "text-success border-success/30 bg-success/10" : "text-muted-foreground")}>
+                <Badge
+                  variant="outline"
+                  className={cn("capitalize", b.status === "active" ? "text-success border-success/30 bg-success/10" : "text-muted-foreground")}
+                >
                   {b.status}
                 </Badge>
               </div>
               <dl className="mt-3 grid grid-cols-4 gap-2 text-xs">
-                <div><dt className="text-muted-foreground">Markets</dt><dd className="mt-0.5 font-medium">{b.markets.join(", ")}</dd></div>
-                <div><dt className="text-muted-foreground">Currencies</dt><dd className="mt-0.5 font-medium">{b.currencies.join(", ")}</dd></div>
-                <div><dt className="text-muted-foreground">Stores</dt><dd className="tnum mt-0.5 font-medium">{brandStores.length}</dd></div>
+                <div><dt className="text-muted-foreground">Markets</dt><dd className="mt-0.5 font-medium">{markets.join(", ") || "—"}</dd></div>
+                <div><dt className="text-muted-foreground">Currencies</dt><dd className="mt-0.5 font-medium">{currencies.join(", ") || "—"}</dd></div>
+                <div><dt className="text-muted-foreground">Stores</dt><dd className="tnum mt-0.5 font-medium">{conns.length}</dd></div>
                 <div><dt className="text-muted-foreground">Products</dt><dd className="tnum mt-0.5 font-medium">{brandProducts.length}</dd></div>
               </dl>
-              {issues.length > 0 && (
-                <p className="mt-2 text-[11px] text-warning">{issues.length} open data issue{issues.length > 1 ? "s" : ""} touch this brand&apos;s sources</p>
+              {variants.length > 0 && costed < variants.length && (
+                <p className="mt-2 text-[11px] text-warning">
+                  COGS set on {costed} of {variants.length} variants — margin stays partial until costs land
+                </p>
               )}
             </button>
           );
         })}
       </div>
 
+      <p className="text-[11px] text-muted-foreground">
+        Live mirror of the connected workspace. Sender/claims policies and brand rules arrive with catalog
+        governance — source pending.
+      </p>
+
       <Sheet open={selected !== null} onOpenChange={(o) => !o && setSelected(null)}>
         <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
           {selected && (() => {
-            const le = legalEntities.find((l) => l.id === selected.legalEntityId);
-            const brandStores = stores.filter((s) => s.brandId === selected.id);
-            const brandProducts = products.filter((p) => p.brandId === selected.id);
-            const brandIntegrations = integrations.filter((i) => i.brandScope.includes(selected.id));
+            const conns = connectionsForBrand(selected);
+            const brandProducts = data.products.filter((p) => p.brand_id === selected.id);
+            const le = data.legalEntities.find((l) => l.id === selected.default_legal_entity_id);
+            const markets = [...new Set(conns.map((c) => c.config.country_code ?? "MY"))].sort();
             return (
               <>
                 <SheetHeader>
                   <SheetTitle>{selected.name}</SheetTitle>
-                  <SheetDescription>{selected.category} · {selected.domains.join(", ")}</SheetDescription>
+                  <SheetDescription>{selected.category ?? "commerce"} · {conns.map(domainOf).join(", ") || "no storefronts connected"}</SheetDescription>
                 </SheetHeader>
                 <div className="space-y-4 px-4 pb-6">
                   <Card>
-                    <CardHeader><CardTitle className="flex items-center gap-1.5 text-sm"><Building2 className="size-4 text-muted-foreground" aria-hidden />Legal & markets</CardTitle></CardHeader>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-1.5 text-sm">
+                        <Building2 className="size-4 text-muted-foreground" aria-hidden />Legal & markets
+                      </CardTitle>
+                    </CardHeader>
                     <CardContent className="space-y-1.5 text-sm">
-                      <div className="flex justify-between"><span className="text-muted-foreground">Legal entity</span><span>{le?.name}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Registration</span><span className="tnum">{le?.registrationNumber}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Markets / currencies</span><span>{selected.markets.join(", ")} · {selected.currencies.join(", ")}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Legal entity</span><span>{le?.legal_name ?? "—"}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Markets / currencies</span><span>{markets.join(", ") || "—"} · {markets.map((m) => (m === "SG" ? "SGD" : "MYR")).join(", ") || "—"}</span></div>
                     </CardContent>
                   </Card>
 
                   <Card>
-                    <CardHeader><CardTitle className="flex items-center gap-1.5 text-sm"><Store className="size-4 text-muted-foreground" aria-hidden />Stores & channels</CardTitle></CardHeader>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-1.5 text-sm">
+                        <Store className="size-4 text-muted-foreground" aria-hidden />Stores & sync health
+                      </CardTitle>
+                    </CardHeader>
                     <CardContent>
                       <ul className="space-y-1.5 text-sm">
-                        {brandStores.map((s) => (
-                          <li key={s.id} className="flex items-center justify-between gap-2">
-                            <span>{s.name}</span>
-                            <span className="text-xs capitalize text-muted-foreground">{s.channelType} · {s.currency}</span>
+                        {conns.map((c) => (
+                          <li key={c.id} className="flex items-center justify-between gap-2">
+                            <span>{domainOf(c)}</span>
+                            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                              {c.config.country_code ?? "MY"}
+                              <FreshnessBadge lastSuccessAt={c.last_success_at} slaMinutes={45} />
+                            </span>
                           </li>
                         ))}
+                        {conns.length === 0 && <li className="text-xs text-muted-foreground">No storefront connections matched.</li>}
                       </ul>
                     </CardContent>
                   </Card>
 
                   <Card>
-                    <CardHeader><CardTitle className="flex items-center gap-1.5 text-sm"><ShieldCheck className="size-4 text-muted-foreground" aria-hidden />Policies & rules</CardTitle></CardHeader>
-                    <CardContent className="space-y-3 text-sm">
-                      <div>
-                        <div className="text-xs font-medium text-muted-foreground">Sender / contact policy</div>
-                        <p className="mt-0.5 text-xs text-muted-foreground">{selected.senderPolicy}</p>
-                      </div>
-                      <div>
-                        <div className="text-xs font-medium text-muted-foreground">Claims policy</div>
-                        <p className="mt-0.5 text-xs text-muted-foreground">{selected.claimsPolicy}</p>
-                      </div>
-                      <div>
-                        <div className="text-xs font-medium text-muted-foreground">Brand rules</div>
-                        <ul className="mt-0.5 list-inside list-disc text-xs text-muted-foreground">
-                          {selected.rules.map((r) => (<li key={r}>{r}</li>))}
-                        </ul>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader><CardTitle className="text-sm">Product eligibility</CardTitle></CardHeader>
+                    <CardHeader><CardTitle className="text-sm">Catalog & COGS</CardTitle></CardHeader>
                     <CardContent>
-                      <ul className="space-y-1 text-sm">
-                        {brandProducts.map((p) => (
-                          <li key={p.id} className="flex items-center justify-between gap-2">
-                            <Link href={`/catalog/products?sku=${p.variants[0]?.sku ?? ""}`} className="text-info underline-offset-2 hover:underline">{p.name}</Link>
-                            <Badge variant="outline" className={cn("text-[10px] capitalize", p.reviewState === "approved" ? "text-success border-success/30" : "text-warning border-warning/30")}>
-                              {p.reviewState.replace("_", " ")}
-                            </Badge>
-                          </li>
-                        ))}
+                      <ul className="space-y-1.5 text-sm">
+                        {brandProducts.map((p) => {
+                          const costed = p.variants.filter((v) => v.cost !== null).length;
+                          const sold30 = p.variants.reduce((s, v) => s + Number(v.units_30d), 0);
+                          return (
+                            <li key={p.id} className="flex items-center justify-between gap-2">
+                              <Link href={`/catalog/products?q=${encodeURIComponent(p.name)}`} className="text-info underline-offset-2 hover:underline">
+                                {p.name}
+                              </Link>
+                              <span className="text-xs text-muted-foreground">
+                                {p.variants.length} SKUs · {costed}/{p.variants.length} costed · {sold30.toLocaleString()} sold 30d
+                              </span>
+                            </li>
+                          );
+                        })}
+                        {brandProducts.length === 0 && <li className="text-xs text-muted-foreground">No canonical products yet.</li>}
                       </ul>
                     </CardContent>
                   </Card>
 
-                  <Card>
-                    <CardHeader><CardTitle className="flex items-center gap-1.5 text-sm"><Globe className="size-4 text-muted-foreground" aria-hidden />Integrations & data health</CardTitle></CardHeader>
-                    <CardContent className="space-y-1.5">
-                      {brandIntegrations.map((i) => (
-                        <div key={i.id} className="flex items-center justify-between gap-2 text-sm">
-                          <Link href={`/integrations/${i.id}`} className="text-muted-foreground underline-offset-2 hover:underline">{i.name}</Link>
-                          <FreshnessBadge lastSuccessAt={i.lastSuccessAt} slaMinutes={i.freshnessSlaMinutes} />
-                        </div>
-                      ))}
-                    </CardContent>
-                  </Card>
+                  <p className="text-[11px] text-muted-foreground">
+                    Policies, claims governance, and per-brand rules arrive with catalog governance — source pending.
+                  </p>
                 </div>
               </>
             );
@@ -175,8 +231,8 @@ function BrandsInner() {
 
 export default function BrandsPage() {
   return (
-    <RouteGuard permission="catalog.view">
+    <LiveGuard>
       <BrandsInner />
-    </RouteGuard>
+    </LiveGuard>
   );
 }
