@@ -204,13 +204,13 @@ function ProductsInner() {
               <table className="w-full min-w-[880px] text-sm">
                 <thead>
                   <tr className="border-b text-left text-xs text-muted-foreground">
-                    <th className="pb-2 font-medium">Store</th>
-                    <th className="pb-2 font-medium">Store SKU</th>
-                    <th className="pb-2 font-medium">Item name</th>
-                    <th className="pb-2 text-right font-medium">Units sold</th>
-                    <th className="pb-2 text-right font-medium">Store price</th>
-                    <th className="pb-2 font-medium">Canonical variant</th>
-                    <th className="pb-2 text-right font-medium" />
+                    <th className="px-3 pb-2 font-medium">Store</th>
+                    <th className="px-3 pb-2 font-medium">Store SKU</th>
+                    <th className="px-3 pb-2 font-medium">Item name</th>
+                    <th className="px-3 pb-2 text-right font-medium">Units sold</th>
+                    <th className="px-3 pb-2 text-right font-medium">Store price</th>
+                    <th className="px-3 pb-2 font-medium">Canonical variant</th>
+                    <th className="px-3 pb-2 text-right font-medium" />
                   </tr>
                 </thead>
                 <tbody>
@@ -225,10 +225,10 @@ function ProductsInner() {
                     const pick = picks[key] ?? (exact ? String(exact.variant.id) : "");
                     return (
                       <tr key={key} className="border-b last:border-0">
-                        <td className="py-2 text-xs text-muted-foreground">
+                        <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">
                           {storeLabel(data.connections.find((c) => c.id === row.integration_id))}
                         </td>
-                        <td className="tnum py-2 font-medium">
+                        <td className="tnum whitespace-nowrap px-3 py-2 font-medium">
                           {row.store_sku}
                           {row.published && Number(row.units) === 0 && (
                             <Badge variant="outline" className="ml-1.5 text-[9px] text-info border-info/30">new · unsold</Badge>
@@ -237,12 +237,12 @@ function ProductsInner() {
                             <Badge variant="outline" className="ml-1.5 text-[9px] text-muted-foreground">no longer published</Badge>
                           )}
                         </td>
-                        <td className="max-w-64 truncate py-2 text-xs text-muted-foreground" title={row.item_name ?? undefined}>
+                        <td className="max-w-64 truncate px-3 py-2 text-xs text-muted-foreground" title={row.item_name ?? undefined}>
                           {row.item_name ?? "—"}
                         </td>
-                        <td className="tnum py-2 text-right">{Number(row.units).toLocaleString()}</td>
-                        <td className="tnum py-2 text-right">{fmtMoney(row.currency_code, row.store_price)}</td>
-                        <td className="py-2 pr-2">
+                        <td className="tnum px-3 py-2 text-right">{Number(row.units).toLocaleString()}</td>
+                        <td className="tnum whitespace-nowrap px-3 py-2 text-right">{fmtMoney(row.currency_code, row.store_price)}</td>
+                        <td className="px-3 py-2">
                           <Select value={pick} onValueChange={(v) => setPicks((s) => ({ ...s, [key]: v }))}>
                             <SelectTrigger className="h-7 w-64 text-xs" aria-label={`Map ${row.store_sku}`}>
                               <SelectValue placeholder="Pick a variant…" />
@@ -256,7 +256,7 @@ function ProductsInner() {
                             </SelectContent>
                           </Select>
                         </td>
-                        <td className="py-2 text-right">
+                        <td className="px-3 py-2 text-right">
                           <Button
                             size="sm"
                             variant="outline"
