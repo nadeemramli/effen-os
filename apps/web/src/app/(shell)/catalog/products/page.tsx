@@ -154,12 +154,17 @@ function ProductsInner() {
   const queueVisible = data.queue.filter((r) => liveBrandId === null || r.brand_id === liveBrandId);
   const allVariants = data.products.flatMap((p) => p.variants);
   const costedCount = allVariants.filter((v) => v.cost !== null).length;
+  // Price drift: a mapped store product currently publishes a different price
+  // than the canonical expectation (same currency by construction).
+  const driftCount = allVariants.filter((v) =>
+    v.aliases.some((a) => a.store_price !== null && v.price !== null && Number(a.store_price) !== Number(v.price)),
+  ).length;
 
   return (
     <PageBody className="max-w-none">
       <PageHeader
         title="Products"
-        description="Live canonical catalog — variants, prices, effective-dated COGS, and store-SKU mappings that key unit economics."
+        description="Two catalogs, side by side: the canonical plane (SKUs, prices, effective-dated COGS — owned here) and each store's published Woo plane, reconciled through confirmed mappings."
       >
         <Link href="/catalog/brands" className="inline-flex items-center gap-1 text-sm text-info underline-offset-2 hover:underline">
           <ArrowLeft className="size-3.5" aria-hidden /> Brand directory
@@ -168,10 +173,10 @@ function ProductsInner() {
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          { label: "Products", value: String(data.products.length) },
           { label: "Variants", value: String(allVariants.length) },
           { label: "Variants with COGS", value: `${costedCount} / ${allVariants.length}`, tone: costedCount === 0 ? "text-warning" : "" },
           { label: "Unmapped store SKUs", value: String(data.queue.length), tone: data.queue.length > 0 ? "text-warning" : "text-success" },
+          { label: "Price drift", value: String(driftCount), tone: driftCount > 0 ? "text-warning" : "text-success" },
         ].map((m) => (
           <div key={m.label} className="rounded-lg border bg-card px-3 py-2.5">
             <div className="text-[11px] text-muted-foreground">{m.label}</div>
@@ -188,7 +193,8 @@ function ProductsInner() {
               Unmapped store SKUs — {queueVisible.length} to confirm
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              Orders sell under per-store Woo SKUs. Confirm which canonical variant each one is — mappings are
+              The published Woo catalogs and the order stream both feed this queue, so new store products
+              appear here before their first sale. Confirm which canonical variant each one is — mappings are
               never guessed, and COGS/LTV only count mapped lines. Options are limited to variants in the
               store&apos;s currency.
             </p>
@@ -200,8 +206,9 @@ function ProductsInner() {
                   <tr className="border-b text-left text-xs text-muted-foreground">
                     <th className="pb-2 font-medium">Store</th>
                     <th className="pb-2 font-medium">Store SKU</th>
-                    <th className="pb-2 font-medium">Item name (latest)</th>
-                    <th className="pb-2 text-right font-medium">Units</th>
+                    <th className="pb-2 font-medium">Item name</th>
+                    <th className="pb-2 text-right font-medium">Units sold</th>
+                    <th className="pb-2 text-right font-medium">Store price</th>
                     <th className="pb-2 font-medium">Canonical variant</th>
                     <th className="pb-2 text-right font-medium" />
                   </tr>
@@ -221,11 +228,20 @@ function ProductsInner() {
                         <td className="py-2 text-xs text-muted-foreground">
                           {storeLabel(data.connections.find((c) => c.id === row.integration_id))}
                         </td>
-                        <td className="tnum py-2 font-medium">{row.store_sku}</td>
+                        <td className="tnum py-2 font-medium">
+                          {row.store_sku}
+                          {row.published && Number(row.units) === 0 && (
+                            <Badge variant="outline" className="ml-1.5 text-[9px] text-info border-info/30">new · unsold</Badge>
+                          )}
+                          {!row.published && (
+                            <Badge variant="outline" className="ml-1.5 text-[9px] text-muted-foreground">no longer published</Badge>
+                          )}
+                        </td>
                         <td className="max-w-64 truncate py-2 text-xs text-muted-foreground" title={row.item_name ?? undefined}>
                           {row.item_name ?? "—"}
                         </td>
                         <td className="tnum py-2 text-right">{Number(row.units).toLocaleString()}</td>
+                        <td className="tnum py-2 text-right">{fmtMoney(row.currency_code, row.store_price)}</td>
                         <td className="py-2 pr-2">
                           <Select value={pick} onValueChange={(v) => setPicks((s) => ({ ...s, [key]: v }))}>
                             <SelectTrigger className="h-7 w-64 text-xs" aria-label={`Map ${row.store_sku}`}>
@@ -304,6 +320,9 @@ function ProductsInner() {
               const sold30 = p.variants.reduce((s, v) => s + Number(v.units_30d), 0);
               const costed = p.variants.filter((v) => v.cost !== null).length;
               const aliasCount = p.variants.reduce((s, v) => s + v.aliases.length, 0);
+              const hasDrift = p.variants.some((v) =>
+                v.aliases.some((a) => a.store_price !== null && v.price !== null && Number(a.store_price) !== Number(v.price)),
+              );
               return (
                 <tr
                   key={p.id}
@@ -342,8 +361,13 @@ function ProductsInner() {
                       {costed} / {p.variants.length} costed
                     </Badge>
                   </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">
-                    {aliasCount > 0 ? `${aliasCount} store SKU${aliasCount > 1 ? "s" : ""}` : "none yet"}
+                  <td className="px-3 py-2 text-xs">
+                    <span className="text-muted-foreground">
+                      {aliasCount > 0 ? `${aliasCount} store SKU${aliasCount > 1 ? "s" : ""}` : "none yet"}
+                    </span>
+                    {hasDrift && (
+                      <Badge variant="outline" className="ml-1.5 border-warning/30 text-[9px] text-warning">price drift</Badge>
+                    )}
                   </td>
                 </tr>
               );
@@ -353,9 +377,10 @@ function ProductsInner() {
       </div>
 
       <p className="text-[11px] text-muted-foreground">
-        COGS is effective-dated — margin on an order uses the cost that was true when the order was placed.
-        Costs pair with revenue in the same currency only; converting SGD↔MYR waits on the Finance FX policy.
-        Claims, review states, and ownership arrive when catalog governance connects.
+        The store plane mirrors each Woo catalog hourly, read-only — marketers keep full ownership of
+        WordPress; this is where finance sees it. COGS is effective-dated — margin on an order uses the cost
+        that was true when the order was placed. Costs pair with revenue in the same currency only;
+        converting SGD↔MYR waits on the Finance FX policy.
       </p>
 
       {/* product drawer */}
@@ -389,11 +414,24 @@ function ProductsInner() {
                           <td className="tnum py-1.5">{v.sku}</td>
                           <td className="py-1.5">
                             {v.name}
-                            {v.aliases.length > 0 && (
-                              <span className="block text-[10px] text-muted-foreground">
-                                store SKUs: {v.aliases.map((a) => a.alias).join(", ")}
-                              </span>
-                            )}
+                            {v.aliases.map((a) => {
+                              const drift =
+                                a.store_price !== null && v.price !== null && Number(a.store_price) !== Number(v.price);
+                              return (
+                                <span key={`${a.integration_id}:${a.alias}`} className="block text-[10px] text-muted-foreground">
+                                  <span className="tnum">{a.alias}</span>
+                                  {a.store_price !== null && (
+                                    <span className={cn("ml-1", drift && "font-medium text-warning")}>
+                                      store {fmtMoney(v.currency_code, Number(a.store_price))}
+                                      {drift && " ≠ canonical"}
+                                    </span>
+                                  )}
+                                  {a.store_status !== null && a.store_status !== "publish" && (
+                                    <span className="ml-1">({a.store_status})</span>
+                                  )}
+                                </span>
+                              );
+                            })}
                           </td>
                           <td className="tnum py-1.5 text-right">{fmtMoney(v.currency_code, v.price)}</td>
                           <td className="tnum py-1.5 text-right">

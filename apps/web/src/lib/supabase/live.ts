@@ -630,7 +630,13 @@ export interface MerchVariant {
   cost: number | null;
   cost_currency: string | null;
   cost_effective_from: string | null;
-  aliases: { integration_id: number; alias: string }[];
+  aliases: {
+    integration_id: number;
+    alias: string;
+    store_name: string | null;
+    store_price: number | null;
+    store_status: string | null;
+  }[];
   units_14d: number;
   units_30d: number;
   units_90d: number;
@@ -662,6 +668,9 @@ export interface SkuMappingRow {
   units: number;
   orders: number;
   last_sold_at: string | null;
+  published: boolean;
+  store_price: number | null;
+  store_status: string | null;
 }
 
 export async function fetchSkuMappingQueue(): Promise<SkuMappingRow[]> {
