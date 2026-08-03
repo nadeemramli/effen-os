@@ -119,8 +119,8 @@ export const ROUTES: RouteDef[] = [
   },
   {
     key: "catalog",
-    label: "Brands & Catalog",
-    path: "/catalog/brands",
+    label: "Catalog",
+    path: "/catalog",
     icon: Tags,
     group: "Merchandise",
     status: "live",

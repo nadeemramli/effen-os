@@ -96,7 +96,7 @@ export function GlobalSearch({ open, onOpenChange }: Props) {
               <CommandItem
                 key={v.id}
                 value={`${v.sku} ${p.name} ${v.aliases.join(" ")}`}
-                onSelect={() => go(`/catalog/products?sku=${v.sku}`)}
+                onSelect={() => go(`/catalog?sku=${v.sku}`)}
               >
                 <Package className="size-4" aria-hidden />
                 <span>{v.sku}</span>

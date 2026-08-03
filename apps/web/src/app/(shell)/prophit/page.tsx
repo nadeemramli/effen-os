@@ -388,7 +388,7 @@ function ProphitInner() {
                         kind === "order" ? `/orders/${id}`
                         : kind === "campaign" ? `/marketing?campaign=${id}`
                         : kind === "integration" ? `/integrations/${id}`
-                        : kind === "product" ? "/catalog/products"
+                        : kind === "product" ? "/catalog"
                         : kind === "dq" ? "/data-health"
                         : "/prophit";
                       return (

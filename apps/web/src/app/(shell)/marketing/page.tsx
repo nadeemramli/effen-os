@@ -274,7 +274,7 @@ function CampaignRows({
                 <div className="text-xs font-medium text-muted-foreground">Linked context</div>
                 <div className="flex flex-wrap gap-1.5">
                   {c.productSkus.map((sku: string) => (
-                    <Link key={sku} href={`/catalog/products?sku=${sku}`} className={cn("rounded border px-1.5 py-0.5 font-mono text-[10px] underline-offset-2 hover:underline", stockoutSkus.includes(sku) ? "border-destructive/30 bg-destructive/10 text-destructive" : "text-info")}>
+                    <Link key={sku} href={`/catalog?sku=${sku}`} className={cn("rounded border px-1.5 py-0.5 font-mono text-[10px] underline-offset-2 hover:underline", stockoutSkus.includes(sku) ? "border-destructive/30 bg-destructive/10 text-destructive" : "text-info")}>
                       {sku}{stockoutSkus.includes(sku) ? " · OUT OF STOCK" : ""}
                     </Link>
                   ))}

@@ -24,7 +24,7 @@ function ProductionInner() {
           lands with the production spine; finished-goods receipts will then feed{" "}
           <Link href="/inventory" className="text-info underline-offset-2 hover:underline">Inventory</Link>{" "}
           on-hand and batch-level COGS in{" "}
-          <Link href="/catalog/products" className="text-info underline-offset-2 hover:underline">the catalog</Link>.
+          <Link href="/catalog" className="text-info underline-offset-2 hover:underline">the catalog</Link>.
         </p>
         <p className="mt-3 max-w-md text-xs text-muted-foreground">
           Until then, per-unit COGS is entered directly on variants (effective-dated, audited) — enough for

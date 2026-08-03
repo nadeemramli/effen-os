@@ -107,7 +107,7 @@ function InventoryInner() {
         {data.unmappedCount > 0 && (
           <>
             {" "}
-            — <Link href="/catalog/products" className="text-info underline-offset-2 hover:underline">{data.unmappedCount} store SKUs still unmapped</Link>, their units are not counted yet
+            — <Link href="/catalog" className="text-info underline-offset-2 hover:underline">{data.unmappedCount} store SKUs still unmapped</Link>, their units are not counted yet
           </>
         )}
         .
@@ -140,7 +140,7 @@ function InventoryInner() {
                 {rows.map(({ product, variant, sold14, sold30, velocity }) => (
                   <tr key={variant.id} className="border-b last:border-0">
                     <td className="py-2">
-                      <Link href={`/catalog/products?q=${encodeURIComponent(variant.sku)}`} className="tnum text-info underline-offset-2 hover:underline">
+                      <Link href={`/catalog?q=${encodeURIComponent(variant.sku)}`} className="tnum text-info underline-offset-2 hover:underline">
                         {variant.sku}
                       </Link>
                       <div className="max-w-52 truncate text-[11px] text-muted-foreground">

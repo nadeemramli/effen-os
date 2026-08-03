@@ -131,7 +131,7 @@ export default function CommandCenterPage() {
       label: "Stock risk",
       count: stockRisk.length,
       detail: "VER-TON-100 stocked out · low cover on 2 SKUs",
-      href: "/catalog/products?filter=stock-risk",
+      href: "/catalog?filter=stock-risk",
       tone: "warning" as const,
     },
     {

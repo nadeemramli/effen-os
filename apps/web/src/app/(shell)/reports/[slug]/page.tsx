@@ -305,7 +305,7 @@ function ReportDetailInner() {
                 return (
                   <tr key={sku} className="border-b last:border-0">
                     <td className="py-2">
-                      <Link href={`/catalog/products?sku=${sku}`} className="tnum text-info underline-offset-2 hover:underline">{sku}</Link>
+                      <Link href={`/catalog?sku=${sku}`} className="tnum text-info underline-offset-2 hover:underline">{sku}</Link>
                       <div className="max-w-56 truncate text-[11px] text-muted-foreground">{r.name}</div>
                     </td>
                     <td className="tnum py-2 text-right">{r.qty}</td>
