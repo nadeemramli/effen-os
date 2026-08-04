@@ -724,3 +724,13 @@ export async function fetchLiveUnitEconomics(): Promise<LiveUnitEconRow[]> {
   if (error) throw new Error(error.message);
   return (data ?? []) as LiveUnitEconRow[];
 }
+
+// ── Automations registry health ─────────────────────────────────────────────
+
+export type AutomationHealth = Record<string, Record<string, unknown>>;
+
+export async function fetchAutomationHealth(): Promise<AutomationHealth> {
+  const { data, error } = await getSupabase().rpc("live_automation_health");
+  if (error) throw new Error(error.message);
+  return (data ?? {}) as AutomationHealth;
+}
