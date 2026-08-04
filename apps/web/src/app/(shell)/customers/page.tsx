@@ -4,9 +4,22 @@ import { useRouter } from "next/navigation";
 import { parseAsInteger, parseAsString, useQueryState } from "nuqs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Loader2, Plus, SlidersHorizontal, Users, X } from "lucide-react";
+import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -17,11 +30,17 @@ import {
 import { DataTable } from "@/components/tables/data-table";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { LiveGuard } from "@/components/auth/live-guard";
+import { getSupabase } from "@/lib/supabase/client";
 import {
+  deleteSegment,
   fetchLiveBrands,
   fetchLiveCustomers,
+  fetchSegments,
+  saveSegment,
+  type CustomerSegment,
   type LiveBrand,
   type LiveCustomerRow,
+  type SegmentCondition,
 } from "@/lib/supabase/live";
 import { maskPhone } from "@/lib/utils/mask";
 import { useAppStore } from "@/lib/store/provider";
@@ -29,16 +48,69 @@ import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 50;
 
-function repeatState(orders: number): string {
-  return orders >= 5 ? "loyal" : orders > 1 ? "repeat" : "first-time";
+/* ---------- the segment field catalog (mirrors the server whitelist) ---------- */
+
+interface FieldDef {
+  field: string;
+  label: string;
+  type: "enum" | "number";
+  options?: { value: string; label: string }[];
 }
 
-function lifecycleOf(last: string | null): { label: string; cls?: string } {
-  if (!last) return { label: "—" };
-  const days = (Date.now() - new Date(last).getTime()) / 86_400_000;
-  if (days <= 30) return { label: "active" };
-  if (days <= 90) return { label: "at risk", cls: "text-warning" };
-  return { label: "dormant", cls: "text-muted-foreground" };
+const FIELD_DEFS: FieldDef[] = [
+  { field: "activity", label: "Lifecycle", type: "enum", options: [
+    { value: "new", label: "New" }, { value: "active", label: "Active" },
+    { value: "at_risk", label: "At risk" }, { value: "dormant", label: "Dormant" },
+    { value: "provisional", label: "Provisional" },
+  ] },
+  { field: "repeat", label: "Repeat state", type: "enum", options: [
+    { value: "first_time", label: "First-time" }, { value: "repeat", label: "Repeat" }, { value: "loyal", label: "Loyal" },
+  ] },
+  { field: "tier", label: "Value tier", type: "enum", options: [
+    { value: "vip", label: "VIP" }, { value: "high", label: "High" }, { value: "mid", label: "Mid" }, { value: "low", label: "Low" },
+  ] },
+  { field: "classification", label: "Classification", type: "enum", options: [
+    { value: "regular", label: "Regular" }, { value: "reseller", label: "Reseller" }, { value: "joy_buyer", label: "Joy buyer" },
+  ] },
+  { field: "total_orders", label: "Total orders", type: "number" },
+  { field: "recognized_orders", label: "Recognized orders", type: "number" },
+  { field: "revenue_total", label: "Lifetime revenue", type: "number" },
+  { field: "cod_share", label: "COD share %", type: "number" },
+  { field: "cod_orders", label: "COD orders", type: "number" },
+  { field: "suspect_orders", label: "Suspect-detail orders", type: "number" },
+  { field: "cancelled_orders", label: "Cancelled / failed orders", type: "number" },
+  { field: "distinct_names", label: "Distinct recipient names", type: "number" },
+  { field: "last_order_days", label: "Days since last order", type: "number" },
+  { field: "first_order_days", label: "Days since first order", type: "number" },
+];
+
+const OPS: { value: SegmentCondition["op"]; label: string }[] = [
+  { value: "gte", label: "≥" },
+  { value: "lte", label: "≤" },
+  { value: "eq", label: "=" },
+];
+
+/** Built-in starter segments — same condition language, not deletable. */
+const STARTERS: { key: string; name: string; conditions: SegmentCondition[] }[] = [
+  { key: "vip", name: "VIP", conditions: [{ field: "tier", op: "eq", value: "vip" }] },
+  { key: "loyal", name: "Loyal", conditions: [{ field: "repeat", op: "eq", value: "loyal" }] },
+  { key: "at_risk", name: "At risk", conditions: [{ field: "activity", op: "eq", value: "at_risk" }] },
+  { key: "resellers", name: "Resellers", conditions: [{ field: "classification", op: "eq", value: "reseller" }] },
+  { key: "joy_buyers", name: "Joy buyers", conditions: [{ field: "classification", op: "eq", value: "joy_buyer" }] },
+  { key: "cod_heavy", name: "COD-heavy", conditions: [
+    { field: "cod_share", op: "gte", value: 80 }, { field: "total_orders", op: "gte", value: 2 },
+  ] },
+];
+
+function describeCondition(c: SegmentCondition): string {
+  const def = FIELD_DEFS.find((f) => f.field === c.field);
+  const label = def?.label ?? c.field;
+  if (def?.type === "enum") {
+    const opt = def.options?.find((o) => o.value === c.value)?.label ?? String(c.value);
+    return `${label}: ${opt}`;
+  }
+  const op = OPS.find((o) => o.value === c.op)?.label ?? c.op;
+  return `${label} ${op} ${c.value}`;
 }
 
 function revenueLine(byCcy: Record<string, number> | null): string {
@@ -58,20 +130,29 @@ function relative(iso: string | null): string {
   return `${(days / 365).toFixed(1)}y ago`;
 }
 
+function lifecycleOf(row: LiveCustomerRow): { label: string; cls?: string } {
+  if (!row.last_order_at) return { label: "provisional", cls: "text-muted-foreground" };
+  const days = (Date.now() - new Date(row.last_order_at).getTime()) / 86_400_000;
+  if (days <= 30) return { label: "active" };
+  if (days <= 90) return { label: "at risk", cls: "text-warning" };
+  return { label: "dormant", cls: "text-muted-foreground" };
+}
+
 function CustomersInner() {
   const router = useRouter();
   const [q, setQ] = useQueryState("q", parseAsString.withDefault(""));
+  const [segmentKey, setSegmentKey] = useQueryState("segment", parseAsString);
+  const [page, setPage] = useQueryState("page", parseAsInteger.withDefault(1));
   // Brand + market scope come from the top bar's live controls, like every live surface.
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
-  const [lifecycle, setLifecycle] = useQueryState("lifecycle", parseAsString.withDefault("any"));
-  const [repeat, setRepeat] = useQueryState("repeat", parseAsString.withDefault("any"));
-  const [tier, setTier] = useQueryState("tier", parseAsString.withDefault("any"));
-  const [consent, setConsent] = useQueryState("consent", parseAsString.withDefault("any"));
-  const [risk, setRisk] = useQueryState("risk", parseAsString.withDefault("any"));
-  const [page, setPage] = useQueryState("page", parseAsInteger.withDefault(1));
 
   const [brands, setBrands] = useState<LiveBrand[]>([]);
+  const [segments, setSegments] = useState<CustomerSegment[]>([]);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [conditions, setConditions] = useState<SegmentCondition[]>([]);
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
   const [rows, setRows] = useState<LiveCustomerRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -82,10 +163,27 @@ function CustomersInner() {
 
   useEffect(() => {
     void fetchLiveBrands().then((b) =>
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       setBrands(b.filter((x) => x.status === "active")),
     );
+    void fetchSegments().then(setSegments).catch(() => setSegments([]));
+    void getSupabase().auth.getSession().then(({ data }) => setUserId(data.session?.user.id ?? null));
   }, []);
+
+  // The active segment (starter or saved) supplies conditions on load / URL nav.
+  useEffect(() => {
+    if (!segmentKey) return;
+    const starter = STARTERS.find((s) => s.key === segmentKey);
+    if (starter) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setConditions(starter.conditions);
+      return;
+    }
+    const saved = segments.find((s) => `s${s.id}` === segmentKey);
+    if (saved) setConditions(saved.params.conditions ?? []);
+  }, [segmentKey, segments]);
+
+  const conditionsKey = JSON.stringify(conditions);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -96,10 +194,8 @@ function CustomersInner() {
         pageSize: PAGE_SIZE,
         search: q,
         brandId: liveBrandId,
-        activity: lifecycle === "any" ? null : lifecycle,
         countries: liveMarkets,
-        repeat: repeat === "any" ? null : repeat,
-        tier: tier === "any" ? null : tier,
+        conditions,
       });
       setRows(result.rows);
       setTotal(result.total);
@@ -108,7 +204,8 @@ function CustomersInner() {
     } finally {
       setLoading(false);
     }
-  }, [page, q, liveBrandId, liveMarkets, lifecycle, repeat, tier]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, q, liveBrandId, liveMarkets, conditionsKey]);
 
   useEffect(() => {
     // Server-side query re-runs on any filter/page change.
@@ -116,8 +213,19 @@ function CustomersInner() {
     void reload();
   }, [reload]);
 
+  const applySegment = (key: string | null, conds: SegmentCondition[]) => {
+    setConditions(conds);
+    void setSegmentKey(key);
+    void setPage(null);
+  };
+
+  const editCondition = (i: number, patch: Partial<SegmentCondition>) => {
+    setConditions((cs) => cs.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+    void setSegmentKey(null);
+    void setPage(null);
+  };
+
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const filtersActive = q !== "" || lifecycle !== "any" || repeat !== "any" || tier !== "any" || consent !== "any" || risk !== "any";
 
   const columns = useMemo<ColumnDef<LiveCustomerRow, unknown>[]>(
     () => [
@@ -159,15 +267,9 @@ function CustomersInner() {
         header: "Lifecycle",
         enableSorting: false,
         cell: ({ row }) => {
-          const lc = lifecycleOf(row.original.last_order_at);
+          const lc = lifecycleOf(row.original);
           return <span className={cn("capitalize", lc.cls)}>{lc.label}</span>;
         },
-      },
-      {
-        id: "repeat",
-        header: "Repeat",
-        enableSorting: false,
-        cell: ({ row }) => <span className="capitalize">{repeatState(Number(row.original.total_orders))}</span>,
       },
       {
         id: "orders",
@@ -186,10 +288,39 @@ function CustomersInner() {
         header: "Tier",
         enableSorting: false,
         cell: ({ row }) => {
-          const total = Object.values(row.original.revenue_by_currency ?? {}).reduce((s, v) => s + Number(v), 0);
+          const total = Number(row.original.revenue_total);
           // Thresholds calibrated to the live value distribution (p99/p95/p75).
           const t = total >= 900 ? "vip" : total >= 600 ? "high" : total >= 230 ? "mid" : "low";
           return <span className="text-xs uppercase">{t}</span>;
+        },
+      },
+      {
+        id: "classification",
+        header: "Class",
+        enableSorting: false,
+        cell: ({ row }) => {
+          const c = row.original.classification;
+          if (c === "reseller") {
+            return <Badge variant="outline" className="border-info/30 bg-info/10 text-[10px] text-info">reseller</Badge>;
+          }
+          if (c === "joy_buyer") {
+            return <Badge variant="outline" className="border-warning/30 bg-warning/10 text-[10px] text-warning">joy buyer</Badge>;
+          }
+          return <span className="text-[11px] text-muted-foreground">—</span>;
+        },
+      },
+      {
+        id: "risk",
+        header: "Risk signals",
+        enableSorting: false,
+        cell: ({ row }) => {
+          const bits: string[] = [];
+          if (Number(row.original.suspect_orders) > 0) bits.push(`suspect ×${row.original.suspect_orders}`);
+          if (Number(row.original.cancelled_orders) > 1) bits.push(`cancelled ×${row.original.cancelled_orders}`);
+          if (Number(row.original.distinct_names) >= 4) bits.push(`${row.original.distinct_names} names`);
+          return bits.length > 0
+            ? <span className="text-[11px] text-warning">{bits.join(" · ")}</span>
+            : <span className="text-[11px] text-muted-foreground">—</span>;
         },
       },
       {
@@ -199,12 +330,6 @@ function CustomersInner() {
         cell: ({ row }) => (
           <span className="tnum text-muted-foreground">{relative(row.original.last_order_at)}</span>
         ),
-      },
-      {
-        id: "risk",
-        header: "Risk",
-        enableSorting: false,
-        cell: () => <span className="text-[11px] text-muted-foreground">—</span>,
       },
     ],
     [brandById],
@@ -216,6 +341,156 @@ function CustomersInner() {
         title="Customers"
         description={`Live mirror · ${total.toLocaleString()} identities resolved from order history (phone-first, e-mail fallback) · contact details masked by default`}
       />
+
+      {/* segments — saved filter sets, shared workspace-wide */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => applySegment(null, [])}
+          className={cn(
+            "rounded-full border px-2.5 py-1 text-xs transition-colors",
+            conditions.length === 0 ? "border-ring bg-accent font-medium" : "text-muted-foreground hover:border-ring/60",
+          )}
+        >
+          All customers
+        </button>
+        {STARTERS.map((s) => (
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => applySegment(s.key, s.conditions)}
+            className={cn(
+              "rounded-full border px-2.5 py-1 text-xs transition-colors",
+              segmentKey === s.key ? "border-ring bg-accent font-medium" : "text-muted-foreground hover:border-ring/60",
+            )}
+          >
+            {s.name}
+          </button>
+        ))}
+        {segments.map((s) => (
+          <span
+            key={s.id}
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition-colors",
+              segmentKey === `s${s.id}` ? "border-ring bg-accent font-medium" : "text-muted-foreground hover:border-ring/60",
+            )}
+          >
+            <button type="button" onClick={() => applySegment(`s${s.id}`, s.params.conditions ?? [])} className="inline-flex items-center gap-1">
+              {s.is_shared && <Users className="size-3" aria-label="Shared segment" />}
+              {s.name}
+            </button>
+            {s.user_id === userId && (
+              <button
+                type="button"
+                aria-label={`Delete segment ${s.name}`}
+                className="text-muted-foreground/60 hover:text-destructive"
+                onClick={async () => {
+                  try {
+                    await deleteSegment(s.id);
+                    setSegments((all) => all.filter((x) => x.id !== s.id));
+                    if (segmentKey === `s${s.id}`) applySegment(null, []);
+                    toast.success(`Segment "${s.name}" deleted`);
+                  } catch (e) {
+                    toast.error("Could not delete segment", { description: (e as Error).message });
+                  }
+                }}
+              >
+                <X className="size-3" aria-hidden />
+              </button>
+            )}
+          </span>
+        ))}
+        <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={() => setBuilderOpen((o) => !o)}>
+          <SlidersHorizontal className="size-3.5" aria-hidden />
+          {builderOpen ? "Hide filters" : "Filters"}
+          {conditions.length > 0 && <span className="tnum rounded-full bg-accent px-1.5">{conditions.length}</span>}
+        </Button>
+      </div>
+
+      {/* condition builder */}
+      {builderOpen && (
+        <Card>
+          <CardContent className="space-y-2 pt-4">
+            {conditions.map((c, i) => {
+              const def = FIELD_DEFS.find((f) => f.field === c.field) ?? FIELD_DEFS[0]!;
+              return (
+                <div key={i} className="flex flex-wrap items-center gap-2">
+                  <Select
+                    value={c.field}
+                    onValueChange={(field) => {
+                      const nd = FIELD_DEFS.find((f) => f.field === field)!;
+                      editCondition(i, {
+                        field,
+                        op: nd.type === "enum" ? "eq" : c.op === "eq" ? "gte" : c.op,
+                        value: nd.type === "enum" ? nd.options![0]!.value : 1,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="h-8 w-52 text-xs" aria-label="Field"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {FIELD_DEFS.map((f) => (<SelectItem key={f.field} value={f.field}>{f.label}</SelectItem>))}
+                    </SelectContent>
+                  </Select>
+                  {def.type === "number" ? (
+                    <>
+                      <Select value={c.op} onValueChange={(op) => editCondition(i, { op: op as SegmentCondition["op"] })}>
+                        <SelectTrigger className="h-8 w-16 text-xs" aria-label="Operator"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {OPS.map((o) => (<SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        inputMode="decimal"
+                        value={String(c.value)}
+                        onChange={(e) => editCondition(i, { value: e.target.value === "" ? 0 : Number(e.target.value) })}
+                        className="h-8 w-24 text-xs"
+                        aria-label="Value"
+                      />
+                    </>
+                  ) : (
+                    <Select value={String(c.value)} onValueChange={(v) => editCondition(i, { value: v })}>
+                      <SelectTrigger className="h-8 w-44 text-xs" aria-label="Value"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {def.options!.map((o) => (<SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  <Button
+                    variant="ghost" size="icon" className="size-7 text-muted-foreground"
+                    aria-label="Remove condition"
+                    onClick={() => { setConditions((cs) => cs.filter((_, j) => j !== i)); void setSegmentKey(null); void setPage(null); }}
+                  >
+                    <X className="size-3.5" aria-hidden />
+                  </Button>
+                </div>
+              );
+            })}
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                variant="outline" size="sm" className="h-7 gap-1 text-xs"
+                onClick={() => { setConditions((cs) => [...cs, { field: "total_orders", op: "gte", value: 2 }]); void setSegmentKey(null); }}
+              >
+                <Plus className="size-3" aria-hidden /> Add condition
+              </Button>
+              {conditions.length > 0 && (
+                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setSaveOpen(true)}>
+                  Save as segment
+                </Button>
+              )}
+              <span className="text-[11px] text-muted-foreground">
+                Conditions combine with AND · segments are stored globally and usable across the OS
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* active conditions summary (when builder is closed) */}
+      {!builderOpen && conditions.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Active: {conditions.map(describeCondition).join(" AND ")}
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <form
@@ -233,52 +508,9 @@ function CustomersInner() {
             aria-label="Search customers"
           />
         </form>
-        <Select value={lifecycle} onValueChange={(v) => { void setLifecycle(v === "any" ? null : v); void setPage(null); }}>
-          <SelectTrigger className="h-8 w-36 text-xs" aria-label="Lifecycle"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">Any lifecycle</SelectItem>
-            {["new", "active", "at_risk", "dormant", "provisional"].map((s) => (
-              <SelectItem key={s} value={s}>{s.replace("_", " ")}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={repeat} onValueChange={(v) => { void setRepeat(v === "any" ? null : v); void setPage(null); }}>
-          <SelectTrigger className="h-8 w-32 text-xs" aria-label="Repeat state"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">Any repeat</SelectItem>
-            <SelectItem value="first_time">First-time</SelectItem>
-            <SelectItem value="repeat">Repeat</SelectItem>
-            <SelectItem value="loyal">Loyal</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={tier} onValueChange={(v) => { void setTier(v === "any" ? null : v); void setPage(null); }}>
-          <SelectTrigger className="h-8 w-28 text-xs" aria-label="Value tier"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">Any tier</SelectItem>
-            {["vip", "high", "mid", "low"].map((t) => (
-              <SelectItem key={t} value={t}>{t.toUpperCase()}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={consent} onValueChange={(v) => { void setConsent(v === "any" ? null : v); }}>
-          <SelectTrigger className="h-8 w-44 text-xs" aria-label="Marketing consent"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">Any WA consent</SelectItem>
-            <SelectItem value="granted" disabled>WA marketing granted — source pending</SelectItem>
-            <SelectItem value="revoked" disabled>WA marketing revoked — source pending</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={risk} onValueChange={(v) => { void setRisk(v === "any" ? null : v); }}>
-          <SelectTrigger className="h-8 w-32 text-xs" aria-label="Risk"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="any">Any risk</SelectItem>
-            <SelectItem value="service" disabled>Service risk — source pending</SelectItem>
-            <SelectItem value="cod" disabled>COD risk — source pending</SelectItem>
-          </SelectContent>
-        </Select>
-        {filtersActive && (
+        {(q !== "" || conditions.length > 0) && (
           <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs text-muted-foreground"
-            onClick={() => { setSearchDraft(""); void setQ(null); void setLifecycle(null); void setRepeat(null); void setTier(null); void setConsent(null); void setRisk(null); void setPage(null); }}>
+            onClick={() => { setSearchDraft(""); void setQ(null); applySegment(null, []); }}>
             <X className="size-3" aria-hidden /> Clear
           </Button>
         )}
@@ -321,7 +553,81 @@ function CustomersInner() {
           </div>
         </>
       )}
+
+      <SaveSegmentDialog
+        open={saveOpen}
+        onClose={() => setSaveOpen(false)}
+        conditions={conditions}
+        onSaved={async (name) => {
+          const fresh = await fetchSegments();
+          setSegments(fresh);
+          const created = fresh.find((s) => s.name === name);
+          if (created) void setSegmentKey(`s${created.id}`);
+        }}
+      />
     </PageBody>
+  );
+}
+
+function SaveSegmentDialog({
+  open,
+  onClose,
+  conditions,
+  onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  conditions: SegmentCondition[];
+  onSaved: (name: string) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [shared, setShared] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Save segment</DialogTitle>
+          <DialogDescription>
+            {conditions.map(describeCondition).join(" AND ") || "No conditions"} — stored globally, so this
+            segment can be reused on other surfaces (dashboards, exports) later.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="seg-name">Segment name</Label>
+            <Input id="seg-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Dormant VIPs" />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox checked={shared} onCheckedChange={(v) => setShared(v === true)} />
+            Share with the whole workspace
+          </label>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            disabled={busy || !name.trim() || conditions.length === 0}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await saveSegment(name.trim(), conditions, shared);
+                await onSaved(name.trim());
+                toast.success(`Segment "${name.trim()}" saved`);
+                setName("");
+                onClose();
+              } catch (e) {
+                toast.error("Could not save segment", { description: (e as Error).message });
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : "Save segment"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

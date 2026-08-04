@@ -318,10 +318,23 @@ export interface LiveCustomerRow {
   brand_ids: number[] | null;
   total_orders: number;
   recognized_orders: number;
+  cod_orders: number;
+  suspect_orders: number;
+  cancelled_orders: number;
+  distinct_names: number;
   first_order_at: string | null;
   last_order_at: string | null;
   revenue_by_currency: Record<string, number> | null;
+  revenue_total: number;
+  classification: "regular" | "reseller" | "joy_buyer";
   total_count: number;
+}
+
+/** One declarative filter condition — fields/ops whitelisted server-side. */
+export interface SegmentCondition {
+  field: string;
+  op: "eq" | "in" | "gte" | "lte";
+  value: string | number | string[];
 }
 
 export async function fetchLiveCustomers(q: {
@@ -329,24 +342,64 @@ export async function fetchLiveCustomers(q: {
   pageSize: number;
   search: string;
   brandId: number | null;
-  activity: string | null;
   countries?: string[] | null;
-  repeat?: string | null;
-  tier?: string | null;
+  conditions?: SegmentCondition[] | null;
 }): Promise<{ rows: LiveCustomerRow[]; total: number }> {
   const { data, error } = await getSupabase().rpc("live_customers", {
     p_page: q.page,
     p_page_size: q.pageSize,
     p_search: q.search,
     p_brand_id: q.brandId,
-    p_activity: q.activity,
     p_countries: q.countries && q.countries.length > 0 ? q.countries : null,
-    p_repeat: q.repeat ?? null,
-    p_tier: q.tier ?? null,
+    p_conditions: q.conditions && q.conditions.length > 0 ? q.conditions : null,
   });
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as LiveCustomerRow[];
   return { rows, total: rows[0]?.total_count ?? 0 };
+}
+
+/* ---------- customer segments (saved, shareable, global) ---------- */
+
+export interface CustomerSegment {
+  id: number;
+  name: string;
+  user_id: string;
+  is_shared: boolean;
+  params: { conditions: SegmentCondition[] };
+}
+
+export async function fetchSegments(): Promise<CustomerSegment[]> {
+  const { data, error } = await getSupabase()
+    .from("saved_views")
+    .select("id, name, user_id, is_shared, params")
+    .eq("route_key", "customers.segment")
+    .order("name");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as CustomerSegment[];
+}
+
+export async function saveSegment(name: string, conditions: SegmentCondition[], isShared: boolean): Promise<void> {
+  const supabase = getSupabase();
+  const [{ data: session }, ws] = await Promise.all([
+    supabase.auth.getSession(),
+    supabase.from("workspaces").select("id").limit(1).single(),
+  ]);
+  const userId = session.session?.user.id;
+  if (!userId || !ws.data) throw new Error("No session or workspace");
+  const { error } = await supabase.from("saved_views").insert({
+    workspace_id: ws.data.id,
+    user_id: userId,
+    route_key: "customers.segment",
+    name,
+    params: { conditions },
+    is_shared: isShared,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteSegment(id: number): Promise<void> {
+  const { error } = await getSupabase().from("saved_views").delete().eq("id", id);
+  if (error) throw new Error(error.message);
 }
 
 export interface LiveCustomerDetail {
