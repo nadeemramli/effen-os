@@ -1,15 +1,24 @@
--- Ad-grain daily Meta facts, deduplicated latest-wins: the connector
--- re-reads a ~28-day lookback window each sync (Meta restates late
--- conversions), so an (ad_id, date) pair appears once per sync that
--- covered it and only the newest extraction is truth.
-with deduped as (
+-- Ad-grain daily Meta facts across ALL per-account tables (see
+-- union_meta_stream), deduplicated latest-wins: the connector re-reads
+-- a ~28-day lookback window each sync (Meta restates late conversions),
+-- so an (ad_id, date) pair appears once per sync that covered it and
+-- only the newest extraction is truth.
+with unioned as (
+  {{ union_meta_stream('ads_insights',
+    'date_start, account_id, account_name, account_currency,
+     campaign_id, campaign_name, adset_id, ad_id, ad_name, spend,
+     impressions, clicks, actions, action_values,
+     _airbyte_extracted_at') }}
+),
+
+deduped as (
   select
     *,
     row_number() over (
       partition by ad_id, date_start
       order by _airbyte_extracted_at desc
     ) as rn
-  from {{ source('raw', 'meta_ads_insights') }}
+  from unioned
 )
 
 select

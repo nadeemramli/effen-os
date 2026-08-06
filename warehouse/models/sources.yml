@@ -5,16 +5,10 @@ sources:
     database: effen-growth-prod
     schema: raw
     description: Airbyte-landed tables. Never hand-edited (ADR-0003).
+    # Meta tables are PER-ACCOUNT (raw.meta_<account_key>_<stream>) and
+    # auto-discovered by the union_meta_stream macro — they are not
+    # declared here.
     tables:
-      - name: meta_ads_insights
-        description: Ad-grain daily Meta insights. Incremental append with ~28d lookback restatement — duplicate (ad_id, date) rows expected; latest _airbyte_extracted_at wins.
-      - name: meta_ad_account
-      - name: meta_ads
-        description: Ad catalog — ad_id -> creative_id bridge + targeting geo (market truth).
-      - name: meta_campaigns
-        description: Campaign catalog (names for token matching).
-      - name: meta_ad_creatives
-        description: Creative content — destination URL + page identity for brand auto-detection.
       - name: supabase_orders_read
         description: Fullkit orders read-model, incremental on synced_at.
       - name: supabase_ad_accounts_read

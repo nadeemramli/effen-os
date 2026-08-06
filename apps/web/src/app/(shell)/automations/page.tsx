@@ -50,6 +50,8 @@ interface AutomationEntry {
   link?: { href: string; label: string };
   /** Renders the live health line from the health blob. */
   health?: (h: AutomationHealth) => string | null;
+  /** Static health note for live entries whose run state lives in an external system. */
+  healthNote?: string;
 }
 
 function rel(iso: unknown): string {
@@ -165,12 +167,35 @@ const REGISTRY: AutomationEntry[] = [
   {
     key: "ads_ingest",
     dept: "Data & Integrations",
-    name: "Ads ingestion (Airbyte → BigQuery)",
-    what: "Meta/TikTok spend into the warehouse, GCS as landing zone including banned-account CSV exports — ADR-0003. Stands up with the Airbyte pipeline.",
-    trigger: "cron · daily",
+    name: "Meta ads ingestion (Airbyte → BigQuery)",
+    what: "One connection per ad account (40 registered; disabled accounts parked inactive) lands insights, ads, creatives and campaigns in the warehouse raw layer — a banned account's failing sync can't poison the rest. TikTok/Google join as sources later; banned-account history arrives via CSV → GCS — ADR-0003.",
+    trigger: "cron · daily 03:00",
     guardrail: "runs itself",
-    source: "planned · ADR-0003",
-    status: "planned",
+    source: "airbyte cloud · 40 connections",
+    status: "live",
+    healthNote: "run state in Airbyte Cloud",
+  },
+  {
+    key: "bq_replication",
+    dept: "Data & Integrations",
+    name: "Read-models → warehouse replication",
+    what: "Airbyte's Postgres source replicates orders, shipments, ad accounts and brands from Supabase into BigQuery daily through a read-only role, so spend and revenue share one analytical home (MER / CAC modelling happens where the ads facts are).",
+    trigger: "cron · daily 04:00",
+    guardrail: "runs itself",
+    source: "airbyte cloud · supabase-effen-os",
+    status: "live",
+    healthNote: "run state in Airbyte Cloud",
+  },
+  {
+    key: "dbt_build",
+    dept: "Data & Integrations",
+    name: "Warehouse transform + tests (dbt)",
+    what: "Nightly build of staging and mart models with schema tests, keyless via GitHub OIDC. Per-account raw tables are auto-discovered from the warehouse catalog, so a new ad account needs zero model changes.",
+    trigger: "cron · daily 04:30",
+    guardrail: "runs itself",
+    source: "github actions · dbt.yml",
+    status: "live",
+    healthNote: "run state in GitHub Actions",
   },
   // ── Merchandise & Catalog ─────────────────────────────────────────────────
   {
@@ -229,6 +254,31 @@ const REGISTRY: AutomationEntry[] = [
     source: "supabase · live_plan_baseline()",
     status: "live",
     link: { href: "/command-center", label: "Command Centre" },
+  },
+  {
+    key: "brand_detect",
+    dept: "Marketing & Analytics",
+    name: "Brand & market auto-detection",
+    what: "Every ad resolves to a brand through an evidence waterfall — destination-URL token, page evidence, campaign evidence, name token, account register — and to a market from Meta targeting geo (never from naming). Unresolved spend queues for review; it is surfaced, not dropped.",
+    trigger: "on dbt run",
+    guardrail: "runs itself",
+    source: "dbt · int_ad_brand",
+    status: "live",
+    health: (h) =>
+      `${n(h.growth?.brands)} brand${n(h.growth?.brands) === 1 ? "" : "s"} · ${n(h.growth?.accounts)} accounts attributed · ${n(h.growth?.unattributed_rows)} rows unattributed`,
+  },
+  {
+    key: "mart_sync",
+    dept: "Marketing & Analytics",
+    name: "Warehouse mart → marketing facts",
+    what: "mart_ads_daily upserts into ad_daily_facts at campaign grain with provenance (source, banned-account flag, purchase value). Fullkit serves warehouse truth — the app never queries ad platforms directly.",
+    trigger: "cron · daily 06:00",
+    guardrail: "runs itself",
+    source: "edge function · mart-sync",
+    status: "live",
+    link: { href: "/marketing", label: "Marketing" },
+    health: (h) =>
+      `last ${rel(h.growth?.last_success_at)} · ${n(h.growth?.mart_rows).toLocaleString()} fact rows · ${n(h.growth?.failed_24h)} failed 24h`,
   },
   // ── Customers & CX ────────────────────────────────────────────────────────
   {
@@ -401,7 +451,7 @@ function AutomationsInner() {
                             </Badge>
                           </td>
                           <td className="tnum px-3 py-2.5 text-xs text-muted-foreground">
-                            {healthLine ?? (e.status === "live" ? "deterministic · no run state" : "—")}
+                            {healthLine ?? (e.status === "live" ? (e.healthNote ?? "deterministic · no run state") : "—")}
                           </td>
                           <td className="px-3 py-2.5 text-right">
                             <Badge variant="outline" className={cn("text-[10px]", STATUS_TONE[e.status])}>

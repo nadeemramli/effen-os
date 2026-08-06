@@ -1,9 +1,14 @@
--- Ad catalog: the bridge from insights (ad_id) to creative content, plus
--- targeting-geo market. Market comes from Meta's targeting truth, never
--- from account/campaign naming (EFFEN naming is inconsistent by design —
--- fast iteration). Single-country ads get that code; multi-country test
--- ads get 'MULTI'.
-with ads as (
+-- Ad catalog across all per-account tables: the bridge from insights
+-- (ad_id) to creative content, plus targeting-geo market. Market comes
+-- from Meta's targeting truth, never from account/campaign naming
+-- (EFFEN naming is inconsistent by design — fast iteration).
+with unioned as (
+  {{ union_meta_stream('ads',
+    'id, account_id, campaign_id, adset_id, name, effective_status,
+     creative, targeting') }}
+),
+
+ads as (
   select
     id as ad_id,
     account_id,
@@ -13,7 +18,7 @@ with ads as (
     effective_status,
     json_value(creative, '$.id') as creative_id,
     json_value_array(targeting, '$.geo_locations.countries') as target_countries
-  from {{ source('raw', 'meta_ads') }}
+  from unioned
 )
 
 select

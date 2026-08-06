@@ -1,5 +1,11 @@
--- Creative content signals for brand resolution: destination URL (all
--- creative shapes) and page identity.
+-- Creative content signals for brand resolution, across all per-account
+-- tables: destination URL (all creative shapes) and page identity.
+with unioned as (
+  {{ union_meta_stream('ad_creatives',
+    'id, link_url, object_story_spec, asset_feed_spec, actor_id,
+     url_tags') }}
+)
+
 select
   id as creative_id,
   coalesce(
@@ -17,4 +23,4 @@ select
   coalesce(json_value(object_story_spec, '$.page_id'), actor_id) as page_id,
   json_value(object_story_spec, '$.instagram_actor_id') as instagram_actor_id,
   url_tags
-from {{ source('raw', 'meta_ad_creatives') }}
+from unioned

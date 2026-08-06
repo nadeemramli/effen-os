@@ -34,12 +34,12 @@ insight_only_ads as (
 ads as (
   select ca.*, coalesce(cmp.name, '') as campaign_name
   from catalog_ads ca
-  left join {{ source('raw', 'meta_campaigns') }} cmp
+  left join {{ ref('stg_meta_campaigns') }} cmp
     on cmp.id = ca.campaign_id
   union all
   select io.*, coalesce(cmp.name, '') as campaign_name
   from insight_only_ads io
-  left join {{ source('raw', 'meta_campaigns') }} cmp
+  left join {{ ref('stg_meta_campaigns') }} cmp
     on cmp.id = io.campaign_id
 ),
 
