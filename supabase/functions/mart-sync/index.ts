@@ -216,6 +216,7 @@ Deno.serve(async (req) => {
       campaign_name: r.campaign_name,
       brand_slug: r.brand_slug,
       market: r.market,
+      currency_code: r.currency_code,
       spend: Number(r.spend ?? 0),
       impressions: r.impressions === null ? null : Number(r.impressions),
       clicks: r.clicks === null ? null : Number(r.clicks),

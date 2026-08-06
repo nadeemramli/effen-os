@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { parseAsString, useQueryState } from "nuqs";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Info, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,15 @@ import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { MoneyCell } from "@/components/tables/cells";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
 import { useSession } from "@/hooks/use-session";
+import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
+import {
+  fetchGrowthAds,
+  fetchLiveBrands,
+  fetchLiveScorecard,
+  type GrowthAds,
+  type LiveBrand,
+  type LiveScorecardRow,
+} from "@/lib/supabase/live";
 import { formatMoney, formatPercent, formatRatio } from "@/lib/domain/money";
 import { sumRows, toMYR } from "@/lib/domain/metrics";
 import { RouteGuard } from "@/lib/rbac/guard";
@@ -42,6 +51,31 @@ function MarketingInner() {
   const orders = useAppStore((s) => s.orders);
 
   const [openCampaign, setOpenCampaign] = useQueryState("campaign", parseAsString);
+  const liveBrandId = useAppStore((s) => s.session.liveBrandId);
+  const liveMarkets = useAppStore((s) => s.session.liveMarkets);
+
+  // Warehouse-fed live surfaces (ADR-0003) — one fetch shared by the spend
+  // panel, account coverage, scorecard, and trend. Demo store renders when
+  // absent.
+  const [growth, setGrowth] = useState<{
+    ads: GrowthAds;
+    liveBrands: LiveBrand[];
+    scorecard: LiveScorecardRow[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+    void (async () => {
+      const { data: s } = await getSupabase().auth.getSession();
+      if (!s.session) return;
+      const [ads, liveBrands, scorecard] = await Promise.all([
+        fetchGrowthAds(30),
+        fetchLiveBrands(),
+        fetchLiveScorecard().catch(() => [] as LiveScorecardRow[]),
+      ]);
+      if (ads) setGrowth({ ads, liveBrands, scorecard });
+    })();
+  }, []);
 
   const days = session.dateRange === "today" ? 1 : session.dateRange === "7d" ? 7 : 30;
   const keys = useMemo(() => new Set(Array.from({ length: days }, (_, i) => dateKey(i))), [days]);
@@ -88,6 +122,49 @@ function MarketingInner() {
     (o) => o.campaignId && keys.has(new Date(new Date(o.placedAt).getTime() + 8 * 3600e3).toISOString().slice(0, 10)),
   );
 
+  // Live derivations: top-bar scope (brand slug + markets) and the session
+  // date-range window applied to the warehouse blob. Real calendar dates —
+  // the demo clock does not apply to warehouse data.
+  const liveView = useMemo(() => {
+    if (!growth) return null;
+    const { ads, liveBrands, scorecard } = growth;
+    const scopeSlug = liveBrandId === null ? null : (liveBrands.find((b) => b.id === liveBrandId)?.slug ?? null);
+    const inScope = (slug: string | null, mkt: string | null) =>
+      (scopeSlug === null || slug === scopeSlug) &&
+      (liveMarkets.length === 0 || liveMarkets.includes(mkt ?? ""));
+    const cutoff = new Date(Date.now() - days * 86400e3).toISOString().slice(0, 10);
+    const trend = ads.trend.filter((t) => inScope(t.brand_slug, t.market));
+    const windowed = trend.filter((t) => t.date >= cutoff);
+    const spend = windowed.reduce((s, t) => s + Number(t.spend), 0);
+    const purchases = windowed.reduce((s, t) => s + Number(t.purchases ?? 0), 0);
+    const purchaseValue = windowed.reduce((s, t) => s + Number(t.purchase_value ?? 0), 0);
+    const win = days === 1 ? "today" : days === 7 ? "d7" : "d30";
+    const scopeBrandIds = scopeSlug === null
+      ? null
+      : new Set(liveBrands.filter((b) => b.slug === scopeSlug).map((b) => b.id));
+    const netRevenue = scorecard
+      .filter((r) => r.win === win)
+      .filter((r) => scopeBrandIds === null || (r.brand_id !== null && scopeBrandIds.has(r.brand_id)))
+      .filter((r) => liveMarkets.length === 0 || liveMarkets.includes(r.market))
+      .reduce((s, r) => s + toMYR(Number(r.revenue), r.currency_code), 0);
+    const byDate = new Map<string, { spend: number; revenue: number }>();
+    for (const t of trend) {
+      const cur = byDate.get(t.date) ?? { spend: 0, revenue: 0 };
+      cur.spend += Number(t.spend);
+      cur.revenue += Number(t.purchase_value ?? 0);
+      byDate.set(t.date, cur);
+    }
+    const chart = [...byDate.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, v]) => ({ date: formatDate(`${date}T12:00:00+08:00`), spend: v.spend, revenue: v.revenue }));
+    const liveAccounts = ads.accounts.filter(
+      (a) =>
+        (scopeSlug === null || a.brands.includes(scopeSlug)) &&
+        (liveMarkets.length === 0 || a.markets.some((m) => liveMarkets.includes(m))),
+    );
+    return { spend, purchases, purchaseValue, netRevenue, chart, liveAccounts };
+  }, [growth, liveBrandId, liveMarkets, days]);
+
   return (
     <PageBody className="max-w-none">
       <PageHeader
@@ -99,8 +176,8 @@ function MarketingInner() {
         </Button>
       </PageHeader>
 
-      {/* live Meta spend mirror — renders only with a real session + data */}
-      <LiveAdsPanel />
+      {/* live warehouse spend mirror — renders only with a real session + data */}
+      {growth && <LiveAdsPanel ads={growth.ads} brands={growth.liveBrands} />}
 
       {/* attribution caveat — always visible */}
       <p className="flex items-start gap-2 rounded-md border border-info/25 bg-info/10 px-3 py-2 text-xs text-info">
@@ -109,7 +186,43 @@ function MarketingInner() {
         incrementality — platforms overlap and self-attribute. Fullkit orders and contribution are the commercial truth.
       </p>
 
-      {/* account coverage */}
+      {/* account coverage — live warehouse accounts (incl. unregistered) or demo */}
+      {liveView ? (
+        <section aria-label="Account coverage" className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          {liveView.liveAccounts.slice(0, 10).map((a) => (
+            <div
+              key={a.account_id}
+              className={cn("rounded-lg border bg-card p-3", !a.registered && "border-warning/40")}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">Meta</span>
+                {a.is_banned ? (
+                  <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-[10px] text-destructive">banned</Badge>
+                ) : a.registered ? (
+                  <Badge variant="outline" className="border-success/30 bg-success/10 text-[10px] text-success">registered</Badge>
+                ) : (
+                  <Badge variant="outline" className="border-warning/30 bg-warning/10 text-[10px] text-warning">unregistered</Badge>
+                )}
+              </div>
+              <div className="mt-1 truncate text-sm">{a.name ?? a.account_id}</div>
+              <div className="tnum truncate text-[11px] text-muted-foreground">
+                {a.brands.length > 0 ? a.brands.join(", ") : "unattributed"} · {a.markets.join("/") || "?"}
+              </div>
+              <div className="tnum mt-0.5 text-[11px] text-muted-foreground">
+                RM {Math.round(Number(a.spend)).toLocaleString()} 30d · last {a.last_active}
+              </div>
+              {!a.registered && (
+                <p className="mt-1 text-[11px] text-warning">Not in the Fullkit register yet.</p>
+              )}
+            </div>
+          ))}
+          {liveView.liveAccounts.length > 10 && (
+            <div className="flex items-center justify-center rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+              +{liveView.liveAccounts.length - 10} more accounts in the pipeline
+            </div>
+          )}
+        </section>
+      ) : (
       <section aria-label="Account coverage" className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {adAccounts.map((a) => (
           <div key={a.id} className={cn("rounded-lg border bg-card p-3", a.status === "unmapped" && "border-warning/40")}>
@@ -131,8 +244,46 @@ function MarketingInner() {
           </div>
         ))}
       </section>
+      )}
 
-      {/* scorecard */}
+      {/* scorecard — warehouse spend + Fullkit revenue when live, demo otherwise */}
+      {liveView ? (
+        <section className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6">
+          <MetricCard
+            metricKey="ad_spend"
+            value={formatMoney(Math.round(liveView.spend) * 100, "MYR", { compact: true })}
+            hint={`Last ${days} day${days > 1 ? "s" : ""} · warehouse`}
+          />
+          <MetricCard
+            metricKey="ad_spend"
+            label="Platform-attributed value"
+            value={formatMoney(Math.round(liveView.purchaseValue) * 100, "MYR", { compact: true })}
+            hint="Platform claim — see caveat"
+          />
+          <MetricCard
+            metricKey="orders"
+            label="Platform purchases"
+            value={liveView.purchases.toLocaleString()}
+            hint="Platform-reported conversions"
+          />
+          <MetricCard
+            metricKey="ad_spend"
+            label="Cost per purchase"
+            value={liveView.purchases > 0 ? `RM ${(liveView.spend / liveView.purchases).toFixed(0)}` : "—"}
+          />
+          <MetricCard
+            metricKey="blended_mer"
+            label="Platform MER"
+            value={liveView.spend > 0 && liveView.purchaseValue > 0 ? formatRatio(liveView.purchaseValue / liveView.spend) : "—"}
+            hint="Platform value ÷ spend"
+          />
+          <MetricCard
+            metricKey="blended_mer"
+            value={liveView.spend > 0 && liveView.netRevenue > 0 ? formatRatio(liveView.netRevenue / liveView.spend) : "—"}
+            hint="Fullkit net revenue ÷ spend"
+          />
+        </section>
+      ) : (
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7">
         <MetricCard metricKey="ad_spend" value={formatMoney(totalSpend, "MYR", { compact: true })} hint={`Last ${days} day${days > 1 ? "s" : ""}`} />
         <MetricCard
@@ -155,13 +306,14 @@ function MarketingInner() {
           hint="Platform MER vs 3.0 blended target"
         />
       </section>
+      )}
 
       <ChartCard
         title="Spend vs platform-attributed revenue, 30 days"
-        subtitle="MYR-normalized across all connected accounts"
+        subtitle={liveView ? "Warehouse pipeline — platform purchase value vs spend, MYR" : "MYR-normalized across all connected accounts"}
         right={<ChartLegend items={[{ label: "Platform revenue", color: "var(--chart-1)" }, { label: "Ad spend", color: "var(--chart-2)" }]} />}
       >
-        <SpendRevenueTrend data={trendData} currencyLabel="RM" />
+        <SpendRevenueTrend data={liveView ? liveView.chart : trendData} currencyLabel="RM" />
       </ChartCard>
 
       {/* campaign explorer — live warehouse table when data exists, demo otherwise */}

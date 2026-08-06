@@ -778,6 +778,64 @@ export async function fetchLiveUnitEconomics(): Promise<LiveUnitEconRow[]> {
   return (data ?? []) as LiveUnitEconRow[];
 }
 
+// ── Growth ads (warehouse pipeline, ADR-0003) ───────────────────────────────
+
+export interface GrowthAdsRow {
+  brand_slug: string | null;
+  market: string | null;
+  spend: number;
+  purchases: number | null;
+  purchase_value: number | null;
+  accounts: number;
+  banned_spend: number | null;
+}
+
+export interface GrowthTrendPoint {
+  date: string;
+  brand_slug: string | null;
+  market: string | null;
+  spend: number;
+  purchases: number | null;
+  purchase_value: number | null;
+}
+
+export interface GrowthAccount {
+  account_id: string;
+  name: string | null;
+  account_status: string | null;
+  registered: boolean;
+  brands: string[];
+  markets: string[];
+  spend: number;
+  purchases: number | null;
+  last_active: string;
+  is_banned: boolean;
+}
+
+export interface GrowthAds {
+  as_of: string | null;
+  window_days: number;
+  total: {
+    spend: number;
+    purchases: number;
+    purchase_value: number;
+    accounts: number;
+    campaigns: number;
+    non_myr_rows: number;
+  };
+  rows: GrowthAdsRow[];
+  trend: GrowthTrendPoint[];
+  accounts: GrowthAccount[];
+}
+
+/** Warehouse-attributed ads facts (brand via dbt waterfall, market via targeting geo). Null when no live data. */
+export async function fetchGrowthAds(days = 30): Promise<GrowthAds | null> {
+  const { data, error } = await getSupabase().rpc("live_growth_ads", { p_days: days });
+  if (error) throw new Error(error.message);
+  const g = data as GrowthAds | null;
+  return g && g.rows.length > 0 ? g : null;
+}
+
 // ── Automations registry health ─────────────────────────────────────────────
 
 export type AutomationHealth = Record<string, Record<string, unknown>>;

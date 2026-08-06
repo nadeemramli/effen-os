@@ -1,9 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useAppStore } from "@/lib/store/provider";
-import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
-import { fetchLiveBrands, type LiveBrand } from "@/lib/supabase/live";
+import type { GrowthAds, LiveBrand } from "@/lib/supabase/live";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
 
 /**
@@ -11,59 +9,13 @@ import { FreshnessBadge } from "@/components/status/freshness-badge";
  * → dbt → ad_daily_facts. Brand × market grain via the dbt attribution
  * waterfall (brand from destination URL / page / campaign evidence, market
  * from Meta targeting geo) — NOT the account register, so unregistered
- * accounts and unattributed spend stay visible. Renders only with a real
- * session and data; spend is platform-reported, attribution is NOT
- * incrementality.
+ * accounts and unattributed spend stay visible. Data is fetched once by the
+ * Marketing page and shared across its live surfaces.
  */
-
-interface GrowthRow {
-  brand_slug: string | null;
-  market: string | null;
-  spend: number;
-  purchases: number | null;
-  purchase_value: number | null;
-  accounts: number;
-  banned_spend: number | null;
-}
-
-interface GrowthAds {
-  as_of: string | null;
-  window_days: number;
-  total: {
-    spend: number;
-    purchases: number;
-    purchase_value: number;
-    accounts: number;
-    campaigns: number;
-  };
-  rows: GrowthRow[];
-}
-
-export function LiveAdsPanel() {
-  const [data, setData] = useState<{ ads: GrowthAds; brands: LiveBrand[] } | null>(null);
+export function LiveAdsPanel({ ads, brands }: { ads: GrowthAds; brands: LiveBrand[] }) {
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
 
-  useEffect(() => {
-    if (!isSupabaseConfigured()) return;
-    void (async () => {
-      const { data: session } = await getSupabase().auth.getSession();
-      if (!session.session) return;
-      const [adsRes, brands] = await Promise.all([
-        getSupabase().rpc("live_growth_ads", { p_days: 30 }),
-        fetchLiveBrands(),
-      ]);
-      const ads = adsRes.data as GrowthAds | null;
-      if (!adsRes.error && ads && ads.rows.length > 0) {
-        setData({ ads, brands });
-      }
-    })();
-  }, []);
-
-  if (!data) return null;
-  const { ads, brands } = data;
-
-  // Top-bar live scope: brand id → warehouse slug; markets by code.
   const scopeSlug = liveBrandId === null ? null : (brands.find((b) => b.id === liveBrandId)?.slug ?? null);
   const rows = ads.rows.filter(
     (r) =>
