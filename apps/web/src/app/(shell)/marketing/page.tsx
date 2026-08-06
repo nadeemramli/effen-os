@@ -53,6 +53,7 @@ function MarketingInner() {
   const [openCampaign, setOpenCampaign] = useQueryState("campaign", parseAsString);
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
+  const setLiveBrand = useAppStore((s) => s.setLiveBrand);
 
   // Warehouse-fed live surfaces (ADR-0003) — one fetch shared by the spend
   // panel, account coverage, scorecard, and trend. Demo store renders when
@@ -169,6 +170,63 @@ function MarketingInner() {
     );
     return { spend, purchases, purchaseValue, netRevenue, chart, liveAccounts };
   }, [growth, liveBrandId, liveMarkets, days]);
+
+  // Brand performance: every brand as a row regardless of the brand scope
+  // (market scope + date window still apply), so "all brands" is the mix and
+  // one click focuses the whole page on a single brand.
+  const brandPerf = useMemo(() => {
+    if (!growth) return null;
+    const { ads, liveBrands, scorecard } = growth;
+    const cutoff = new Date(Date.now() - days * 86400e3).toISOString().slice(0, 10);
+    const win = days === 1 ? "today" : days === 7 ? "d7" : "d30";
+    const mktOk = (m: string | null) => liveMarkets.length === 0 || liveMarkets.includes(m ?? "");
+
+    const bySlug = new Map<string | null, { spend: number; purchases: number; value: number }>();
+    for (const t of ads.trend) {
+      if (!mktOk(t.market) || t.date < cutoff) continue;
+      const cur = bySlug.get(t.brand_slug) ?? { spend: 0, purchases: 0, value: 0 };
+      cur.spend += Number(t.spend);
+      cur.purchases += Number(t.purchases ?? 0);
+      cur.value += Number(t.purchase_value ?? 0);
+      bySlug.set(t.brand_slug, cur);
+    }
+
+    const revenueBySlug = new Map<string, number>();
+    for (const r of scorecard) {
+      if (r.win !== win || !mktOk(r.market) || r.brand_id === null) continue;
+      const slug = liveBrands.find((b) => b.id === r.brand_id)?.slug;
+      if (!slug) continue;
+      revenueBySlug.set(slug, (revenueBySlug.get(slug) ?? 0) + toMYR(Number(r.revenue), r.currency_code));
+    }
+
+    const slugs = new Set<string | null>([...bySlug.keys(), ...revenueBySlug.keys()]);
+    const rows = [...slugs].map((slug) => {
+      const ad = bySlug.get(slug) ?? { spend: 0, purchases: 0, value: 0 };
+      const revenue = slug === null ? 0 : (revenueBySlug.get(slug) ?? 0);
+      const brand = slug === null ? undefined : liveBrands.find((b) => b.slug === slug);
+      return {
+        slug,
+        name: slug === null ? "Unattributed" : (brand?.name ?? slug),
+        brandId: brand?.id ?? null,
+        registered: slug === null ? true : Boolean(brand),
+        ...ad,
+        revenue,
+        blendedMer: ad.spend > 0 && revenue > 0 ? revenue / ad.spend : null,
+        platformMer: ad.spend > 0 && ad.value > 0 ? ad.value / ad.spend : null,
+      };
+    }).sort((a, b) => b.spend - a.spend);
+
+    const mix = rows.reduce(
+      (m, r) => ({
+        spend: m.spend + r.spend,
+        purchases: m.purchases + r.purchases,
+        value: m.value + r.value,
+        revenue: m.revenue + r.revenue,
+      }),
+      { spend: 0, purchases: 0, value: 0, revenue: 0 },
+    );
+    return { rows, mix };
+  }, [growth, liveMarkets, days]);
 
   return (
     <PageBody className="max-w-none">
@@ -320,6 +378,91 @@ function MarketingInner() {
       >
         <SpendRevenueTrend data={liveView ? liveView.chart : trendData} currencyLabel="RM" />
       </ChartCard>
+
+      {/* brand performance — the per-brand money story + the all-brands mix */}
+      {brandPerf && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Brand performance</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Warehouse ad spend vs Fullkit net revenue per brand, last {days} day{days > 1 ? "s" : ""}.
+              Click a registered brand to focus every surface on it; blended MER is Fullkit revenue ÷ spend —
+              the honest number, unlike platform claims.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[820px] text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="pb-2 font-medium">Brand</th>
+                    <th className="pb-2 text-right font-medium">Ad spend</th>
+                    <th className="pb-2 text-right font-medium">Purchases</th>
+                    <th className="pb-2 text-right font-medium">CPP</th>
+                    <th className="pb-2 text-right font-medium">Platform MER</th>
+                    <th className="pb-2 text-right font-medium">Fullkit revenue</th>
+                    <th className="pb-2 text-right font-medium">Blended MER</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-b bg-muted/40 font-medium">
+                    <td className="py-2">All brands — mixed</td>
+                    <td className="tnum py-2 text-right">RM {Math.round(brandPerf.mix.spend).toLocaleString()}</td>
+                    <td className="tnum py-2 text-right">{brandPerf.mix.purchases.toLocaleString()}</td>
+                    <td className="tnum py-2 text-right">
+                      {brandPerf.mix.purchases > 0 ? `RM ${(brandPerf.mix.spend / brandPerf.mix.purchases).toFixed(0)}` : "—"}
+                    </td>
+                    <td className="tnum py-2 text-right">
+                      {brandPerf.mix.spend > 0 && brandPerf.mix.value > 0 ? (brandPerf.mix.value / brandPerf.mix.spend).toFixed(2) : "—"}
+                    </td>
+                    <td className="tnum py-2 text-right">RM {Math.round(brandPerf.mix.revenue).toLocaleString()}</td>
+                    <td className="tnum py-2 text-right">
+                      {brandPerf.mix.spend > 0 && brandPerf.mix.revenue > 0 ? (brandPerf.mix.revenue / brandPerf.mix.spend).toFixed(2) : "—"}
+                    </td>
+                  </tr>
+                  {brandPerf.rows.map((r) => {
+                    const focusable = r.brandId !== null;
+                    const focused = liveBrandId !== null && r.brandId === liveBrandId;
+                    return (
+                      <tr
+                        key={r.slug ?? "unattributed"}
+                        className={cn(
+                          "border-b last:border-0",
+                          focusable && "cursor-pointer hover:bg-accent/40",
+                          focused && "bg-info/10",
+                        )}
+                        onClick={focusable ? () => setLiveBrand(focused ? null : r.brandId) : undefined}
+                      >
+                        <td className="py-2">
+                          <span className="font-medium">{r.name}</span>
+                          {!r.registered && (
+                            <Badge variant="outline" className="ml-1.5 border-warning/30 bg-warning/10 text-[10px] text-warning">
+                              unregistered
+                            </Badge>
+                          )}
+                          {focused && (
+                            <Badge variant="outline" className="ml-1.5 border-info/30 bg-info/10 text-[10px] text-info">
+                              focused — click to clear
+                            </Badge>
+                          )}
+                        </td>
+                        <td className="tnum py-2 text-right">RM {Math.round(r.spend).toLocaleString()}</td>
+                        <td className="tnum py-2 text-right">{r.purchases > 0 ? r.purchases.toLocaleString() : "—"}</td>
+                        <td className="tnum py-2 text-right">{r.purchases > 0 ? `RM ${(r.spend / r.purchases).toFixed(0)}` : "—"}</td>
+                        <td className="tnum py-2 text-right">{r.platformMer !== null ? r.platformMer.toFixed(2) : "—"}</td>
+                        <td className="tnum py-2 text-right">{r.revenue > 0 ? `RM ${Math.round(r.revenue).toLocaleString()}` : "—"}</td>
+                        <td className={cn("tnum py-2 text-right font-medium", r.blendedMer !== null && (r.blendedMer >= 3 ? "text-success" : r.blendedMer >= 2 ? "text-warning" : "text-destructive"))}>
+                          {r.blendedMer !== null ? r.blendedMer.toFixed(2) : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* campaign explorer — live warehouse table when data exists, demo otherwise */}
       <LiveCampaignExplorer fallback={
