@@ -1,0 +1,3 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+project_id      = "effen-growth-prod"
+billing_account = "XXXXXX-XXXXXX-XXXXXX"

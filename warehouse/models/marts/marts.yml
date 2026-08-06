@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: mart_ads_daily
+    description: >
+      Governed ads mart per ADR-0003. One row per date × platform ×
+      account × campaign. Consumed by the Fullkit mart sync into
+      ad_daily_facts; provenance via source + is_banned_account +
+      ingested_at.
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: platform
+        tests:
+          - not_null
+          - accepted_values:
+              values: [meta, tiktok, google]
+      - name: account_id
+        tests: [not_null]
+      - name: spend
+        tests: [not_null]
+      - name: source
+        tests:
+          - accepted_values:
+              values: [api, csv_export]

@@ -1,0 +1,14 @@
+# No secrets here: local runs use gcloud ADC (oauth); CI impersonates
+# sa-dbt via Workload Identity Federation with the same oauth method.
+effen_growth:
+  target: prod
+  outputs:
+    prod:
+      type: bigquery
+      method: oauth
+      project: effen-growth-prod
+      dataset: staging # default; actual datasets set per-folder in dbt_project.yml
+      location: asia-southeast1
+      threads: 8
+      job_execution_timeout_seconds: 300
+      priority: interactive

@@ -1,0 +1,48 @@
+# Nightly dbt build for the growth warehouse (ADR-0003).
+#
+# Timing (UTC): Airbyte syncs 19:00/20:00 → dbt 20:30 → mart-sync cron
+# 22:00 (Supabase pg_cron). Auth is keyless: GitHub OIDC → Workload
+# Identity Federation → sa-dbt (pool/provider managed in infra/prod/iam.tf,
+# restricted to this repo).
+
+name: dbt build
+
+on:
+  schedule:
+    - cron: "30 20 * * *"
+  workflow_dispatch: {}
+  pull_request:
+    paths: ["warehouse/**"]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  dbt:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: warehouse
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/614664825119/locations/global/workloadIdentityPools/github/providers/github-oidc
+          service_account: sa-dbt@effen-growth-prod.iam.gserviceaccount.com
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --quiet dbt-bigquery
+
+      # PRs only validate compilation; scheduled/manual runs build+test.
+      - name: dbt compile (PR)
+        if: github.event_name == 'pull_request'
+        run: dbt compile --profiles-dir .
+
+      - name: dbt build
+        if: github.event_name != 'pull_request'
+        run: dbt build --profiles-dir .

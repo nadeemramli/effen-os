@@ -1,0 +1,25 @@
+version: 2
+
+sources:
+  - name: raw
+    database: effen-growth-prod
+    schema: raw
+    description: Airbyte-landed tables. Never hand-edited (ADR-0003).
+    tables:
+      - name: meta_ads_insights
+        description: Ad-grain daily Meta insights. Incremental append with ~28d lookback restatement — duplicate (ad_id, date) rows expected; latest _airbyte_extracted_at wins.
+      - name: meta_ad_account
+      - name: meta_ads
+        description: Ad catalog — ad_id -> creative_id bridge + targeting geo (market truth).
+      - name: meta_campaigns
+        description: Campaign catalog (names for token matching).
+      - name: meta_ad_creatives
+        description: Creative content — destination URL + page identity for brand auto-detection.
+      - name: supabase_orders_read
+        description: Fullkit orders read-model, incremental on synced_at.
+      - name: supabase_ad_accounts_read
+        description: EFFEN ad-account register incl. brand/market mapping (ADR-0003 open item 3 — mapping is governed in Fullkit, published here).
+      - name: supabase_ad_daily_facts
+        description: Interim connector-seeded daily facts; superseded by mart_ads_daily once the Meta pipeline is validated.
+      - name: supabase_nv_shipments
+      - name: supabase_brands
