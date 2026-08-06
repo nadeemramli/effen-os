@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartCard } from "@/components/charts/chart-card";
 import { ChartLegend, SpendRevenueTrend } from "@/components/charts/commercial-charts";
 import { LiveAdsPanel } from "@/components/metrics/live-ads-panel";
+import { LiveCampaignExplorer } from "@/components/metrics/live-campaign-explorer";
 import { MetricCard } from "@/components/metrics/metric-card";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { MoneyCell } from "@/components/tables/cells";
@@ -163,7 +164,8 @@ function MarketingInner() {
         <SpendRevenueTrend data={trendData} currencyLabel="RM" />
       </ChartCard>
 
-      {/* campaign explorer */}
+      {/* campaign explorer — live warehouse table when data exists, demo otherwise */}
+      <LiveCampaignExplorer fallback={
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium">Campaign explorer</CardTitle>
@@ -218,6 +220,7 @@ function MarketingInner() {
           </div>
         </CardContent>
       </Card>
+      } />
     </PageBody>
   );
 }
