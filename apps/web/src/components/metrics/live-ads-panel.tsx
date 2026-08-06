@@ -41,7 +41,7 @@ export function LiveAdsPanel({ ads, brands }: { ads: GrowthAds; brands: LiveBran
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="flex items-center gap-2 text-sm font-medium">
           Ads — warehouse mirror, last {ads.window_days} days
-          <FreshnessBadge lastSuccessAt={ads.as_of} slaMinutes={26 * 60} />
+          <FreshnessBadge lastSuccessAt={ads.as_of} slaMinutes={26 * 60} realClock />
         </h2>
         <span className="tnum text-sm">
           RM {Math.round(spend).toLocaleString()} spend · {purchases.toLocaleString()} purchases · platform ROAS{" "}

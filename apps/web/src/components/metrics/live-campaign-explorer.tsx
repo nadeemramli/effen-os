@@ -47,13 +47,18 @@ export function LiveCampaignExplorer({ fallback }: { fallback: React.ReactNode }
     void (async () => {
       const { data: session } = await getSupabase().auth.getSession();
       if (!session.session) return;
-      const [res, brands] = await Promise.all([
-        getSupabase().rpc("live_growth_campaigns", { p_days: 30, p_limit: 60 }),
-        fetchLiveBrands(),
-      ]);
-      const campaigns = res.data as GrowthCampaigns | null;
-      if (!res.error && campaigns && campaigns.rows.length > 0) {
-        setData({ campaigns, brands });
+      try {
+        const [res, brands] = await Promise.all([
+          getSupabase().rpc("live_growth_campaigns", { p_days: 30, p_limit: 60 }),
+          fetchLiveBrands(),
+        ]);
+        const campaigns = res.data as GrowthCampaigns | null;
+        if (!res.error && campaigns && campaigns.rows.length > 0) {
+          setData({ campaigns, brands });
+        }
+      } catch (e) {
+        // Fallback (demo explorer) renders; never a blank card.
+        console.warn("growth campaigns fetch failed", e);
       }
     })();
   }, []);
@@ -77,7 +82,7 @@ export function LiveCampaignExplorer({ fallback }: { fallback: React.ReactNode }
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-sm font-medium">
           Campaign explorer — warehouse, last {campaigns.window_days} days
-          <FreshnessBadge lastSuccessAt={campaigns.as_of} slaMinutes={26 * 60} />
+          <FreshnessBadge lastSuccessAt={campaigns.as_of} slaMinutes={26 * 60} realClock />
         </CardTitle>
         <p className="text-xs text-muted-foreground">
           Top {rows.length} of {campaigns.total_campaigns.toLocaleString()} campaigns by spend. Brand via the

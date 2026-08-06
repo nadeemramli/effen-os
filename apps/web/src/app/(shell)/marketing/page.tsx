@@ -68,12 +68,17 @@ function MarketingInner() {
     void (async () => {
       const { data: s } = await getSupabase().auth.getSession();
       if (!s.session) return;
-      const [ads, liveBrands, scorecard] = await Promise.all([
-        fetchGrowthAds(30),
-        fetchLiveBrands(),
-        fetchLiveScorecard().catch(() => [] as LiveScorecardRow[]),
-      ]);
-      if (ads) setGrowth({ ads, liveBrands, scorecard });
+      try {
+        const [ads, liveBrands, scorecard] = await Promise.all([
+          fetchGrowthAds(30),
+          fetchLiveBrands(),
+          fetchLiveScorecard().catch(() => [] as LiveScorecardRow[]),
+        ]);
+        if (ads) setGrowth({ ads, liveBrands, scorecard });
+      } catch (e) {
+        // Live surfaces degrade to the demo store; never a blank page.
+        console.warn("growth ads fetch failed", e);
+      }
     })();
   }, []);
 
