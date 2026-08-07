@@ -5,6 +5,11 @@ import { can, type PermissionKey } from "@/lib/rbac/matrix";
 import { dateKey } from "@/lib/seed/clock";
 import type { Order } from "@/lib/domain/types";
 import { hoursSince } from "@/lib/utils/dates";
+import {
+  rangeDays as storeRangeDays,
+  type CustomDateRange,
+  type DateRangeKey,
+} from "@/lib/store";
 
 export function useSession() {
   return useAppStore((s) => s.session);
@@ -21,12 +26,12 @@ export function useActivePersona() {
 }
 
 /** Days covered by the session date range (for daily-grid filtering). */
-export function rangeDays(range: "today" | "7d" | "30d"): number {
-  return range === "today" ? 1 : range === "7d" ? 7 : 30;
+export function rangeDays(range: DateRangeKey, custom: CustomDateRange | null = null): number {
+  return storeRangeDays(range, custom);
 }
 
-export function rangeDateKeys(range: "today" | "7d" | "30d"): string[] {
-  const n = rangeDays(range);
+export function rangeDateKeys(range: DateRangeKey, custom: CustomDateRange | null = null): string[] {
+  const n = rangeDays(range, custom);
   return Array.from({ length: n }, (_, i) => dateKey(i));
 }
 
@@ -34,10 +39,10 @@ export function rangeDateKeys(range: "today" | "7d" | "30d"): string[] {
 export function orderInScope(
   o: Order,
   brandId: string | "all",
-  range: "today" | "7d" | "30d",
+  range: DateRangeKey,
+  custom: CustomDateRange | null = null,
 ): boolean {
   if (brandId !== "all" && o.brandId !== brandId) return false;
   const hours = hoursSince(o.placedAt);
-  const limit = range === "today" ? 24 : range === "7d" ? 24 * 7 : 24 * 30;
-  return hours <= limit;
+  return hours <= rangeDays(range, custom) * 24;
 }

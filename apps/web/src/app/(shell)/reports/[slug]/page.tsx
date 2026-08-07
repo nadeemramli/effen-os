@@ -13,7 +13,7 @@ import { ChartLegend, ContributionTrend } from "@/components/charts/commercial-c
 import { PageBody } from "@/components/shell/page-header";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
 import { EmptyState } from "@/components/states";
-import { useSession } from "@/hooks/use-session";
+import { useSession, rangeDays } from "@/hooks/use-session";
 import { formatMoney, formatPercent, formatRatio } from "@/lib/domain/money";
 import { orderContribution, sumRows, toMYR } from "@/lib/domain/metrics";
 import { RouteGuard } from "@/lib/rbac/guard";
@@ -49,7 +49,7 @@ function ReportDetailInner() {
   const campaigns = useAppStore((s) => s.campaigns);
   const products = useAppStore((s) => s.products);
 
-  const days = session.dateRange === "today" ? 1 : session.dateRange === "7d" ? 7 : 30;
+  const days = rangeDays(session.dateRange, session.customRange);
   const keys = useMemo(() => new Set(Array.from({ length: days }, (_, i) => dateKey(i))), [days]);
   const scopedOrders = useMemo(
     () =>

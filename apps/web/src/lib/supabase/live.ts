@@ -778,6 +778,26 @@ export async function fetchLiveUnitEconomics(): Promise<LiveUnitEconRow[]> {
   return (data ?? []) as LiveUnitEconRow[];
 }
 
+// ── Commerce over an arbitrary date range ───────────────────────────────────
+
+export interface LiveCommerceRangeRow {
+  brand_id: number | null;
+  market: string;
+  currency_code: string;
+  revenue: number;
+  orders: number;
+  units: number;
+  costed_units: number;
+  cogs: number;
+}
+
+/** Recognized revenue/orders/units/COGS for an inclusive MYT date range (max 400 days). */
+export async function fetchCommerceRange(from: string, to: string): Promise<LiveCommerceRangeRow[]> {
+  const { data, error } = await getSupabase().rpc("live_commerce_range", { p_from: from, p_to: to });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LiveCommerceRangeRow[];
+}
+
 // ── Growth ads (warehouse pipeline, ADR-0003) ───────────────────────────────
 
 export interface GrowthAdsRow {

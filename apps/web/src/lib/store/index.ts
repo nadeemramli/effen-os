@@ -16,13 +16,58 @@ import { assertSeedInvariants, composeSeedSnapshot, type SeedSnapshot } from "@/
  * event) so "no dead buttons" and "everything is auditable" hold together.
  */
 
-export type DateRangeKey = "today" | "7d" | "30d";
+export type DateRangeKey = "today" | "7d" | "30d" | "90d" | "1y" | "custom";
+
+export interface CustomDateRange {
+  /** ISO dates (YYYY-MM-DD), inclusive. */
+  from: string;
+  to: string;
+}
+
+/** Days spanned by the selected range (≥1). */
+export function rangeDays(dateRange: DateRangeKey, custom: CustomDateRange | null): number {
+  switch (dateRange) {
+    case "today": return 1;
+    case "7d": return 7;
+    case "30d": return 30;
+    case "90d": return 90;
+    case "1y": return 365;
+    case "custom": {
+      if (!custom) return 30;
+      const span = Math.round((new Date(custom.to).getTime() - new Date(custom.from).getTime()) / 86_400_000) + 1;
+      return Math.max(1, span);
+    }
+  }
+}
+
+/** Inclusive ISO date bounds for the selected range (real calendar, not the demo clock). */
+export function rangeBounds(dateRange: DateRangeKey, custom: CustomDateRange | null): CustomDateRange {
+  const today = new Date().toISOString().slice(0, 10);
+  if (dateRange === "custom" && custom) return custom;
+  const days = rangeDays(dateRange, custom);
+  const from = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+  return { from, to: today };
+}
+
+/** Human label for the selected range. */
+export function rangeLabel(dateRange: DateRangeKey, custom: CustomDateRange | null): string {
+  switch (dateRange) {
+    case "today": return "Today";
+    case "7d": return "Last 7 days";
+    case "30d": return "Last 30 days";
+    case "90d": return "Last 90 days";
+    case "1y": return "Last 12 months";
+    case "custom": return custom ? `${custom.from} → ${custom.to}` : "Custom";
+  }
+}
 
 export interface SessionState {
   role: RoleKey;
   mode: OperatingMode;
   brandId: string | "all";
   dateRange: DateRangeKey;
+  /** Bounds when dateRange === "custom"; null otherwise. */
+  customRange: CustomDateRange | null;
   /** Signed-in Supabase user email (null in open demo mode). */
   authEmail: string | null;
   /** True when the role comes from a real membership and must not be switched
@@ -48,6 +93,7 @@ export interface AppState extends SeedSnapshot {
   setLiveBrand: (brandId: number | null) => void;
   setLiveMarkets: (markets: string[]) => void;
   setDateRange: (r: DateRangeKey) => void;
+  setCustomRange: (r: CustomDateRange) => void;
   markNotificationsRead: () => void;
   pushNotification: (n: Omit<AppNotification, "id" | "at" | "read">) => void;
   resetDemoData: () => void;
@@ -176,6 +222,7 @@ export function createAppStore() {
         mode: "demo",
         brandId: "all",
         dateRange: "7d",
+        customRange: null,
         authEmail: null,
         roleLocked: false,
         liveBrandId: null,
@@ -198,6 +245,8 @@ export function createAppStore() {
       setLiveBrand: (liveBrandId) => set((s) => ({ session: { ...s.session, liveBrandId } })),
       setLiveMarkets: (liveMarkets) => set((s) => ({ session: { ...s.session, liveMarkets } })),
       setDateRange: (dateRange) => set((s) => ({ session: { ...s.session, dateRange } })),
+      setCustomRange: (customRange) =>
+        set((s) => ({ session: { ...s.session, dateRange: "custom", customRange } })),
 
       markNotificationsRead: () =>
         set((s) => ({ notifications: s.notifications.map((n) => ({ ...n, read: true })) })),

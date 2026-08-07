@@ -17,15 +17,14 @@ import { FreshnessBadge } from "@/components/status/freshness-badge";
 import { useSession } from "@/hooks/use-session";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import {
+  fetchCommerceRange,
   fetchGrowthAds,
   fetchLiveBrands,
-  fetchLiveScorecard,
-  fetchLiveUnitEconomics,
   type GrowthAds,
   type LiveBrand,
-  type LiveScorecardRow,
-  type LiveUnitEconRow,
+  type LiveCommerceRangeRow,
 } from "@/lib/supabase/live";
+import { rangeBounds, rangeDays as spanDays, rangeLabel } from "@/lib/store";
 import { formatMoney, formatPercent, formatRatio } from "@/lib/domain/money";
 import { sumRows, toMYR } from "@/lib/domain/metrics";
 import { RouteGuard } from "@/lib/rbac/guard";
@@ -62,8 +61,7 @@ function MarketingInner() {
   const [growth, setGrowth] = useState<{
     ads: GrowthAds;
     liveBrands: LiveBrand[];
-    scorecard: LiveScorecardRow[];
-    unitEcon: LiveUnitEconRow[];
+    commerce: LiveCommerceRangeRow[];
   } | null>(null);
 
   // Platform filter (empty = all). Future sources (TikTok, Google, Shopee,
@@ -72,27 +70,34 @@ function MarketingInner() {
   const [showAllAccounts, setShowAllAccounts] = useState(false);
   const UPCOMING_PLATFORMS = ["tiktok", "google", "shopee", "tiktok_shop", "lazada"];
 
+  const bounds = rangeBounds(session.dateRange, session.customRange);
+  const days = spanDays(session.dateRange, session.customRange);
+
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
     void (async () => {
       const { data: s } = await getSupabase().auth.getSession();
       if (!s.session) return;
       try {
-        const [ads, liveBrands, scorecard, unitEcon] = await Promise.all([
-          fetchGrowthAds(30),
+        // Warehouse window must reach back to the range start (max 400d);
+        // commerce revenue/COGS come from the range RPC directly.
+        const fetchDays = Math.min(
+          400,
+          Math.max(1, Math.round((Date.now() - new Date(bounds.from).getTime()) / 86_400_000) + 1),
+        );
+        const [ads, liveBrands, commerce] = await Promise.all([
+          fetchGrowthAds(fetchDays),
           fetchLiveBrands(),
-          fetchLiveScorecard().catch(() => [] as LiveScorecardRow[]),
-          fetchLiveUnitEconomics().catch(() => [] as LiveUnitEconRow[]),
+          fetchCommerceRange(bounds.from, bounds.to).catch(() => [] as LiveCommerceRangeRow[]),
         ]);
-        if (ads) setGrowth({ ads, liveBrands, scorecard, unitEcon });
+        if (ads) setGrowth({ ads, liveBrands, commerce });
       } catch (e) {
         // Live surfaces degrade to the demo store; never a blank page.
         console.warn("growth ads fetch failed", e);
       }
     })();
-  }, []);
-
-  const days = session.dateRange === "today" ? 1 : session.dateRange === "7d" ? 7 : 30;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.dateRange, session.customRange]);
   const keys = useMemo(() => new Set(Array.from({ length: days }, (_, i) => dateKey(i))), [days]);
 
   const scopedCampaigns = campaigns.filter(
@@ -142,43 +147,38 @@ function MarketingInner() {
   // the demo clock does not apply to warehouse data.
   const liveView = useMemo(() => {
     if (!growth) return null;
-    const { ads, liveBrands, scorecard, unitEcon } = growth;
+    const { ads, liveBrands, commerce } = growth;
     const scopeSlug = liveBrandId === null ? null : (liveBrands.find((b) => b.id === liveBrandId)?.slug ?? null);
     const inScope = (slug: string | null, mkt: string | null, platform?: string) =>
       (scopeSlug === null || slug === scopeSlug) &&
       (liveMarkets.length === 0 || liveMarkets.includes(mkt ?? "")) &&
       (platformFilter.length === 0 || platform === undefined || platformFilter.includes(platform));
-    const cutoff = new Date(Date.now() - days * 86400e3).toISOString().slice(0, 10);
     const trend = ads.trend.filter((t) => inScope(t.brand_slug, t.market, t.platform));
-    const windowed = trend.filter((t) => t.date >= cutoff);
+    const windowed = trend.filter((t) => t.date >= bounds.from && t.date <= bounds.to);
     const spend = windowed.reduce((s, t) => s + Number(t.spend), 0);
     const purchases = windowed.reduce((s, t) => s + Number(t.purchases ?? 0), 0);
     const purchaseValue = windowed.reduce((s, t) => s + Number(t.purchase_value ?? 0), 0);
-    const win = days === 1 ? "today" : days === 7 ? "d7" : "d30";
     const scopeBrandIds = scopeSlug === null
       ? null
       : new Set(liveBrands.filter((b) => b.slug === scopeSlug).map((b) => b.id));
-    const netRevenue = scorecard
-      .filter((r) => r.win === win)
+    // Revenue/COGS from the range RPC — any window (90d/1y/custom), same
+    // recognized-revenue and cost-currency-match rules as the classic paths.
+    const scopedCommerce = commerce
       .filter((r) => scopeBrandIds === null || (r.brand_id !== null && scopeBrandIds.has(r.brand_id)))
-      .filter((r) => liveMarkets.length === 0 || liveMarkets.includes(r.market))
-      .reduce((s, r) => s + toMYR(Number(r.revenue), r.currency_code), 0);
+      .filter((r) => liveMarkets.length === 0 || liveMarkets.includes(r.market));
+    const netRevenue = scopedCommerce.reduce((s, r) => s + toMYR(Number(r.revenue), r.currency_code), 0);
     // Contribution after ads (CM3, partial): revenue − COGS − ads − WHT 8%
     // on ad spend. CM2 lines (delivery, returns, COD fees) and other marketing
     // have no data structure yet and are declared missing, never guessed.
     // NOT net profit — fixed costs (payroll, rent, tools) are not modelled.
-    const econ = unitEcon
-      .filter((r) => r.win === win)
-      .filter((r) => scopeBrandIds === null || (r.brand_id !== null && scopeBrandIds.has(r.brand_id)))
-      .filter((r) => liveMarkets.length === 0 || liveMarkets.includes(r.market));
-    const cogs = econ.reduce((s, r) => s + toMYR(Number(r.cogs), r.currency_code), 0);
-    const econUnits = econ.reduce((s, r) => s + Number(r.units), 0);
-    const costedUnits = econ.reduce((s, r) => s + Number(r.costed_units), 0);
+    const cogs = scopedCommerce.reduce((s, r) => s + toMYR(Number(r.cogs), r.currency_code), 0);
+    const econUnits = scopedCommerce.reduce((s, r) => s + Number(r.units), 0);
+    const costedUnits = scopedCommerce.reduce((s, r) => s + Number(r.costed_units), 0);
     const costedCoverage = econUnits > 0 ? costedUnits / econUnits : 0;
     const wht = spend * 0.08;
     const cm3 = netRevenue - cogs - spend - wht;
     const byDate = new Map<string, { spend: number; revenue: number }>();
-    for (const t of trend) {
+    for (const t of windowed) {
       const cur = byDate.get(t.date) ?? { spend: 0, revenue: 0 };
       cur.spend += Number(t.spend);
       cur.revenue += Number(t.purchase_value ?? 0);
@@ -197,21 +197,19 @@ function MarketingInner() {
       spend, purchases, purchaseValue, netRevenue, chart, liveAccounts, scopeSlug,
       cogs, wht, cm3, costedCoverage,
     };
-  }, [growth, liveBrandId, liveMarkets, days, platformFilter]);
+  }, [growth, liveBrandId, liveMarkets, bounds.from, bounds.to, platformFilter]);
 
   // Brand performance: every brand as a row regardless of the brand scope
   // (market scope + date window still apply), so "all brands" is the mix and
   // one click focuses the whole page on a single brand.
   const brandPerf = useMemo(() => {
     if (!growth) return null;
-    const { ads, liveBrands, scorecard } = growth;
-    const cutoff = new Date(Date.now() - days * 86400e3).toISOString().slice(0, 10);
-    const win = days === 1 ? "today" : days === 7 ? "d7" : "d30";
+    const { ads, liveBrands, commerce } = growth;
     const mktOk = (m: string | null) => liveMarkets.length === 0 || liveMarkets.includes(m ?? "");
 
     const bySlug = new Map<string | null, { spend: number; purchases: number; value: number }>();
     for (const t of ads.trend) {
-      if (!mktOk(t.market) || t.date < cutoff) continue;
+      if (!mktOk(t.market) || t.date < bounds.from || t.date > bounds.to) continue;
       if (platformFilter.length > 0 && !platformFilter.includes(t.platform)) continue;
       const cur = bySlug.get(t.brand_slug) ?? { spend: 0, purchases: 0, value: 0 };
       cur.spend += Number(t.spend);
@@ -221,18 +219,12 @@ function MarketingInner() {
     }
 
     const revenueBySlug = new Map<string, number>();
-    for (const r of scorecard) {
-      if (r.win !== win || !mktOk(r.market) || r.brand_id === null) continue;
+    const econBySlug = new Map<string, { cogs: number; units: number; costed: number }>();
+    for (const r of commerce) {
+      if (!mktOk(r.market) || r.brand_id === null) continue;
       const slug = liveBrands.find((b) => b.id === r.brand_id)?.slug;
       if (!slug) continue;
       revenueBySlug.set(slug, (revenueBySlug.get(slug) ?? 0) + toMYR(Number(r.revenue), r.currency_code));
-    }
-
-    const econBySlug = new Map<string, { cogs: number; units: number; costed: number }>();
-    for (const r of growth.unitEcon) {
-      if (r.win !== win || !mktOk(r.market) || r.brand_id === null) continue;
-      const slug = liveBrands.find((b) => b.id === r.brand_id)?.slug;
-      if (!slug) continue;
       const cur = econBySlug.get(slug) ?? { cogs: 0, units: 0, costed: 0 };
       cur.cogs += toMYR(Number(r.cogs), r.currency_code);
       cur.units += Number(r.units);
@@ -279,7 +271,7 @@ function MarketingInner() {
       { spend: 0, purchases: 0, value: 0, revenue: 0, cogs: 0, cm3: 0 },
     );
     return { rows, mix };
-  }, [growth, liveMarkets, days, platformFilter]);
+  }, [growth, liveMarkets, bounds.from, bounds.to, platformFilter]);
 
   return (
     <PageBody className="max-w-none">
@@ -349,7 +341,7 @@ function MarketingInner() {
           <CardHeader>
             <CardTitle className="text-sm font-medium">Brand performance</CardTitle>
             <p className="text-xs text-muted-foreground">
-              Warehouse ad spend vs Fullkit net revenue per brand, last {days} day{days > 1 ? "s" : ""}.
+              Warehouse ad spend vs Fullkit net revenue per brand — {rangeLabel(session.dateRange, session.customRange)}.
               Click a registered brand to focus every surface on it; blended MER is Fullkit revenue ÷ spend —
               the honest number, unlike platform claims.
             </p>
@@ -547,7 +539,7 @@ function MarketingInner() {
           <MetricCard
             metricKey="ad_spend"
             value={formatMoney(Math.round(liveView.spend) * 100, "MYR", { compact: true })}
-            hint={`Last ${days} day${days > 1 ? "s" : ""} · warehouse`}
+            hint={`${rangeLabel(session.dateRange, session.customRange)} · warehouse`}
             info={{
               title: "Ad spend",
               formula: "Sum of platform-reported spend across all connected ad accounts in the selected brand / market / platform scope and date window.",
@@ -668,7 +660,7 @@ function MarketingInner() {
       )}
 
       <ChartCard
-        title="Spend vs platform-attributed revenue, 30 days"
+        title={`Spend vs platform-attributed revenue — ${rangeLabel(session.dateRange, session.customRange)}`}
         subtitle={liveView ? "Warehouse pipeline — platform purchase value vs spend, MYR" : "MYR-normalized across all connected accounts"}
         right={<ChartLegend items={[{ label: "Platform revenue", color: "var(--chart-1)" }, { label: "Ad spend", color: "var(--chart-2)" }]} />}
       >

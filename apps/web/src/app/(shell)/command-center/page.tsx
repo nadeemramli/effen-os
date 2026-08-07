@@ -25,7 +25,7 @@ import { MetricCard } from "@/components/metrics/metric-card";
 import { LiveScorecard } from "@/components/metrics/live-scorecard";
 import { PageBody } from "@/components/shell/page-header";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
-import { useActivePersona, useSession } from "@/hooks/use-session";
+import { useActivePersona, useSession, rangeDays } from "@/hooks/use-session";
 import { formatMoney, formatPercent, formatRatio } from "@/lib/domain/money";
 import { sumRows } from "@/lib/domain/metrics";
 import { ROLE_LABELS } from "@/lib/rbac/matrix";
@@ -67,7 +67,7 @@ export default function CommandCenterPage() {
     personas.find((p) => p.id === id)?.name ?? "Unassigned";
 
   /* ---------- scoped commercial numbers ---------- */
-  const days = session.dateRange === "today" ? 1 : session.dateRange === "7d" ? 7 : 30;
+  const days = rangeDays(session.dateRange, session.customRange);
   const keys = useMemo(
     () => new Set(Array.from({ length: days }, (_, i) => dateKey(i))),
     [days],

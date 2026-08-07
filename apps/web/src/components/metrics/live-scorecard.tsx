@@ -5,45 +5,45 @@ import { MetricCard } from "@/components/metrics/metric-card";
 import { useAppStore } from "@/lib/store/provider";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import {
+  fetchCommerceRange,
+  fetchGrowthAds,
   fetchLiveBrands,
   fetchLivePlanBaseline,
   fetchLiveScorecard,
   fetchLiveUnitEconomics,
+  type GrowthAds,
   type LiveBrand,
+  type LiveCommerceRangeRow,
   type LivePlanBaselineRow,
   type LiveScorecardRow,
   type LiveUnitEconRow,
 } from "@/lib/supabase/live";
+import { rangeBounds, rangeLabel } from "@/lib/store";
 
 /**
  * The original seven-card commercial scorecard, fed by the live mirror when a
  * real session exists (the demo scorecard is the signed-out fallback). Cards
  * whose sources are not yet connected say so instead of faking numbers.
- * Windows follow the top bar's Today / 7d / 30d toggle; brand and market
- * scope follow the live switchers.
+ * Classic windows (Today / 7d / 30d) use the fixed-window RPCs and their
+ * 4-week baseline; extended windows (90d / 12 months / custom) use the
+ * range RPC — baseline and item-level contribution honestly bow out there.
+ * Ad spend always comes from the warehouse trend (server-aggregated — the
+ * old raw ad_daily_facts select silently truncated at 1,000 rows).
  */
-
-interface AdFact {
-  account_ref: number;
-  date: string;
-  spend: number | null;
-}
-interface AdAccount {
-  id: number;
-  brand_id: number | null;
-  market: string | null;
-}
 
 type State =
   | { kind: "checking" }
   | { kind: "no-session" }
-  | { kind: "ready"; rows: LiveScorecardRow[]; brands: LiveBrand[]; facts: AdFact[]; accounts: AdAccount[]; baseline: LivePlanBaselineRow[]; econ: LiveUnitEconRow[] }
+  | {
+      kind: "ready";
+      rows: LiveScorecardRow[];
+      brands: LiveBrand[];
+      baseline: LivePlanBaselineRow[];
+      econ: LiveUnitEconRow[];
+      ads: GrowthAds | null;
+      commerce: LiveCommerceRangeRow[];
+    }
   | { kind: "error"; message: string };
-
-/** ISO date N days back — the lower bound for a spend window. */
-function cutoffDate(windowDays: number): string {
-  return new Date(Date.now() - windowDays * 86_400_000).toISOString().slice(0, 10);
-}
 
 function money(currency: string, n: number): string {
   const compact = n >= 100_000 ? `${(n / 1000).toFixed(0)}k` : n >= 10_000 ? `${(n / 1000).toFixed(1)}k` : n.toFixed(0);
@@ -57,11 +57,17 @@ function ccyLine(byCcy: Record<string, number>): string {
   return parts.length > 0 ? parts.join(" + ") : "—";
 }
 
+const CLASSIC = new Set(["today", "7d", "30d"]);
+
 export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
   const [state, setState] = useState<State>({ kind: "checking" });
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
   const dateRange = useAppStore((s) => s.session.dateRange);
+  const customRange = useAppStore((s) => s.session.customRange);
+
+  const classic = CLASSIC.has(dateRange);
+  const bounds = rangeBounds(dateRange, customRange);
 
   useEffect(() => {
     if (!isSupabaseConfigured()) {
@@ -76,20 +82,23 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
         return;
       }
       try {
-        const [rows, brands, facts, accounts, baseline, econ] = await Promise.all([
+        const [rows, brands, baseline, econ, ads, commerce] = await Promise.all([
           fetchLiveScorecard(),
           fetchLiveBrands(),
-          getSupabase().from("ad_daily_facts").select("account_ref, date, spend").then((r) => (r.data ?? []) as AdFact[]),
-          getSupabase().from("ad_accounts_read").select("id, brand_id, market").then((r) => (r.data ?? []) as AdAccount[]),
           fetchLivePlanBaseline(),
           fetchLiveUnitEconomics(),
+          fetchGrowthAds(400).catch(() => null),
+          classic
+            ? Promise.resolve([] as LiveCommerceRangeRow[])
+            : fetchCommerceRange(bounds.from, bounds.to).catch(() => [] as LiveCommerceRangeRow[]),
         ]);
-        setState({ kind: "ready", rows, brands: brands.filter((b) => b.status === "active"), facts, accounts, baseline, econ });
+        setState({ kind: "ready", rows, brands: brands.filter((b) => b.status === "active"), baseline, econ, ads, commerce });
       } catch (e) {
         setState({ kind: "error", message: (e as Error).message });
       }
     })();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRange, customRange]);
 
   if (state.kind === "no-session" || state.kind === "error") return <>{fallback}</>;
   if (state.kind === "checking") {
@@ -103,46 +112,51 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
   }
 
   const win = dateRange === "today" ? "today" : dateRange === "7d" ? "d7" : "d30";
-  const windowDays = dateRange === "today" ? 1 : dateRange === "7d" ? 7 : 30;
+  const scopeSlug =
+    liveBrandId === null ? null : (state.brands.find((b) => b.id === liveBrandId)?.slug ?? null);
 
-  // Top-bar brand + market scope applies everywhere.
-  const rows = state.rows.filter(
-    (r) =>
-      r.win === win &&
-      (liveBrandId === null || r.brand_id === liveBrandId) &&
-      (liveMarkets.length === 0 || liveMarkets.includes(r.market)),
-  );
+  // Revenue + orders: classic windows from the fixed-window RPC (baseline
+  // pairing), extended windows from the range RPC.
   const byCcy: Record<string, number> = {};
   let orders = 0;
-  for (const r of rows) {
-    orders += Number(r.orders);
-    byCcy[r.currency_code] = (byCcy[r.currency_code] ?? 0) + Number(r.revenue);
+  if (classic) {
+    for (const r of state.rows) {
+      if (r.win !== win) continue;
+      if (liveBrandId !== null && r.brand_id !== liveBrandId) continue;
+      if (liveMarkets.length > 0 && !liveMarkets.includes(r.market)) continue;
+      orders += Number(r.orders);
+      byCcy[r.currency_code] = (byCcy[r.currency_code] ?? 0) + Number(r.revenue);
+    }
+  } else {
+    for (const r of state.commerce) {
+      if (liveBrandId !== null && r.brand_id !== liveBrandId) continue;
+      if (liveMarkets.length > 0 && !liveMarkets.includes(r.market)) continue;
+      orders += Number(r.orders);
+      byCcy[r.currency_code] = (byCcy[r.currency_code] ?? 0) + Number(r.revenue);
+    }
   }
 
-  // Ad spend for the same window and scope (Meta facts, all MYR-billed).
-  const accountById = new Map(state.accounts.map((a) => [a.id, a]));
-  const cutoff = cutoffDate(windowDays);
+  // Ad spend from the warehouse trend, scoped and windowed (server-side
+  // aggregates — no row caps). Brand scope maps through the slug.
   let adSpend = 0;
-  for (const f of state.facts) {
-    const acc = accountById.get(f.account_ref);
-    if (!acc) continue;
-    if (liveBrandId !== null && acc.brand_id !== liveBrandId) continue;
-    if (liveMarkets.length > 0 && !liveMarkets.includes(acc.market ?? "")) continue;
-    if (f.date >= cutoff) adSpend += Number(f.spend ?? 0);
+  for (const t of state.ads?.trend ?? []) {
+    if (t.date < bounds.from || t.date > bounds.to) continue;
+    if (scopeSlug !== null && t.brand_slug !== scopeSlug) continue;
+    if (liveMarkets.length > 0 && !liveMarkets.includes(t.market ?? "")) continue;
+    adSpend += Number(t.spend);
   }
 
-  // Baseline expectation for the same window and scope.
-  const baseRows = state.baseline.filter(
-    (r) =>
-      r.win === win &&
-      (liveBrandId === null || r.brand_id === liveBrandId) &&
-      (liveMarkets.length === 0 || liveMarkets.includes(r.market)),
-  );
+  // Baseline expectation exists for classic windows only.
   const expByCcy: Record<string, number> = {};
   let expOrders = 0;
-  for (const r of baseRows) {
-    expOrders += Number(r.expected_orders);
-    expByCcy[r.currency_code] = (expByCcy[r.currency_code] ?? 0) + Number(r.expected_revenue);
+  if (classic) {
+    for (const r of state.baseline) {
+      if (r.win !== win) continue;
+      if (liveBrandId !== null && r.brand_id !== liveBrandId) continue;
+      if (liveMarkets.length > 0 && !liveMarkets.includes(r.market)) continue;
+      expOrders += Number(r.expected_orders);
+      expByCcy[r.currency_code] = (expByCcy[r.currency_code] ?? 0) + Number(r.expected_revenue);
+    }
   }
 
   const ccyKeys = Object.keys(byCcy);
@@ -152,7 +166,7 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
       ? (singleCcyRevenue / adSpend).toFixed(2)
       : null;
 
-  const windowHint = dateRange === "today" ? "Today (MYT) · live mirror" : `Last ${windowDays} days · live mirror`;
+  const windowHint = `${rangeLabel(dateRange, customRange)} · live mirror`;
 
   return (
     <section aria-label="Commercial scorecard (live)" className="space-y-3">
@@ -163,6 +177,15 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
           hint={`${windowHint} · recognized = processing + completed`}
         />
         {(() => {
+          if (!classic) {
+            return (
+              <MetricCard
+                metricKey="contribution"
+                value="—"
+                hint="Item-level contribution computes on Today / 7d / 30d windows"
+              />
+            );
+          }
           // Product contribution = item revenue − COGS, from confirmed SKU
           // mappings and effective-dated costs. Shown only when coverage is
           // honest (≥90% of units costed, per currency, currencies unmerged).
@@ -205,12 +228,12 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
         <MetricCard
           metricKey="ad_spend"
           value={adSpend > 0 ? money("MYR", adSpend) : "—"}
-          hint={adSpend > 0 ? "Meta · seeded accounts · billed in MYR" : "Meta daily sync pending token"}
+          hint={adSpend > 0 ? "Warehouse pipeline · all connected ad accounts" : "No spend in this window/scope"}
         />
         <MetricCard
           metricKey="blended_mer"
           value={mer ?? "—"}
-          hint={mer ? "MYR revenue ÷ Meta spend" : "Needs single-currency scope — pick a market"}
+          hint={mer ? "MYR revenue ÷ warehouse ad spend" : "Needs single-currency scope — pick a market"}
         />
         <MetricCard metricKey="orders" value={orders.toLocaleString()} hint={windowHint} />
         <MetricCard
@@ -219,6 +242,9 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
           hint="Derives once identity windowing lands"
         />
         {(() => {
+          if (!classic) {
+            return <MetricCard metricKey="target_variance" value="—" hint="Baseline covers Today / 7d / 30d windows only" />;
+          }
           // Revenue variance when the scope is single-currency; orders variance otherwise.
           const singleExp = ccyKeys.length === 1 ? expByCcy[ccyKeys[0]!] : undefined;
           const revBased = singleExp !== undefined && singleExp > 0 && singleCcyRevenue !== null;

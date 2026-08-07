@@ -191,26 +191,33 @@ export function TopBar() {
         )}
       </div>
 
-      {/* date range */}
+      {/* date range: quick presets + custom picker */}
       <div className="flex shrink-0 items-center gap-1.5">
         <CalendarRange className="hidden size-4 text-muted-foreground lg:block" aria-hidden />
         <ToggleGroup
           type="single"
           value={session.dateRange}
-          onValueChange={(v) => v && setDateRange(v as typeof session.dateRange)}
+          onValueChange={(v) => v && v !== "custom" && setDateRange(v as typeof session.dateRange)}
           className="h-8"
           aria-label="Date range"
         >
-          <ToggleGroupItem value="today" className="h-8 px-2.5 text-xs">
+          <ToggleGroupItem value="today" className="h-8 px-2 text-xs">
             Today
           </ToggleGroupItem>
-          <ToggleGroupItem value="7d" className="h-8 px-2.5 text-xs">
+          <ToggleGroupItem value="7d" className="h-8 px-2 text-xs">
             7d
           </ToggleGroupItem>
-          <ToggleGroupItem value="30d" className="h-8 px-2.5 text-xs">
+          <ToggleGroupItem value="30d" className="h-8 px-2 text-xs">
             30d
           </ToggleGroupItem>
+          <ToggleGroupItem value="90d" className="hidden h-8 px-2 text-xs sm:flex">
+            90d
+          </ToggleGroupItem>
+          <ToggleGroupItem value="1y" className="hidden h-8 px-2 text-xs sm:flex">
+            1y
+          </ToggleGroupItem>
         </ToggleGroup>
+        <CustomRangePopover />
       </div>
 
       {/* search */}
@@ -444,5 +451,80 @@ export function TopBar() {
       </div>
       <ChangePasswordDialog open={pwOpen} onOpenChange={setPwOpen} />
     </header>
+  );
+}
+
+/**
+ * Custom date-range picker: two date inputs applied as an inclusive range.
+ * Chip shows the active range when dateRange === "custom"; presets in the
+ * toggle group clear it implicitly.
+ */
+function CustomRangePopover() {
+  const session = useAppStore((s) => s.session);
+  const setCustomRange = useAppStore((s) => s.setCustomRange);
+  const [open, setOpen] = useState(false);
+  const [from, setFrom] = useState(session.customRange?.from ?? "");
+  const [to, setTo] = useState(session.customRange?.to ?? "");
+  const active = session.dateRange === "custom" && session.customRange !== null;
+  const valid = from !== "" && to !== "" && from <= to;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        className={
+          active
+            ? "tnum inline-flex h-8 items-center rounded-md border border-info/40 bg-info/10 px-2 text-xs text-info"
+            : "inline-flex h-8 items-center rounded-md border px-2 text-xs text-muted-foreground hover:bg-accent/40"
+        }
+        aria-label="Custom date range"
+      >
+        {active ? `${session.customRange!.from} → ${session.customRange!.to}` : "Custom"}
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72 space-y-3">
+        <p className="text-xs font-medium">Custom range (inclusive, MYT)</p>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <label htmlFor="range-from" className="text-[11px] text-muted-foreground">From</label>
+            <input
+              id="range-from"
+              type="date"
+              value={from}
+              max={to || undefined}
+              onChange={(e) => setFrom(e.target.value)}
+              className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+            />
+          </div>
+          <div className="space-y-1">
+            <label htmlFor="range-to" className="text-[11px] text-muted-foreground">To</label>
+            <input
+              id="range-to"
+              type="date"
+              value={to}
+              min={from || undefined}
+              onChange={(e) => setTo(e.target.value)}
+              className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button size="sm" variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            disabled={!valid}
+            onClick={() => {
+              setCustomRange({ from, to });
+              setOpen(false);
+            }}
+          >
+            Apply
+          </Button>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Ranges over 400 days are capped by the data layer; demo surfaces approximate custom ranges by span.
+        </p>
+      </PopoverContent>
+    </Popover>
   );
 }
