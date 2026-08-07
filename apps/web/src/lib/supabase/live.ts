@@ -783,6 +783,7 @@ export async function fetchLiveUnitEconomics(): Promise<LiveUnitEconRow[]> {
 export interface GrowthAdsRow {
   brand_slug: string | null;
   market: string | null;
+  platform: string;
   spend: number;
   purchases: number | null;
   purchase_value: number | null;
@@ -794,6 +795,7 @@ export interface GrowthTrendPoint {
   date: string;
   brand_slug: string | null;
   market: string | null;
+  platform: string;
   spend: number;
   purchases: number | null;
   purchase_value: number | null;
@@ -801,6 +803,7 @@ export interface GrowthTrendPoint {
 
 export interface GrowthAccount {
   account_id: string;
+  platform: string;
   name: string | null;
   account_status: string | null;
   registered: boolean;
@@ -823,6 +826,8 @@ export interface GrowthAds {
     campaigns: number;
     non_myr_rows: number;
   };
+  /** Distinct platform values present in the facts (e.g. ["meta"]). */
+  platforms: string[];
   rows: GrowthAdsRow[];
   trend: GrowthTrendPoint[];
   accounts: GrowthAccount[];

@@ -12,16 +12,41 @@ import { FreshnessBadge } from "@/components/status/freshness-badge";
  * accounts and unattributed spend stay visible. Data is fetched once by the
  * Marketing page and shared across its live surfaces.
  */
-export function LiveAdsPanel({ ads, brands }: { ads: GrowthAds; brands: LiveBrand[] }) {
+export function LiveAdsPanel({
+  ads,
+  brands,
+  platforms = [],
+}: {
+  ads: GrowthAds;
+  brands: LiveBrand[];
+  /** Selected platform filter; empty = all platforms. */
+  platforms?: string[];
+}) {
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
 
   const scopeSlug = liveBrandId === null ? null : (brands.find((b) => b.id === liveBrandId)?.slug ?? null);
-  const rows = ads.rows.filter(
+  const filtered = ads.rows.filter(
     (r) =>
       (scopeSlug === null || r.brand_slug === scopeSlug) &&
-      (liveMarkets.length === 0 || liveMarkets.includes(r.market ?? "")),
+      (liveMarkets.length === 0 || liveMarkets.includes(r.market ?? "")) &&
+      (platforms.length === 0 || platforms.includes(r.platform)),
   );
+  // Rows arrive at brand × market × platform grain; display at brand × market.
+  const byKey = new Map<string, (typeof filtered)[number]>();
+  for (const r of filtered) {
+    const key = `${r.brand_slug ?? "unattributed"}·${r.market ?? "?"}`;
+    const cur = byKey.get(key);
+    if (!cur) byKey.set(key, { ...r });
+    else {
+      cur.spend = Number(cur.spend) + Number(r.spend);
+      cur.purchases = Number(cur.purchases ?? 0) + Number(r.purchases ?? 0);
+      cur.purchase_value = Number(cur.purchase_value ?? 0) + Number(r.purchase_value ?? 0);
+      cur.banned_spend = Number(cur.banned_spend ?? 0) + Number(r.banned_spend ?? 0);
+      cur.accounts += r.accounts;
+    }
+  }
+  const rows = [...byKey.values()].sort((a, b) => Number(b.spend) - Number(a.spend));
   if (rows.length === 0) return null;
 
   const brandLabel = (slug: string | null) => {

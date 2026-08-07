@@ -11,8 +11,10 @@ import { cn } from "@/lib/utils";
 
 /**
  * Campaign explorer over the warehouse pipeline (ADR-0003): campaign-grain
- * rows from ad_daily_facts with dbt brand attribution and targeting-geo
- * market. Renders its own card when live data exists; otherwise renders the
+ * rows from ad_daily_facts with dbt brand attribution, targeting-geo market,
+ * and the owning ad account from the register. Consolidates ALL connected
+ * accounts and platforms; the page's brand / market / platform scopes filter
+ * it. Renders its own card when live data exists; otherwise renders the
  * fallback (the demo explorer) so demo mode is unaffected.
  */
 
@@ -23,6 +25,7 @@ interface CampaignRow {
   market: string | null;
   platform: string;
   accounts: number;
+  account_name: string | null;
   spend: number;
   purchases: number | null;
   purchase_value: number | null;
@@ -37,8 +40,18 @@ interface GrowthCampaigns {
   rows: CampaignRow[];
 }
 
-export function LiveCampaignExplorer({ fallback }: { fallback: React.ReactNode }) {
+const LIMIT_CHOICES = [5, 10, 25, 0] as const; // 0 = all fetched
+
+export function LiveCampaignExplorer({
+  fallback,
+  platforms,
+}: {
+  fallback: React.ReactNode;
+  /** Selected platform filter from the page; empty = all platforms. */
+  platforms: string[];
+}) {
   const [data, setData] = useState<{ campaigns: GrowthCampaigns; brands: LiveBrand[] } | null>(null);
+  const [limit, setLimit] = useState<number>(10);
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
 
@@ -49,7 +62,7 @@ export function LiveCampaignExplorer({ fallback }: { fallback: React.ReactNode }
       if (!session.session) return;
       try {
         const [res, brands] = await Promise.all([
-          getSupabase().rpc("live_growth_campaigns", { p_days: 30, p_limit: 60 }),
+          getSupabase().rpc("live_growth_campaigns", { p_days: 30, p_limit: 200 }),
           fetchLiveBrands(),
         ]);
         const campaigns = res.data as GrowthCampaigns | null;
@@ -67,34 +80,56 @@ export function LiveCampaignExplorer({ fallback }: { fallback: React.ReactNode }
   const { campaigns, brands } = data;
 
   const scopeSlug = liveBrandId === null ? null : (brands.find((b) => b.id === liveBrandId)?.slug ?? null);
-  const rows = campaigns.rows.filter(
+  const scoped = campaigns.rows.filter(
     (r) =>
       (scopeSlug === null || r.brand_slug === scopeSlug) &&
-      (liveMarkets.length === 0 || liveMarkets.includes(r.market ?? "")),
+      (liveMarkets.length === 0 || liveMarkets.includes(r.market ?? "")) &&
+      (platforms.length === 0 || platforms.includes(r.platform)),
   );
-  if (rows.length === 0) return <>{fallback}</>;
+  if (scoped.length === 0) return <>{fallback}</>;
 
+  const rows = limit === 0 ? scoped : scoped.slice(0, limit);
   const brandLabel = (slug: string | null) =>
     slug === null ? "—" : (brands.find((b) => b.slug === slug)?.name ?? slug);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          Campaign explorer — warehouse, last {campaigns.window_days} days
-          <FreshnessBadge lastSuccessAt={campaigns.as_of} slaMinutes={26 * 60} realClock />
-        </CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            Campaign explorer — warehouse, last {campaigns.window_days} days
+            <FreshnessBadge lastSuccessAt={campaigns.as_of} slaMinutes={26 * 60} realClock />
+          </CardTitle>
+          <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+            Show
+            {LIMIT_CHOICES.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setLimit(c)}
+                className={cn(
+                  "rounded border px-1.5 py-0.5",
+                  limit === c ? "border-info/40 bg-info/10 text-info" : "hover:bg-accent/40",
+                )}
+              >
+                {c === 0 ? "all" : `top ${c}`}
+              </button>
+            ))}
+          </div>
+        </div>
         <p className="text-xs text-muted-foreground">
-          Top {rows.length} of {campaigns.total_campaigns.toLocaleString()} campaigns by spend. Brand via the
-          attribution waterfall; market via Meta targeting geo. Purchases and value are platform-reported.
+          {rows.length} of {scoped.length} campaigns in scope ({campaigns.total_campaigns.toLocaleString()} total
+          across all accounts and platforms — narrowed by the brand, market, and platform pickers). Purchases and
+          value are platform-reported.
         </p>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] text-sm">
+          <table className="w-full min-w-[980px] text-sm">
             <thead>
               <tr className="border-b text-left text-xs text-muted-foreground">
                 <th className="pb-2 font-medium">Campaign</th>
+                <th className="pb-2 font-medium">Ad account</th>
                 <th className="pb-2 font-medium">Brand / market</th>
                 <th className="pb-2 text-right font-medium">Spend</th>
                 <th className="pb-2 text-right font-medium">Purchases</th>
@@ -111,7 +146,7 @@ export function LiveCampaignExplorer({ fallback }: { fallback: React.ReactNode }
                 const roas = spend > 0 && value > 0 ? value / spend : null;
                 return (
                   <tr key={`${r.campaign_id}·${r.brand_slug}·${r.market}`} className="border-b last:border-0">
-                    <td className="max-w-80 py-2">
+                    <td className="max-w-72 py-2">
                       <div className="truncate font-medium">{r.campaign_name ?? r.campaign_id}</div>
                       <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                         <span className="uppercase">{r.platform}</span>
@@ -121,6 +156,12 @@ export function LiveCampaignExplorer({ fallback }: { fallback: React.ReactNode }
                           </Badge>
                         )}
                       </div>
+                    </td>
+                    <td className="max-w-56 py-2">
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {r.account_name ?? "unregistered account"}
+                        {r.accounts > 1 && ` (+${r.accounts - 1} more)`}
+                      </span>
                     </td>
                     <td className="py-2 text-muted-foreground">
                       {brandLabel(r.brand_slug)} · {r.market ?? "?"}

@@ -3,9 +3,8 @@
 import Link from "next/link";
 import { parseAsString, useQueryState } from "nuqs";
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Info, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Info, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartCard } from "@/components/charts/chart-card";
 import { ChartLegend, SpendRevenueTrend } from "@/components/charts/commercial-charts";
@@ -63,6 +62,12 @@ function MarketingInner() {
     liveBrands: LiveBrand[];
     scorecard: LiveScorecardRow[];
   } | null>(null);
+
+  // Platform filter (empty = all). Future sources (TikTok, Google, Shopee,
+  // TikTok Shop, Lazada) appear automatically once their facts land.
+  const [platformFilter, setPlatformFilter] = useState<string[]>([]);
+  const [showAllAccounts, setShowAllAccounts] = useState(false);
+  const UPCOMING_PLATFORMS = ["tiktok", "google", "shopee", "tiktok_shop", "lazada"];
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
@@ -135,11 +140,12 @@ function MarketingInner() {
     if (!growth) return null;
     const { ads, liveBrands, scorecard } = growth;
     const scopeSlug = liveBrandId === null ? null : (liveBrands.find((b) => b.id === liveBrandId)?.slug ?? null);
-    const inScope = (slug: string | null, mkt: string | null) =>
+    const inScope = (slug: string | null, mkt: string | null, platform?: string) =>
       (scopeSlug === null || slug === scopeSlug) &&
-      (liveMarkets.length === 0 || liveMarkets.includes(mkt ?? ""));
+      (liveMarkets.length === 0 || liveMarkets.includes(mkt ?? "")) &&
+      (platformFilter.length === 0 || platform === undefined || platformFilter.includes(platform));
     const cutoff = new Date(Date.now() - days * 86400e3).toISOString().slice(0, 10);
-    const trend = ads.trend.filter((t) => inScope(t.brand_slug, t.market));
+    const trend = ads.trend.filter((t) => inScope(t.brand_slug, t.market, t.platform));
     const windowed = trend.filter((t) => t.date >= cutoff);
     const spend = windowed.reduce((s, t) => s + Number(t.spend), 0);
     const purchases = windowed.reduce((s, t) => s + Number(t.purchases ?? 0), 0);
@@ -166,10 +172,11 @@ function MarketingInner() {
     const liveAccounts = ads.accounts.filter(
       (a) =>
         (scopeSlug === null || a.brands.includes(scopeSlug)) &&
-        (liveMarkets.length === 0 || a.markets.some((m) => liveMarkets.includes(m))),
+        (liveMarkets.length === 0 || a.markets.some((m) => liveMarkets.includes(m))) &&
+        (platformFilter.length === 0 || platformFilter.includes(a.platform)),
     );
-    return { spend, purchases, purchaseValue, netRevenue, chart, liveAccounts };
-  }, [growth, liveBrandId, liveMarkets, days]);
+    return { spend, purchases, purchaseValue, netRevenue, chart, liveAccounts, scopeSlug };
+  }, [growth, liveBrandId, liveMarkets, days, platformFilter]);
 
   // Brand performance: every brand as a row regardless of the brand scope
   // (market scope + date window still apply), so "all brands" is the mix and
@@ -184,6 +191,7 @@ function MarketingInner() {
     const bySlug = new Map<string | null, { spend: number; purchases: number; value: number }>();
     for (const t of ads.trend) {
       if (!mktOk(t.market) || t.date < cutoff) continue;
+      if (platformFilter.length > 0 && !platformFilter.includes(t.platform)) continue;
       const cur = bySlug.get(t.brand_slug) ?? { spend: 0, purchases: 0, value: 0 };
       cur.spend += Number(t.spend);
       cur.purchases += Number(t.purchases ?? 0);
@@ -226,161 +234,72 @@ function MarketingInner() {
       { spend: 0, purchases: 0, value: 0, revenue: 0 },
     );
     return { rows, mix };
-  }, [growth, liveMarkets, days]);
+  }, [growth, liveMarkets, days, platformFilter]);
 
   return (
     <PageBody className="max-w-none">
+      {/* Ad accounts are connected in Airbyte (one OAuth source per account);
+          Fullkit ingests and governs — it does not connect. */}
       <PageHeader
         title="Marketing"
-        description="Consolidated Meta, Google, and TikTok view — spend and platform attribution beside Fullkit order truth."
-      >
-        <Button asChild size="sm" className="gap-1.5">
-          <Link href="/marketing/accounts/new"><Plus className="size-3.5" aria-hidden /> Connect ad account</Link>
-        </Button>
-      </PageHeader>
+        description="Consolidated ads view — warehouse spend and platform attribution beside Fullkit order truth. Accounts are connected in Airbyte; the register mirrors them."
+      />
 
-      {/* live warehouse spend mirror — renders only with a real session + data */}
-      {growth && <LiveAdsPanel ads={growth.ads} brands={growth.liveBrands} />}
-
-      {/* attribution caveat — always visible */}
-      <p className="flex items-start gap-2 rounded-md border border-info/25 bg-info/10 px-3 py-2 text-xs text-info">
-        <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-        Platform-attributed revenue is each platform&apos;s own claim. It is not accounting revenue and not proven
-        incrementality — platforms overlap and self-attribute. Fullkit orders and contribution are the commercial truth.
-      </p>
-
-      {/* account coverage — live warehouse accounts (incl. unregistered) or demo */}
-      {liveView ? (
-        <section aria-label="Account coverage" className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-          {liveView.liveAccounts.slice(0, 10).map((a) => (
-            <div
-              key={a.account_id}
-              className={cn("rounded-lg border bg-card p-3", !a.registered && "border-warning/40")}
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium">Meta</span>
-                {a.is_banned ? (
-                  <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-[10px] text-destructive">banned</Badge>
-                ) : a.registered ? (
-                  <Badge variant="outline" className="border-success/30 bg-success/10 text-[10px] text-success">registered</Badge>
-                ) : (
-                  <Badge variant="outline" className="border-warning/30 bg-warning/10 text-[10px] text-warning">unregistered</Badge>
+      {/* platform scope + focused-brand chip (live mode) */}
+      {growth && (
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+          <span className="text-muted-foreground">Platforms:</span>
+          {growth.ads.platforms.map((p) => {
+            const on = platformFilter.length === 0 || platformFilter.includes(p);
+            return (
+              <button
+                key={p}
+                type="button"
+                onClick={() =>
+                  setPlatformFilter((cur) =>
+                    cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p],
+                  )
+                }
+                className={cn(
+                  "rounded-full border px-2 py-0.5 uppercase",
+                  on ? "border-info/40 bg-info/10 text-info" : "text-muted-foreground hover:bg-accent/40",
                 )}
-              </div>
-              <div className="mt-1 truncate text-sm">{a.name ?? a.account_id}</div>
-              <div className="tnum truncate text-[11px] text-muted-foreground">
-                {a.brands.length > 0 ? a.brands.join(", ") : "unattributed"} · {a.markets.join("/") || "?"}
-              </div>
-              <div className="tnum mt-0.5 text-[11px] text-muted-foreground">
-                RM {Math.round(Number(a.spend)).toLocaleString()} 30d · last {a.last_active}
-              </div>
-              {!a.registered && (
-                <p className="mt-1 text-[11px] text-warning">Not in the Fullkit register yet.</p>
-              )}
-            </div>
+              >
+                {p}
+              </button>
+            );
+          })}
+          {UPCOMING_PLATFORMS.filter((p) => !growth.ads.platforms.includes(p)).map((p) => (
+            <span key={p} className="rounded-full border border-dashed px-2 py-0.5 uppercase text-muted-foreground/50" title="Not connected yet — lands automatically once its Airbyte source syncs">
+              {p.replace("_", " ")} · soon
+            </span>
           ))}
-          {liveView.liveAccounts.length > 10 && (
-            <div className="flex items-center justify-center rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
-              +{liveView.liveAccounts.length - 10} more accounts in the pipeline
-            </div>
+          {platformFilter.length > 0 && (
+            <button type="button" onClick={() => setPlatformFilter([])} className="text-info underline-offset-2 hover:underline">
+              clear
+            </button>
           )}
-        </section>
-      ) : (
-      <section aria-label="Account coverage" className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        {adAccounts.map((a) => (
-          <div key={a.id} className={cn("rounded-lg border bg-card p-3", a.status === "unmapped" && "border-warning/40")}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium">{PLATFORM_LABEL[a.platform]}</span>
-              {a.status === "connected" ? (
-                <FreshnessBadge lastSuccessAt={a.lastSyncAt} slaMinutes={240} />
-              ) : a.status === "unmapped" ? (
-                <Badge variant="outline" className="border-warning/30 bg-warning/10 text-[10px] text-warning">unmapped</Badge>
-              ) : (
-                <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-[10px] text-destructive">token expired</Badge>
-              )}
-            </div>
-            <div className="mt-1 truncate text-sm">{a.name}</div>
-            <div className="tnum truncate text-[11px] text-muted-foreground">{a.externalId} · {a.currency}</div>
-            {a.status === "unmapped" && (
-              <p className="mt-1 text-[11px] text-warning">Spend excluded from brand scorecards until mapped.</p>
-            )}
-          </div>
-        ))}
-      </section>
+          {liveBrandId !== null && (
+            <button
+              type="button"
+              onClick={() => setLiveBrand(null)}
+              className="ml-auto inline-flex items-center gap-1 rounded-full border border-info/40 bg-info/10 px-2 py-0.5 text-info"
+            >
+              Focused: {growth.liveBrands.find((b) => b.id === liveBrandId)?.name ?? liveBrandId}
+              <X className="size-3" aria-hidden />
+            </button>
+          )}
+        </div>
       )}
 
-      {/* scorecard — warehouse spend + Fullkit revenue when live, demo otherwise */}
-      {liveView ? (
-        <section className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6">
-          <MetricCard
-            metricKey="ad_spend"
-            value={formatMoney(Math.round(liveView.spend) * 100, "MYR", { compact: true })}
-            hint={`Last ${days} day${days > 1 ? "s" : ""} · warehouse`}
-          />
-          <MetricCard
-            metricKey="ad_spend"
-            label="Platform-attributed value"
-            value={formatMoney(Math.round(liveView.purchaseValue) * 100, "MYR", { compact: true })}
-            hint="Platform claim — see caveat"
-          />
-          <MetricCard
-            metricKey="orders"
-            label="Platform purchases"
-            value={liveView.purchases.toLocaleString()}
-            hint="Platform-reported conversions"
-          />
-          <MetricCard
-            metricKey="ad_spend"
-            label="Cost per purchase"
-            value={liveView.purchases > 0 ? `RM ${(liveView.spend / liveView.purchases).toFixed(0)}` : "—"}
-          />
-          <MetricCard
-            metricKey="blended_mer"
-            label="Platform MER"
-            value={liveView.spend > 0 && liveView.purchaseValue > 0 ? formatRatio(liveView.purchaseValue / liveView.spend) : "—"}
-            hint="Platform value ÷ spend"
-          />
-          <MetricCard
-            metricKey="blended_mer"
-            value={liveView.spend > 0 && liveView.netRevenue > 0 ? formatRatio(liveView.netRevenue / liveView.spend) : "—"}
-            hint="Fullkit net revenue ÷ spend"
-          />
-        </section>
-      ) : (
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7">
-        <MetricCard metricKey="ad_spend" value={formatMoney(totalSpend, "MYR", { compact: true })} hint={`Last ${days} day${days > 1 ? "s" : ""}`} />
-        <MetricCard
-          metricKey="ad_spend"
-          label="Platform-attributed revenue"
-          value={formatMoney(totalPlatformRevenue, "MYR", { compact: true })}
-          hint="Platform claim — see caveat"
-        />
-        <MetricCard metricKey="orders" label="Fullkit orders (attributed)" value={attributedOrders.length.toLocaleString()} hint="Orders carrying a campaign reference" />
-        <MetricCard metricKey="new_customer_mix" label="New customers (platform)" value={totalNewCustomers.toLocaleString()} />
-        <MetricCard metricKey="blended_mer" value={totals.adSpend > 0 ? formatRatio(totals.netRevenue / totals.adSpend) : "—"} hint="Net revenue ÷ spend" />
-        <MetricCard metricKey="contribution" value={formatMoney(totals.contribution, "MYR", { compact: true })} />
-        <MetricCard
-          metricKey="target_variance"
-          value={
-            totalSpend > 0
-              ? formatPercent((totalPlatformRevenue / totalSpend - 3.0) / 3.0, 0, true)
-              : "—"
-          }
-          hint="Platform MER vs 3.0 blended target"
-        />
-      </section>
+      {/* cross-brand surfaces — the mirror and brand table only make sense in
+          the all-brands view; a focused brand gets the scoped surfaces below */}
+      {liveBrandId === null && growth && (
+        <LiveAdsPanel ads={growth.ads} brands={growth.liveBrands} platforms={platformFilter} />
       )}
-
-      <ChartCard
-        title="Spend vs platform-attributed revenue, 30 days"
-        subtitle={liveView ? "Warehouse pipeline — platform purchase value vs spend, MYR" : "MYR-normalized across all connected accounts"}
-        right={<ChartLegend items={[{ label: "Platform revenue", color: "var(--chart-1)" }, { label: "Ad spend", color: "var(--chart-2)" }]} />}
-      >
-        <SpendRevenueTrend data={liveView ? liveView.chart : trendData} currencyLabel="RM" />
-      </ChartCard>
 
       {/* brand performance — the per-brand money story + the all-brands mix */}
-      {brandPerf && (
+      {liveBrandId === null && brandPerf && (
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium">Brand performance</CardTitle>
@@ -464,8 +383,208 @@ function MarketingInner() {
         </Card>
       )}
 
+
+      {/* attribution caveat — always visible */}
+      <p className="flex items-start gap-2 rounded-md border border-info/25 bg-info/10 px-3 py-2 text-xs text-info">
+        <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+        Platform-attributed revenue is each platform&apos;s own claim. It is not accounting revenue and not proven
+        incrementality — platforms overlap and self-attribute. Fullkit orders and contribution are the commercial truth.
+      </p>
+
+      {/* account coverage — summary strip + scalable table (40+ accounts) */}
+      {liveView ? (
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="text-sm font-medium">Ad accounts</CardTitle>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                <span><span className="tnum font-medium text-foreground">{liveView.liveAccounts.length}</span> with spend in scope</span>
+                <span><span className="tnum font-medium text-foreground">{liveView.liveAccounts.filter((a) => a.account_status === "DISABLED" || a.is_banned).length}</span> disabled/banned</span>
+                <span><span className="tnum font-medium text-foreground">{liveView.liveAccounts.filter((a) => !a.registered).length}</span> unregistered</span>
+                <span className="text-muted-foreground">Connected & named in Airbyte; register mirrors the source list.</span>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[820px] text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="pb-2 font-medium">Account</th>
+                    <th className="pb-2 font-medium">Brands</th>
+                    <th className="pb-2 font-medium">Markets</th>
+                    <th className="pb-2 text-right font-medium">Spend 30d</th>
+                    <th className="pb-2 text-right font-medium">Last active</th>
+                    <th className="pb-2 text-right font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(showAllAccounts ? liveView.liveAccounts : liveView.liveAccounts.slice(0, 8)).map((a) => (
+                    <tr key={a.account_id} className="border-b last:border-0">
+                      <td className="max-w-72 py-1.5">
+                        <span className="block truncate font-medium">{a.name ?? a.account_id}</span>
+                        <span className="text-[10px] uppercase text-muted-foreground">{a.platform}</span>
+                      </td>
+                      <td className="max-w-44 truncate py-1.5 text-xs text-muted-foreground">
+                        {a.brands.length > 0 ? a.brands.join(", ") : "unattributed"}
+                      </td>
+                      <td className="py-1.5 text-xs text-muted-foreground">{a.markets.join("/") || "?"}</td>
+                      <td className="tnum py-1.5 text-right">RM {Math.round(Number(a.spend)).toLocaleString()}</td>
+                      <td className="tnum py-1.5 text-right text-xs text-muted-foreground">{a.last_active}</td>
+                      <td className="py-1.5 text-right">
+                        {a.is_banned || a.account_status === "DISABLED" ? (
+                          <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-[10px] text-destructive">disabled</Badge>
+                        ) : !a.registered ? (
+                          <Badge variant="outline" className="border-warning/30 bg-warning/10 text-[10px] text-warning">unregistered</Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-success/30 bg-success/10 text-[10px] text-success">active</Badge>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {liveView.liveAccounts.length > 8 && (
+              <button
+                type="button"
+                onClick={() => setShowAllAccounts((v) => !v)}
+                className="mt-2 text-xs text-info underline-offset-2 hover:underline"
+              >
+                {showAllAccounts ? "Show top 8" : `Show all ${liveView.liveAccounts.length} accounts`}
+              </button>
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+      <section aria-label="Account coverage" className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        {adAccounts.map((a) => (
+          <div key={a.id} className={cn("rounded-lg border bg-card p-3", a.status === "unmapped" && "border-warning/40")}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium">{PLATFORM_LABEL[a.platform]}</span>
+              {a.status === "connected" ? (
+                <FreshnessBadge lastSuccessAt={a.lastSyncAt} slaMinutes={240} />
+              ) : a.status === "unmapped" ? (
+                <Badge variant="outline" className="border-warning/30 bg-warning/10 text-[10px] text-warning">unmapped</Badge>
+              ) : (
+                <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-[10px] text-destructive">token expired</Badge>
+              )}
+            </div>
+            <div className="mt-1 truncate text-sm">{a.name}</div>
+            <div className="tnum truncate text-[11px] text-muted-foreground">{a.externalId} · {a.currency}</div>
+            {a.status === "unmapped" && (
+              <p className="mt-1 text-[11px] text-warning">Spend excluded from brand scorecards until mapped.</p>
+            )}
+          </div>
+        ))}
+      </section>
+      )}
+
+      {/* scorecard — warehouse spend + Fullkit revenue when live, demo otherwise */}
+      {liveView ? (
+        <section className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6">
+          <MetricCard
+            metricKey="ad_spend"
+            value={formatMoney(Math.round(liveView.spend) * 100, "MYR", { compact: true })}
+            hint={`Last ${days} day${days > 1 ? "s" : ""} · warehouse`}
+            info={{
+              title: "Ad spend",
+              formula: "Sum of platform-reported spend across all connected ad accounts in the selected brand / market / platform scope and date window.",
+              source: "Warehouse pipeline (Airbyte → BigQuery → dbt → mart sync)",
+            }}
+          />
+          <MetricCard
+            metricKey="ad_spend"
+            label="Platform-attributed value"
+            value={formatMoney(Math.round(liveView.purchaseValue) * 100, "MYR", { compact: true })}
+            hint="Platform claim — see caveat"
+            info={{
+              title: "Platform-attributed value",
+              formula: "The revenue value each ad platform claims its ads generated (Meta omni-purchase conversion value), summed over the scope and window.",
+              source: "Platform conversion tracking via the warehouse pipeline",
+              caveat: "A platform's own claim — not accounting revenue and not proven incrementality. Platforms overlap and self-attribute; Fullkit orders are the commercial truth.",
+            }}
+          />
+          <MetricCard
+            metricKey="orders"
+            label="Platform purchases"
+            value={liveView.purchases.toLocaleString()}
+            hint="Platform-reported conversions"
+            info={{
+              title: "Platform purchases",
+              formula: "Count of purchase conversions the platforms attribute to ads (Meta omni-purchase events), summed over the scope and window.",
+              source: "Platform conversion tracking via the warehouse pipeline",
+              caveat: "Platform-attributed, not deduplicated against Fullkit orders.",
+            }}
+          />
+          <MetricCard
+            metricKey="ad_spend"
+            label="Cost per purchase"
+            value={liveView.purchases > 0 ? `RM ${(liveView.spend / liveView.purchases).toFixed(0)}` : "—"}
+            info={{
+              title: "Cost per purchase (CPP)",
+              formula: "Ad spend ÷ platform-reported purchases, over the scope and window.",
+              source: "Derived from the two warehouse metrics above",
+            }}
+          />
+          <MetricCard
+            metricKey="blended_mer"
+            label="Platform MER"
+            value={liveView.spend > 0 && liveView.purchaseValue > 0 ? formatRatio(liveView.purchaseValue / liveView.spend) : "—"}
+            hint="Platform value ÷ spend"
+            info={{
+              title: "Platform MER",
+              formula: "Platform-attributed value ÷ ad spend. The efficiency the PLATFORMS claim.",
+              source: "Derived from warehouse metrics",
+              caveat: "Inflated by platform self-attribution — compare against Blended MER.",
+            }}
+          />
+          <MetricCard
+            metricKey="blended_mer"
+            value={liveView.spend > 0 && liveView.netRevenue > 0 ? formatRatio(liveView.netRevenue / liveView.spend) : "—"}
+            hint="Fullkit net revenue ÷ spend"
+            info={{
+              title: "Blended MER",
+              formula: "Fullkit net revenue (recognized orders, currency-converted to MYR) ÷ warehouse ad spend, same scope and window. The honest efficiency number.",
+              source: "Fullkit orders (live_scorecard) ÷ warehouse spend",
+            }}
+          />
+        </section>
+      ) : (
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7">
+        <MetricCard metricKey="ad_spend" value={formatMoney(totalSpend, "MYR", { compact: true })} hint={`Last ${days} day${days > 1 ? "s" : ""}`} />
+        <MetricCard
+          metricKey="ad_spend"
+          label="Platform-attributed revenue"
+          value={formatMoney(totalPlatformRevenue, "MYR", { compact: true })}
+          hint="Platform claim — see caveat"
+        />
+        <MetricCard metricKey="orders" label="Fullkit orders (attributed)" value={attributedOrders.length.toLocaleString()} hint="Orders carrying a campaign reference" />
+        <MetricCard metricKey="new_customer_mix" label="New customers (platform)" value={totalNewCustomers.toLocaleString()} />
+        <MetricCard metricKey="blended_mer" value={totals.adSpend > 0 ? formatRatio(totals.netRevenue / totals.adSpend) : "—"} hint="Net revenue ÷ spend" />
+        <MetricCard metricKey="contribution" value={formatMoney(totals.contribution, "MYR", { compact: true })} />
+        <MetricCard
+          metricKey="target_variance"
+          value={
+            totalSpend > 0
+              ? formatPercent((totalPlatformRevenue / totalSpend - 3.0) / 3.0, 0, true)
+              : "—"
+          }
+          hint="Platform MER vs 3.0 blended target"
+        />
+      </section>
+      )}
+
+      <ChartCard
+        title="Spend vs platform-attributed revenue, 30 days"
+        subtitle={liveView ? "Warehouse pipeline — platform purchase value vs spend, MYR" : "MYR-normalized across all connected accounts"}
+        right={<ChartLegend items={[{ label: "Platform revenue", color: "var(--chart-1)" }, { label: "Ad spend", color: "var(--chart-2)" }]} />}
+      >
+        <SpendRevenueTrend data={liveView ? liveView.chart : trendData} currencyLabel="RM" />
+      </ChartCard>
+
       {/* campaign explorer — live warehouse table when data exists, demo otherwise */}
-      <LiveCampaignExplorer fallback={
+      <LiveCampaignExplorer platforms={platformFilter} fallback={
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium">Campaign explorer</CardTitle>

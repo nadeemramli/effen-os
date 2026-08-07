@@ -20,6 +20,13 @@ interface MetricCardProps {
   delta?: { text: string; tone: "success" | "destructive" | "neutral" } | null;
   hint?: string;
   className?: string;
+  /**
+   * Explicit definition for the info popover — takes precedence over the
+   * metricDefinitions lookup. Use when a card's meaning differs from the
+   * registered metric (e.g. warehouse-fed cards reusing a metricKey for
+   * styling only).
+   */
+  info?: { title: string; formula: string; source?: string; caveat?: string };
 }
 
 const QUALITY_TONE: Record<string, string> = {
@@ -32,7 +39,7 @@ const QUALITY_TONE: Record<string, string> = {
  * Every analytical number carries its definition, sources, freshness, and
  * quality state behind the info affordance — no bare metrics.
  */
-export function MetricCard({ metricKey, label, value, delta, hint, className }: MetricCardProps) {
+export function MetricCard({ metricKey, label, value, delta, hint, className, info }: MetricCardProps) {
   const def = useAppStore((s) => s.metricDefinitions.find((m) => m.key === metricKey));
   const integrations = useAppStore((s) => s.integrations);
 
@@ -50,7 +57,23 @@ export function MetricCard({ metricKey, label, value, delta, hint, className }: 
             <Info className="size-3.5" aria-hidden />
           </PopoverTrigger>
           <PopoverContent align="end" className="w-80 text-sm">
-            {def ? (
+            {info ? (
+              <div className="space-y-2.5">
+                <span className="font-medium">{info.title}</span>
+                <p className="text-xs text-muted-foreground">{info.formula}</p>
+                {info.source && (
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">Source: </span>
+                    {info.source}
+                  </div>
+                )}
+                {info.caveat && (
+                  <p className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1.5 text-xs text-warning">
+                    {info.caveat}
+                  </p>
+                )}
+              </div>
+            ) : def ? (
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-medium">{def.name}</span>

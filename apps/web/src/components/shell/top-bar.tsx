@@ -106,7 +106,6 @@ export function TopBar() {
   const staleCount = isLive ? (liveStale ?? 0) : integrations.filter((i) => i.status === "stale").length;
   const unread = isLive ? 0 : notifications.filter((n) => !n.read).length;
   const canCreateOrder = visibleRoutes(session.role).some((r) => r.key === "orders");
-  const canConnectAds = visibleRoutes(session.role).some((r) => r.key === "marketing");
 
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-4">
@@ -281,15 +280,9 @@ export function TopBar() {
                 New order — needs Sales/CS or Operations role
               </DropdownMenuItem>
             )}
-            {canConnectAds ? (
-              <DropdownMenuItem onSelect={() => router.push("/marketing/accounts/new")}>
-                Connect ad account
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem disabled>
-                Connect ad account — needs Marketing role
-              </DropdownMenuItem>
-            )}
+            {/* Ad accounts are connected in Airbyte (one OAuth source per
+                account), not in Fullkit — the pipeline ingests and the
+                register mirrors the source list. */}
           </DropdownMenuContent>
         </DropdownMenu>
 
