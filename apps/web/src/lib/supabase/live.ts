@@ -402,7 +402,37 @@ export async function deleteSegment(id: number): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+export interface CustomerAddressRow extends Omit<CustomerAddress, "corrected"> {
+  identity_key: string;
+}
+
+/** Latest delivery address per identity (correction-overlaid), for CSV export. Max 20k keys. */
+export async function fetchCustomerAddresses(identityKeys: string[]): Promise<CustomerAddressRow[]> {
+  const { data, error } = await getSupabase().rpc("live_customer_addresses", {
+    p_identity_keys: identityKeys,
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as CustomerAddressRow[];
+}
+
+export interface CustomerAddress {
+  name: string | null;
+  phone: string | null;
+  address_1: string | null;
+  address_2: string | null;
+  city: string | null;
+  state: string | null;
+  postcode: string | null;
+  country: string | null;
+  order_number: string | null;
+  placed_at: string | null;
+  /** True when a Fullkit shipping correction (staged/applied) overlays the source values. */
+  corrected: boolean;
+}
+
 export interface LiveCustomerDetail {
+  /** Latest order's delivery address, correction-overlaid. Null when no orders. */
+  address: CustomerAddress | null;
   profile: Omit<LiveCustomerRow, "total_count"> & { workspace_id: number };
   orders: {
     id: number;

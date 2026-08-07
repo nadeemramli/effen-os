@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { parseAsInteger, parseAsString, useQueryState } from "nuqs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ChevronLeft, ChevronRight, Loader2, Plus, SlidersHorizontal, Users, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Loader2, Plus, SlidersHorizontal, Users, X } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,10 +33,12 @@ import { LiveGuard } from "@/components/auth/live-guard";
 import { getSupabase } from "@/lib/supabase/client";
 import {
   deleteSegment,
+  fetchCustomerAddresses,
   fetchLiveBrands,
   fetchLiveCustomers,
   fetchSegments,
   saveSegment,
+  type CustomerAddressRow,
   type CustomerSegment,
   type LiveBrand,
   type LiveCustomerRow,
@@ -100,6 +102,11 @@ const STARTERS: { key: string; name: string; conditions: SegmentCondition[] }[] 
   { key: "cod_heavy", name: "COD-heavy", conditions: [
     { field: "cod_share", op: "gte", value: 80 }, { field: "total_orders", op: "gte", value: 2 },
   ] },
+  // The remarketing cut: frequent buyers whose last order is recent enough
+  // to still be reachable (4+ orders, active within 6 months).
+  { key: "repeat_6mo", name: "Repeat 4+ · 6 mo", conditions: [
+    { field: "total_orders", op: "gte", value: 4 }, { field: "last_order_days", op: "lte", value: 180 },
+  ] },
 ];
 
 function describeCondition(c: SegmentCondition): string {
@@ -153,6 +160,7 @@ function CustomersInner() {
   const [conditions, setConditions] = useState<SegmentCondition[]>([]);
   const [builderOpen, setBuilderOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [rows, setRows] = useState<LiveCustomerRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -405,6 +413,11 @@ function CustomersInner() {
           {builderOpen ? "Hide filters" : "Filters"}
           {conditions.length > 0 && <span className="tnum rounded-full bg-accent px-1.5">{conditions.length}</span>}
         </Button>
+        <Button variant="outline" size="sm" className="ml-auto h-7 gap-1 text-xs" onClick={() => setExportOpen(true)}>
+          <Download className="size-3.5" aria-hidden />
+          Export CSV
+          <span className="tnum text-muted-foreground">({total.toLocaleString()})</span>
+        </Button>
       </div>
 
       {/* condition builder */}
@@ -565,7 +578,168 @@ function CustomersInner() {
           if (created) void setSegmentKey(`s${created.id}`);
         }}
       />
+      <ExportDialog
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        search={q}
+        brandId={liveBrandId}
+        countries={liveMarkets}
+        conditions={conditions}
+        total={total}
+      />
     </PageBody>
+  );
+}
+
+/** Exportable columns: key, CSV header, and how to read it from a row. */
+const EXPORT_COLUMNS: {
+  key: string;
+  label: string;
+  group: "contact" | "address" | "commerce";
+  value: (r: LiveCustomerRow, a: CustomerAddressRow | undefined) => string;
+}[] = [
+  { key: "name", label: "Name", group: "contact", value: (r) => r.display_name ?? "" },
+  { key: "phone", label: "Phone", group: "contact", value: (r) => r.phone ?? "" },
+  { key: "email", label: "Email", group: "contact", value: (r) => r.email ?? "" },
+  { key: "address_1", label: "Address line 1", group: "address", value: (_r, a) => a?.address_1 ?? "" },
+  { key: "address_2", label: "Address line 2", group: "address", value: (_r, a) => a?.address_2 ?? "" },
+  { key: "city", label: "City", group: "address", value: (r, a) => a?.city ?? r.city ?? "" },
+  { key: "state", label: "State", group: "address", value: (_r, a) => a?.state ?? "" },
+  { key: "postcode", label: "Postcode", group: "address", value: (_r, a) => a?.postcode ?? "" },
+  { key: "country", label: "Country", group: "address", value: (r, a) => a?.country ?? r.country ?? "" },
+  { key: "total_orders", label: "Total orders", group: "commerce", value: (r) => String(r.total_orders) },
+  { key: "recognized_orders", label: "Recognized orders", group: "commerce", value: (r) => String(r.recognized_orders) },
+  { key: "cod_orders", label: "COD orders", group: "commerce", value: (r) => String(r.cod_orders) },
+  { key: "ltv", label: "LTV (recognized, by currency)", group: "commerce", value: (r) =>
+    Object.entries(r.revenue_by_currency ?? {}).map(([c, v]) => `${c} ${Number(v).toFixed(2)}`).join(" + ") },
+  { key: "first_order_at", label: "First order date", group: "commerce", value: (r) => r.first_order_at?.slice(0, 10) ?? "" },
+  { key: "last_order_at", label: "Last order date", group: "commerce", value: (r) => r.last_order_at?.slice(0, 10) ?? "" },
+  { key: "classification", label: "Classification", group: "commerce", value: (r) => r.classification },
+];
+
+const EXPORT_DEFAULTS = new Set([
+  "name", "phone", "address_1", "city", "postcode", "country",
+  "total_orders", "ltv", "first_order_at", "last_order_at",
+]);
+
+function csvCell(v: string): string {
+  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+function ExportDialog({
+  open, onClose, search, brandId, countries, conditions, total,
+}: {
+  open: boolean;
+  onClose: () => void;
+  search: string;
+  brandId: number | null;
+  countries: string[];
+  conditions: SegmentCondition[];
+  total: number;
+}) {
+  const [picked, setPicked] = useState<Set<string>>(new Set(EXPORT_DEFAULTS));
+  const [busy, setBusy] = useState(false);
+  if (!open) return null;
+
+  const togglePick = (key: string) =>
+    setPicked((cur) => {
+      const next = new Set(cur);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const needsAddress = [...picked].some((k) => EXPORT_COLUMNS.find((c) => c.key === k)?.group === "address");
+  const cap = 20000;
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      // Page through the SAME filter the table shows — segment conditions,
+      // search, brand and market scope all apply to the export.
+      const all: LiveCustomerRow[] = [];
+      let page = 1;
+      for (;;) {
+        const { rows: batch, total: t } = await fetchLiveCustomers({
+          page, pageSize: 1000, search, brandId,
+          countries: countries.length > 0 ? countries : null,
+          conditions: conditions.length > 0 ? conditions : null,
+        });
+        all.push(...batch);
+        if (all.length >= Math.min(t, cap) || batch.length === 0) break;
+        page += 1;
+      }
+      const truncated = all.length >= cap;
+
+      const addrByKey = new Map<string, CustomerAddressRow>();
+      if (needsAddress && all.length > 0) {
+        for (let i = 0; i < all.length; i += 5000) {
+          const chunk = all.slice(i, i + 5000).map((r) => r.identity_key);
+          const addrs = await fetchCustomerAddresses(chunk);
+          for (const a of addrs) addrByKey.set(a.identity_key, a);
+        }
+      }
+
+      const cols = EXPORT_COLUMNS.filter((c) => picked.has(c.key));
+      const lines = [
+        cols.map((c) => csvCell(c.label)).join(","),
+        ...all.map((r) => cols.map((c) => csvCell(c.value(r, addrByKey.get(r.identity_key)))).join(",")),
+      ];
+      const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `customers-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${all.length.toLocaleString()} customers`, {
+        description: truncated ? `Capped at ${cap.toLocaleString()} rows — narrow the filter for the rest.` : undefined,
+      });
+      onClose();
+    } catch (e) {
+      toast.error("Export failed", { description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Export {total.toLocaleString()} customers to CSV</DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground">
+          Exports exactly what the current filter shows (segment, search, brand and market scope). Pick the
+          columns; addresses come from each customer&apos;s latest order, with Fullkit shipping corrections applied.
+        </p>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+          {(["contact", "address", "commerce"] as const).map((group) => (
+            <div key={group} className={cn("space-y-1.5", group === "commerce" && "col-span-2 grid grid-cols-2 gap-x-4 gap-y-1.5 space-y-0")}>
+              {group !== "commerce" && (
+                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{group}</p>
+              )}
+              {EXPORT_COLUMNS.filter((c) => c.group === group).map((c) => (
+                <label key={c.key} className="flex items-center gap-2 text-xs">
+                  <Checkbox checked={picked.has(c.key)} onCheckedChange={() => togglePick(c.key)} />
+                  {c.label}
+                </label>
+              ))}
+            </div>
+          ))}
+        </div>
+        <p className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1.5 text-[11px] text-warning">
+          Contains personal data — handle per your customer-data policy. The export is capped at 20,000 rows.
+        </p>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button disabled={busy || picked.size === 0} onClick={run}>
+            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Download className="size-4" aria-hidden />}
+            {busy ? "Exporting…" : "Export"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

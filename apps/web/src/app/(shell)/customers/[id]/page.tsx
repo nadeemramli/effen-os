@@ -197,6 +197,37 @@ function CustomerDetailInner() {
             </CardContent>
           </Card>
 
+          {/* delivery address — latest order, Fullkit corrections applied */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">Delivery address</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                From the most recent order{detail.address?.order_number ? ` (#${detail.address.order_number})` : ""} —
+                shipping first, billing fallback{detail.address?.corrected ? "; a Fullkit shipping correction is applied" : ""}.
+              </p>
+            </CardHeader>
+            <CardContent>
+              {detail.address ? (
+                <address className="space-y-0.5 text-sm not-italic">
+                  <div className="font-medium">{detail.address.name ?? p.display_name ?? "—"}</div>
+                  {detail.address.address_1 && <div>{detail.address.address_1}</div>}
+                  {detail.address.address_2 && <div>{detail.address.address_2}</div>}
+                  <div>
+                    {[detail.address.postcode, detail.address.city, detail.address.state]
+                      .filter(Boolean)
+                      .join(", ") || "—"}
+                  </div>
+                  <div className="text-muted-foreground">{detail.address.country ?? "—"}</div>
+                  {detail.address.phone && (
+                    <div className="tnum pt-1 text-xs text-muted-foreground">{detail.address.phone}</div>
+                  )}
+                </address>
+              ) : (
+                <p className="text-sm text-muted-foreground">No orders yet — no address on record.</p>
+              )}
+            </CardContent>
+          </Card>
+
           {/* conversation & activity */}
           <Card>
             <CardHeader>
