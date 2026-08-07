@@ -10,14 +10,22 @@ import { LiveGuard } from "@/components/auth/live-guard";
 import {
   fetchLiveBrands,
   fetchLiveMerchandise,
+  fetchLiveProduction,
   fetchSkuMappingQueue,
   type LiveBrand,
+  type LiveProductionItem,
   type MerchProduct,
 } from "@/lib/supabase/live";
 import { useAppStore } from "@/lib/store/provider";
 import { cn } from "@/lib/utils";
 
-type Data = { products: MerchProduct[]; brands: LiveBrand[]; unmappedCount: number };
+type Data = {
+  products: MerchProduct[];
+  brands: LiveBrand[];
+  unmappedCount: number;
+  /** product_id → production item (ready stock, cover, ledger freshness). */
+  production: Map<number, LiveProductionItem>;
+};
 
 function InventoryInner() {
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
@@ -27,12 +35,17 @@ function InventoryInner() {
   useEffect(() => {
     void (async () => {
       try {
-        const [products, brands, queue] = await Promise.all([
+        const [products, brands, queue, prod] = await Promise.all([
           fetchLiveMerchandise(),
           fetchLiveBrands(),
           fetchSkuMappingQueue(),
+          fetchLiveProduction().catch(() => null),
         ]);
-        setData({ products, brands, unmappedCount: queue.length });
+        const production = new Map<number, LiveProductionItem>();
+        for (const item of prod?.items ?? []) {
+          if (item.product_id !== null) production.set(item.product_id, item);
+        }
+        setData({ products, brands, unmappedCount: queue.length, production });
       } catch (e) {
         setError((e as Error).message);
       }
@@ -101,9 +114,10 @@ function InventoryInner() {
       </section>
 
       <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
-        On-hand, reserved, ATP, and cover need stock counts — physical stock is operated in Fighter today, so
-        those columns stay honest &ldquo;—&rdquo; until stocktake capture or the Fighter export lands. Velocity below is
-        live: recognized orders (processing + completed), attributed through confirmed SKU mappings
+        On hand and cover come from the <Link href="/production" className="text-info underline-offset-2 hover:underline">Production</Link> pipeline&apos;s
+        manual, audited finished-goods counts — a product-level pool shared by all its pack variants, not a per-variant
+        WMS feed (reserved/ATP and per-variant allocation stay deferred). Products without a production line keep
+        &ldquo;—&rdquo;. Velocity below is live: recognized orders (processing + completed), attributed through confirmed SKU mappings
         {data.unmappedCount > 0 && (
           <>
             {" "}
@@ -151,11 +165,38 @@ function InventoryInner() {
                     <td className="tnum py-2 text-right">{sold14.toLocaleString()}</td>
                     <td className="tnum py-2 text-right text-muted-foreground">{sold30.toLocaleString()}</td>
                     <td className="tnum py-2 text-right">{velocity > 0 ? velocity.toFixed(1) : "—"}</td>
-                    <td className="tnum py-2 text-right text-muted-foreground">—</td>
-                    <td className="tnum py-2 text-right text-muted-foreground">—</td>
-                    <td className="py-2">
-                      <Badge variant="outline" className="text-[10px] text-muted-foreground">source pending</Badge>
-                    </td>
+                    {(() => {
+                      const item = data.production.get(product.id);
+                      if (!item) {
+                        return (
+                          <>
+                            <td className="tnum py-2 text-right text-muted-foreground">—</td>
+                            <td className="tnum py-2 text-right text-muted-foreground">—</td>
+                            <td className="py-2">
+                              <Badge variant="outline" className="text-[10px] text-muted-foreground">source pending</Badge>
+                            </td>
+                          </>
+                        );
+                      }
+                      const lastEntry = item.entries[0]?.at ?? item.updated_at;
+                      const ageH = Math.round((Date.now() - new Date(lastEntry).getTime()) / 3600e3);
+                      return (
+                        <>
+                          <td className="tnum py-2 text-right">
+                            {item.ready_units.toLocaleString()}
+                            <span className="ml-1 text-[10px] text-muted-foreground">{item.base_uom}s (product)</span>
+                          </td>
+                          <td className="tnum py-2 text-right">
+                            {item.days_cover !== null ? `±${item.days_cover}d` : "—"}
+                          </td>
+                          <td className="py-2">
+                            <Badge variant="outline" className="text-[10px] text-info border-info/30 bg-info/10">
+                              production count · {ageH < 48 ? `${ageH}h ago` : `${Math.round(ageH / 24)}d ago`}
+                            </Badge>
+                          </td>
+                        </>
+                      );
+                    })()}
                   </tr>
                 ))}
               </tbody>

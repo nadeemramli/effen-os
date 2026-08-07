@@ -841,6 +841,173 @@ export async function fetchGrowthAds(days = 30): Promise<GrowthAds | null> {
   return g && g.rows.length > 0 ? g : null;
 }
 
+// ── Production pipeline (P5 slice 0) ────────────────────────────────────────
+
+export interface ProductionMaterial {
+  id: number;
+  kind: "product" | "packaging";
+  name: string;
+  uom: string;
+  qty: number;
+  note: string | null;
+}
+
+export interface ProductionInbound {
+  id: number;
+  qty_units: number;
+  freight: "sea" | "air" | "sea_air";
+  eta: string | null;
+  status: string;
+  note: string | null;
+}
+
+export interface ProductionEntry {
+  field: string;
+  old_qty: number;
+  new_qty: number;
+  delta: number;
+  source: "manual" | "inbound_arrival";
+  note: string | null;
+  actor: string;
+  at: string;
+}
+
+export interface LiveProductionItem {
+  id: number;
+  product_id: number | null;
+  name: string;
+  dosage_form: "capsule" | "sachet" | "other";
+  base_uom: string;
+  raw_material_units: number;
+  premix_units: number;
+  in_progress_units: number;
+  ready_units: number;
+  status: string;
+  updated_at: string;
+  backlog_units: number;
+  net_position: number;
+  daily_usage: number;
+  days_cover: number | null;
+  rts_units_30d: number;
+  rts_parcels_30d: number;
+  refund_units_30d: number;
+  incoming_units: number;
+  next_eta: string | null;
+  incoming: ProductionInbound[];
+  materials: ProductionMaterial[];
+  entries: ProductionEntry[];
+}
+
+export interface LiveProduction {
+  items: LiveProductionItem[];
+  unmapped_backlog_qty: number;
+  variants_missing_pack: { id: number; sku: string; name: string }[];
+}
+
+export async function fetchLiveProduction(): Promise<LiveProduction> {
+  const { data, error } = await getSupabase().rpc("live_production");
+  if (error) throw new Error(error.message);
+  return (data ?? { items: [], unmapped_backlog_qty: 0, variants_missing_pack: [] }) as LiveProduction;
+}
+
+export async function saveProductionItem(input: {
+  name: string;
+  dosageForm: string;
+  baseUom?: string;
+  productId?: number | null;
+  itemId?: number | null;
+}): Promise<number> {
+  const { data, error } = await getSupabase().rpc("save_production_item", {
+    p_name: input.name,
+    p_dosage_form: input.dosageForm,
+    p_base_uom: input.baseUom ?? "bottle",
+    p_product_id: input.productId ?? null,
+    p_item_id: input.itemId ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as number;
+}
+
+export async function setProductionStage(
+  itemId: number,
+  field: string,
+  qty: number,
+  note?: string,
+): Promise<void> {
+  const { error } = await getSupabase().rpc("set_production_stage", {
+    p_item_id: itemId,
+    p_field: field,
+    p_qty: qty,
+    p_note: note ?? null,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function saveProductionMaterial(input: {
+  itemId: number;
+  kind: string;
+  name: string;
+  uom: string;
+  qty: number;
+  note?: string;
+  materialId?: number | null;
+}): Promise<number> {
+  const { data, error } = await getSupabase().rpc("save_production_material", {
+    p_item_id: input.itemId,
+    p_kind: input.kind,
+    p_name: input.name,
+    p_uom: input.uom,
+    p_qty: input.qty,
+    p_note: input.note ?? null,
+    p_material_id: input.materialId ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as number;
+}
+
+export async function deleteProductionMaterial(materialId: number): Promise<void> {
+  const { error } = await getSupabase().rpc("delete_production_material", { p_material_id: materialId });
+  if (error) throw new Error(error.message);
+}
+
+export async function saveProductionInbound(input: {
+  itemId: number;
+  qtyUnits: number;
+  freight: string;
+  eta?: string | null;
+  note?: string;
+  inboundId?: number | null;
+}): Promise<number> {
+  const { data, error } = await getSupabase().rpc("save_production_inbound", {
+    p_item_id: input.itemId,
+    p_qty_units: input.qtyUnits,
+    p_freight: input.freight,
+    p_eta: input.eta ?? null,
+    p_note: input.note ?? null,
+    p_inbound_id: input.inboundId ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as number;
+}
+
+export async function cancelProductionInbound(inboundId: number): Promise<void> {
+  const { error } = await getSupabase().rpc("cancel_production_inbound", { p_inbound_id: inboundId });
+  if (error) throw new Error(error.message);
+}
+
+export async function markInboundArrived(inboundId: number): Promise<void> {
+  const { error } = await getSupabase().rpc("mark_inbound_arrived", { p_inbound_id: inboundId });
+  if (error) throw new Error(error.message);
+}
+
+export async function setVariantUnitsPerPack(variantId: number, units: number): Promise<void> {
+  const { error } = await getSupabase().rpc("set_variant_units_per_pack", {
+    p_variant_id: variantId,
+    p_units: units,
+  });
+  if (error) throw new Error(error.message);
+}
+
 // ── Automations registry health ─────────────────────────────────────────────
 
 export type AutomationHealth = Record<string, Record<string, unknown>>;
