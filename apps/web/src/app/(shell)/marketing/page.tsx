@@ -163,9 +163,10 @@ function MarketingInner() {
       .filter((r) => scopeBrandIds === null || (r.brand_id !== null && scopeBrandIds.has(r.brand_id)))
       .filter((r) => liveMarkets.length === 0 || liveMarkets.includes(r.market))
       .reduce((s, r) => s + toMYR(Number(r.revenue), r.currency_code), 0);
-    // Net profit (partial): revenue − COGS − ads − WHT 8% on ad spend. The
-    // remaining cost lines (delivery, returns, COD fees, other marketing)
+    // Contribution after ads (CM3, partial): revenue − COGS − ads − WHT 8%
+    // on ad spend. CM2 lines (delivery, returns, COD fees) and other marketing
     // have no data structure yet and are declared missing, never guessed.
+    // NOT net profit — fixed costs (payroll, rent, tools) are not modelled.
     const econ = unitEcon
       .filter((r) => r.win === win)
       .filter((r) => scopeBrandIds === null || (r.brand_id !== null && scopeBrandIds.has(r.brand_id)))
@@ -175,7 +176,7 @@ function MarketingInner() {
     const costedUnits = econ.reduce((s, r) => s + Number(r.costed_units), 0);
     const costedCoverage = econUnits > 0 ? costedUnits / econUnits : 0;
     const wht = spend * 0.08;
-    const netProfit = netRevenue - cogs - spend - wht;
+    const cm3 = netRevenue - cogs - spend - wht;
     const byDate = new Map<string, { spend: number; revenue: number }>();
     for (const t of trend) {
       const cur = byDate.get(t.date) ?? { spend: 0, revenue: 0 };
@@ -194,7 +195,7 @@ function MarketingInner() {
     );
     return {
       spend, purchases, purchaseValue, netRevenue, chart, liveAccounts, scopeSlug,
-      cogs, wht, netProfit, costedCoverage,
+      cogs, wht, cm3, costedCoverage,
     };
   }, [growth, liveBrandId, liveMarkets, days, platformFilter]);
 
@@ -247,9 +248,9 @@ function MarketingInner() {
       const econ = slug === null ? undefined : econBySlug.get(slug);
       const coverage = econ && econ.units > 0 ? econ.costed / econ.units : 0;
       const wht = ad.spend * 0.08;
-      // Net profit (partial) only renders on ≥90% costed coverage — the
+      // CM3 (partial) only renders on ≥90% costed coverage — the
       // house rule: no margin math built on thin cost data.
-      const netProfit = econ && coverage >= 0.9 && revenue > 0
+      const cm3 = econ && coverage >= 0.9 && revenue > 0
         ? revenue - econ.cogs - ad.spend - wht
         : null;
       return {
@@ -260,7 +261,7 @@ function MarketingInner() {
         ...ad,
         revenue,
         cogs: econ?.cogs ?? null,
-        netProfit,
+        cm3,
         blendedMer: ad.spend > 0 && revenue > 0 ? revenue / ad.spend : null,
         platformMer: ad.spend > 0 && ad.value > 0 ? ad.value / ad.spend : null,
       };
@@ -273,9 +274,9 @@ function MarketingInner() {
         value: m.value + r.value,
         revenue: m.revenue + r.revenue,
         cogs: m.cogs + (r.cogs ?? 0),
-        netProfit: m.netProfit + (r.netProfit ?? 0),
+        cm3: m.cm3 + (r.cm3 ?? 0),
       }),
-      { spend: 0, purchases: 0, value: 0, revenue: 0, cogs: 0, netProfit: 0 },
+      { spend: 0, purchases: 0, value: 0, revenue: 0, cogs: 0, cm3: 0 },
     );
     return { rows, mix };
   }, [growth, liveMarkets, days, platformFilter]);
@@ -366,7 +367,7 @@ function MarketingInner() {
                     <th className="pb-2 text-right font-medium">Fullkit revenue</th>
                     <th className="pb-2 text-right font-medium">Blended MER</th>
                     <th className="pb-2 text-right font-medium">COGS</th>
-                    <th className="pb-2 text-right font-medium">Net profit*</th>
+                    <th className="pb-2 text-right font-medium">CM3*</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -385,8 +386,8 @@ function MarketingInner() {
                       {brandPerf.mix.spend > 0 && brandPerf.mix.revenue > 0 ? (brandPerf.mix.revenue / brandPerf.mix.spend).toFixed(2) : "—"}
                     </td>
                     <td className="tnum py-2 text-right">RM {Math.round(brandPerf.mix.cogs).toLocaleString()}</td>
-                    <td className={cn("tnum py-2 text-right", brandPerf.mix.netProfit < 0 && "text-destructive")}>
-                      RM {Math.round(brandPerf.mix.netProfit).toLocaleString()}
+                    <td className={cn("tnum py-2 text-right", brandPerf.mix.cm3 < 0 && "text-destructive")}>
+                      RM {Math.round(brandPerf.mix.cm3).toLocaleString()}
                     </td>
                   </tr>
                   {brandPerf.rows.map((r) => {
@@ -424,8 +425,8 @@ function MarketingInner() {
                           {r.blendedMer !== null ? r.blendedMer.toFixed(2) : "—"}
                         </td>
                         <td className="tnum py-2 text-right">{r.cogs !== null ? `RM ${Math.round(r.cogs).toLocaleString()}` : "—"}</td>
-                        <td className={cn("tnum py-2 text-right", r.netProfit !== null && r.netProfit < 0 && "text-destructive")}>
-                          {r.netProfit !== null ? `RM ${Math.round(r.netProfit).toLocaleString()}` : "—"}
+                        <td className={cn("tnum py-2 text-right", r.cm3 !== null && r.cm3 < 0 && "text-destructive")}>
+                          {r.cm3 !== null ? `RM ${Math.round(r.cm3).toLocaleString()}` : "—"}
                         </td>
                       </tr>
                     );
@@ -434,9 +435,10 @@ function MarketingInner() {
               </table>
             </div>
             <p className="mt-2 text-[11px] text-muted-foreground">
-              *Net profit is partial: revenue − COGS − ad spend − WHT 8% on ad spend. Delivery, returns, COD fees,
-              and other marketing costs are not yet in the cost model and are not deducted; a brand renders “—”
-              below 90% costed-unit coverage.
+              *CM3 = contribution after ads (partial): revenue − COGS − ad spend − WHT 8% on ad spend. Delivery,
+              returns, COD fees, and other marketing costs are not yet in the cost model and are not deducted; a
+              brand renders “—” below 90% costed-unit coverage. Net profit would further remove fixed costs
+              (payroll, rent, tools) — not modelled yet.
             </p>
           </CardContent>
         </Card>
@@ -621,19 +623,19 @@ function MarketingInner() {
           />
           <MetricCard
             metricKey="contribution"
-            label="Net profit (partial)"
+            label="Contribution after ads (CM3)"
             value={
               liveView.costedCoverage >= 0.9 && liveView.netRevenue > 0
-                ? formatMoney(Math.round(liveView.netProfit) * 100, "MYR", { compact: true })
+                ? formatMoney(Math.round(liveView.cm3) * 100, "MYR", { compact: true })
                 : "—"
             }
             hint={
               liveView.costedCoverage >= 0.9
-                ? `Margin ${liveView.netRevenue > 0 ? formatPercent(liveView.netProfit / liveView.netRevenue, 0) : "—"} · partial cost model`
+                ? `CM3 margin ${liveView.netRevenue > 0 ? formatPercent(liveView.cm3 / liveView.netRevenue, 0) : "—"} · not net profit: fixed costs excluded`
                 : `Needs ≥90% costed units (now ${formatPercent(liveView.costedCoverage, 0)})`
             }
             info={{
-              title: "Net profit (partial)",
+              title: "Contribution after ads (CM3, partial)",
               formula: `Fullkit revenue − COGS (RM ${Math.round(liveView.cogs).toLocaleString()}) − ad spend (RM ${Math.round(liveView.spend).toLocaleString()}) − WHT 8% on ad spend (RM ${Math.round(liveView.wht).toLocaleString()}).`,
               source: "Orders + effective-dated COGS + warehouse ad spend",
               caveat: "Partial by declaration: delivery cost, returns, COD fees, and other marketing costs have no data structure yet and are NOT deducted. Cost structure is product-level only today. Renders only at ≥90% costed-unit coverage.",
