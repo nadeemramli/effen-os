@@ -20,9 +20,11 @@ import {
   fetchGrowthAds,
   fetchLiveBrands,
   fetchLiveScorecard,
+  fetchLiveUnitEconomics,
   type GrowthAds,
   type LiveBrand,
   type LiveScorecardRow,
+  type LiveUnitEconRow,
 } from "@/lib/supabase/live";
 import { formatMoney, formatPercent, formatRatio } from "@/lib/domain/money";
 import { sumRows, toMYR } from "@/lib/domain/metrics";
@@ -61,6 +63,7 @@ function MarketingInner() {
     ads: GrowthAds;
     liveBrands: LiveBrand[];
     scorecard: LiveScorecardRow[];
+    unitEcon: LiveUnitEconRow[];
   } | null>(null);
 
   // Platform filter (empty = all). Future sources (TikTok, Google, Shopee,
@@ -75,12 +78,13 @@ function MarketingInner() {
       const { data: s } = await getSupabase().auth.getSession();
       if (!s.session) return;
       try {
-        const [ads, liveBrands, scorecard] = await Promise.all([
+        const [ads, liveBrands, scorecard, unitEcon] = await Promise.all([
           fetchGrowthAds(30),
           fetchLiveBrands(),
           fetchLiveScorecard().catch(() => [] as LiveScorecardRow[]),
+          fetchLiveUnitEconomics().catch(() => [] as LiveUnitEconRow[]),
         ]);
-        if (ads) setGrowth({ ads, liveBrands, scorecard });
+        if (ads) setGrowth({ ads, liveBrands, scorecard, unitEcon });
       } catch (e) {
         // Live surfaces degrade to the demo store; never a blank page.
         console.warn("growth ads fetch failed", e);
@@ -138,7 +142,7 @@ function MarketingInner() {
   // the demo clock does not apply to warehouse data.
   const liveView = useMemo(() => {
     if (!growth) return null;
-    const { ads, liveBrands, scorecard } = growth;
+    const { ads, liveBrands, scorecard, unitEcon } = growth;
     const scopeSlug = liveBrandId === null ? null : (liveBrands.find((b) => b.id === liveBrandId)?.slug ?? null);
     const inScope = (slug: string | null, mkt: string | null, platform?: string) =>
       (scopeSlug === null || slug === scopeSlug) &&
@@ -159,6 +163,19 @@ function MarketingInner() {
       .filter((r) => scopeBrandIds === null || (r.brand_id !== null && scopeBrandIds.has(r.brand_id)))
       .filter((r) => liveMarkets.length === 0 || liveMarkets.includes(r.market))
       .reduce((s, r) => s + toMYR(Number(r.revenue), r.currency_code), 0);
+    // Net profit (partial): revenue − COGS − ads − WHT 8% on ad spend. The
+    // remaining cost lines (delivery, returns, COD fees, other marketing)
+    // have no data structure yet and are declared missing, never guessed.
+    const econ = unitEcon
+      .filter((r) => r.win === win)
+      .filter((r) => scopeBrandIds === null || (r.brand_id !== null && scopeBrandIds.has(r.brand_id)))
+      .filter((r) => liveMarkets.length === 0 || liveMarkets.includes(r.market));
+    const cogs = econ.reduce((s, r) => s + toMYR(Number(r.cogs), r.currency_code), 0);
+    const econUnits = econ.reduce((s, r) => s + Number(r.units), 0);
+    const costedUnits = econ.reduce((s, r) => s + Number(r.costed_units), 0);
+    const costedCoverage = econUnits > 0 ? costedUnits / econUnits : 0;
+    const wht = spend * 0.08;
+    const netProfit = netRevenue - cogs - spend - wht;
     const byDate = new Map<string, { spend: number; revenue: number }>();
     for (const t of trend) {
       const cur = byDate.get(t.date) ?? { spend: 0, revenue: 0 };
@@ -175,7 +192,10 @@ function MarketingInner() {
         (liveMarkets.length === 0 || a.markets.some((m) => liveMarkets.includes(m))) &&
         (platformFilter.length === 0 || platformFilter.includes(a.platform)),
     );
-    return { spend, purchases, purchaseValue, netRevenue, chart, liveAccounts, scopeSlug };
+    return {
+      spend, purchases, purchaseValue, netRevenue, chart, liveAccounts, scopeSlug,
+      cogs, wht, netProfit, costedCoverage,
+    };
   }, [growth, liveBrandId, liveMarkets, days, platformFilter]);
 
   // Brand performance: every brand as a row regardless of the brand scope
@@ -207,11 +227,31 @@ function MarketingInner() {
       revenueBySlug.set(slug, (revenueBySlug.get(slug) ?? 0) + toMYR(Number(r.revenue), r.currency_code));
     }
 
+    const econBySlug = new Map<string, { cogs: number; units: number; costed: number }>();
+    for (const r of growth.unitEcon) {
+      if (r.win !== win || !mktOk(r.market) || r.brand_id === null) continue;
+      const slug = liveBrands.find((b) => b.id === r.brand_id)?.slug;
+      if (!slug) continue;
+      const cur = econBySlug.get(slug) ?? { cogs: 0, units: 0, costed: 0 };
+      cur.cogs += toMYR(Number(r.cogs), r.currency_code);
+      cur.units += Number(r.units);
+      cur.costed += Number(r.costed_units);
+      econBySlug.set(slug, cur);
+    }
+
     const slugs = new Set<string | null>([...bySlug.keys(), ...revenueBySlug.keys()]);
     const rows = [...slugs].map((slug) => {
       const ad = bySlug.get(slug) ?? { spend: 0, purchases: 0, value: 0 };
       const revenue = slug === null ? 0 : (revenueBySlug.get(slug) ?? 0);
       const brand = slug === null ? undefined : liveBrands.find((b) => b.slug === slug);
+      const econ = slug === null ? undefined : econBySlug.get(slug);
+      const coverage = econ && econ.units > 0 ? econ.costed / econ.units : 0;
+      const wht = ad.spend * 0.08;
+      // Net profit (partial) only renders on ≥90% costed coverage — the
+      // house rule: no margin math built on thin cost data.
+      const netProfit = econ && coverage >= 0.9 && revenue > 0
+        ? revenue - econ.cogs - ad.spend - wht
+        : null;
       return {
         slug,
         name: slug === null ? "Unattributed" : (brand?.name ?? slug),
@@ -219,6 +259,8 @@ function MarketingInner() {
         registered: slug === null ? true : Boolean(brand),
         ...ad,
         revenue,
+        cogs: econ?.cogs ?? null,
+        netProfit,
         blendedMer: ad.spend > 0 && revenue > 0 ? revenue / ad.spend : null,
         platformMer: ad.spend > 0 && ad.value > 0 ? ad.value / ad.spend : null,
       };
@@ -230,8 +272,10 @@ function MarketingInner() {
         purchases: m.purchases + r.purchases,
         value: m.value + r.value,
         revenue: m.revenue + r.revenue,
+        cogs: m.cogs + (r.cogs ?? 0),
+        netProfit: m.netProfit + (r.netProfit ?? 0),
       }),
-      { spend: 0, purchases: 0, value: 0, revenue: 0 },
+      { spend: 0, purchases: 0, value: 0, revenue: 0, cogs: 0, netProfit: 0 },
     );
     return { rows, mix };
   }, [growth, liveMarkets, days, platformFilter]);
@@ -321,6 +365,8 @@ function MarketingInner() {
                     <th className="pb-2 text-right font-medium">Platform MER</th>
                     <th className="pb-2 text-right font-medium">Fullkit revenue</th>
                     <th className="pb-2 text-right font-medium">Blended MER</th>
+                    <th className="pb-2 text-right font-medium">COGS</th>
+                    <th className="pb-2 text-right font-medium">Net profit*</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -337,6 +383,10 @@ function MarketingInner() {
                     <td className="tnum py-2 text-right">RM {Math.round(brandPerf.mix.revenue).toLocaleString()}</td>
                     <td className="tnum py-2 text-right">
                       {brandPerf.mix.spend > 0 && brandPerf.mix.revenue > 0 ? (brandPerf.mix.revenue / brandPerf.mix.spend).toFixed(2) : "—"}
+                    </td>
+                    <td className="tnum py-2 text-right">RM {Math.round(brandPerf.mix.cogs).toLocaleString()}</td>
+                    <td className={cn("tnum py-2 text-right", brandPerf.mix.netProfit < 0 && "text-destructive")}>
+                      RM {Math.round(brandPerf.mix.netProfit).toLocaleString()}
                     </td>
                   </tr>
                   {brandPerf.rows.map((r) => {
@@ -373,12 +423,21 @@ function MarketingInner() {
                         <td className={cn("tnum py-2 text-right font-medium", r.blendedMer !== null && (r.blendedMer >= 3 ? "text-success" : r.blendedMer >= 2 ? "text-warning" : "text-destructive"))}>
                           {r.blendedMer !== null ? r.blendedMer.toFixed(2) : "—"}
                         </td>
+                        <td className="tnum py-2 text-right">{r.cogs !== null ? `RM ${Math.round(r.cogs).toLocaleString()}` : "—"}</td>
+                        <td className={cn("tnum py-2 text-right", r.netProfit !== null && r.netProfit < 0 && "text-destructive")}>
+                          {r.netProfit !== null ? `RM ${Math.round(r.netProfit).toLocaleString()}` : "—"}
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
             </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              *Net profit is partial: revenue − COGS − ad spend − WHT 8% on ad spend. Delivery, returns, COD fees,
+              and other marketing costs are not yet in the cost model and are not deducted; a brand renders “—”
+              below 90% costed-unit coverage.
+            </p>
           </CardContent>
         </Card>
       )}
@@ -482,7 +541,7 @@ function MarketingInner() {
 
       {/* scorecard — warehouse spend + Fullkit revenue when live, demo otherwise */}
       {liveView ? (
-        <section className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6">
+        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <MetricCard
             metricKey="ad_spend"
             value={formatMoney(Math.round(liveView.spend) * 100, "MYR", { compact: true })}
@@ -547,6 +606,37 @@ function MarketingInner() {
               title: "Blended MER",
               formula: "Fullkit net revenue (recognized orders, currency-converted to MYR) ÷ warehouse ad spend, same scope and window. The honest efficiency number.",
               source: "Fullkit orders (live_scorecard) ÷ warehouse spend",
+            }}
+          />
+          <MetricCard
+            metricKey="orders"
+            label="Fullkit revenue"
+            value={formatMoney(Math.round(liveView.netRevenue) * 100, "MYR", { compact: true })}
+            hint="Recognized orders — commercial truth"
+            info={{
+              title: "Fullkit revenue",
+              formula: "Recognized order revenue (processing + completed) from the order tables, brand/market scoped, currency-converted to MYR — the same number the Command Centre trusts.",
+              source: "Fullkit orders (live_scorecard)",
+            }}
+          />
+          <MetricCard
+            metricKey="contribution"
+            label="Net profit (partial)"
+            value={
+              liveView.costedCoverage >= 0.9 && liveView.netRevenue > 0
+                ? formatMoney(Math.round(liveView.netProfit) * 100, "MYR", { compact: true })
+                : "—"
+            }
+            hint={
+              liveView.costedCoverage >= 0.9
+                ? `Margin ${liveView.netRevenue > 0 ? formatPercent(liveView.netProfit / liveView.netRevenue, 0) : "—"} · partial cost model`
+                : `Needs ≥90% costed units (now ${formatPercent(liveView.costedCoverage, 0)})`
+            }
+            info={{
+              title: "Net profit (partial)",
+              formula: `Fullkit revenue − COGS (RM ${Math.round(liveView.cogs).toLocaleString()}) − ad spend (RM ${Math.round(liveView.spend).toLocaleString()}) − WHT 8% on ad spend (RM ${Math.round(liveView.wht).toLocaleString()}).`,
+              source: "Orders + effective-dated COGS + warehouse ad spend",
+              caveat: "Partial by declaration: delivery cost, returns, COD fees, and other marketing costs have no data structure yet and are NOT deducted. Cost structure is product-level only today. Renders only at ≥90% costed-unit coverage.",
             }}
           />
         </section>
