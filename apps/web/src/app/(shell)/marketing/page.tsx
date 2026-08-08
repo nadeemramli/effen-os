@@ -17,12 +17,12 @@ import { FreshnessBadge } from "@/components/status/freshness-badge";
 import { useSession } from "@/hooks/use-session";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import {
-  fetchCommerceRange,
+  fetchContributionRange,
   fetchGrowthAds,
   fetchLiveBrands,
   type GrowthAds,
   type LiveBrand,
-  type LiveCommerceRangeRow,
+  type LiveContribution,
 } from "@/lib/supabase/live";
 import { rangeBounds, rangeDays as spanDays, rangeLabel } from "@/lib/store";
 import { formatMoney, formatPercent, formatRatio } from "@/lib/domain/money";
@@ -61,7 +61,7 @@ function MarketingInner() {
   const [growth, setGrowth] = useState<{
     ads: GrowthAds;
     liveBrands: LiveBrand[];
-    commerce: LiveCommerceRangeRow[];
+    contribution: LiveContribution;
   } | null>(null);
 
   // Platform filter (empty = all). Future sources (TikTok, Google, Shopee,
@@ -85,12 +85,14 @@ function MarketingInner() {
           400,
           Math.max(1, Math.round((Date.now() - new Date(bounds.from).getTime()) / 86_400_000) + 1),
         );
-        const [ads, liveBrands, commerce] = await Promise.all([
+        const [ads, liveBrands, contribution] = await Promise.all([
           fetchGrowthAds(fetchDays),
           fetchLiveBrands(),
-          fetchCommerceRange(bounds.from, bounds.to).catch(() => [] as LiveCommerceRangeRow[]),
+          fetchContributionRange(bounds.from, bounds.to).catch(
+            () => ({ rules: null, rows: [] }) as LiveContribution,
+          ),
         ]);
-        if (ads) setGrowth({ ads, liveBrands, commerce });
+        if (ads) setGrowth({ ads, liveBrands, contribution });
       } catch (e) {
         // Live surfaces degrade to the demo store; never a blank page.
         console.warn("growth ads fetch failed", e);
@@ -147,7 +149,7 @@ function MarketingInner() {
   // the demo clock does not apply to warehouse data.
   const liveView = useMemo(() => {
     if (!growth) return null;
-    const { ads, liveBrands, commerce } = growth;
+    const { ads, liveBrands, contribution } = growth;
     const scopeSlug = liveBrandId === null ? null : (liveBrands.find((b) => b.id === liveBrandId)?.slug ?? null);
     const inScope = (slug: string | null, mkt: string | null, platform?: string) =>
       (scopeSlug === null || slug === scopeSlug) &&
@@ -161,22 +163,26 @@ function MarketingInner() {
     const scopeBrandIds = scopeSlug === null
       ? null
       : new Set(liveBrands.filter((b) => b.slug === scopeSlug).map((b) => b.id));
-    // Revenue/COGS from the range RPC — any window (90d/1y/custom), same
-    // recognized-revenue and cost-currency-match rules as the classic paths.
-    const scopedCommerce = commerce
+    // Revenue + full variable-cost lines from the contribution model
+    // (operator P&L rules: unit cost, zone delivery, return legs, COD fee).
+    const scoped = contribution.rows
       .filter((r) => scopeBrandIds === null || (r.brand_id !== null && scopeBrandIds.has(r.brand_id)))
       .filter((r) => liveMarkets.length === 0 || liveMarkets.includes(r.market));
-    const netRevenue = scopedCommerce.reduce((s, r) => s + toMYR(Number(r.revenue), r.currency_code), 0);
-    // Contribution after ads (CM3, partial): revenue − COGS − ads − WHT 8%
-    // on ad spend. CM2 lines (delivery, returns, COD fees) and other marketing
-    // have no data structure yet and are declared missing, never guessed.
-    // NOT net profit — fixed costs (payroll, rent, tools) are not modelled.
-    const cogs = scopedCommerce.reduce((s, r) => s + toMYR(Number(r.cogs), r.currency_code), 0);
-    const econUnits = scopedCommerce.reduce((s, r) => s + Number(r.units), 0);
-    const costedUnits = scopedCommerce.reduce((s, r) => s + Number(r.costed_units), 0);
-    const costedCoverage = econUnits > 0 ? costedUnits / econUnits : 0;
-    const wht = spend * 0.08;
-    const cm3 = netRevenue - cogs - spend - wht;
+    const netRevenue = scoped.reduce((s, r) => s + toMYR(Number(r.revenue), r.currency_code), 0);
+    const cogs = scoped.reduce((s, r) => s + Number(r.cogs_myr), 0);
+    const delivery = scoped.reduce((s, r) => s + Number(r.delivery_myr), 0);
+    const returnsCost = scoped.reduce((s, r) => s + Number(r.returns_myr), 0);
+    const codCost = scoped.reduce((s, r) => s + Number(r.cod_myr), 0);
+    const rtsParcels = scoped.reduce((s, r) => s + Number(r.rts_parcels), 0);
+    const mappedUnits = scoped.reduce((s, r) => s + Number(r.base_units), 0);
+    const unmappedLines = scoped.reduce((s, r) => s + Number(r.unmapped_lines), 0);
+    const costedCoverage = mappedUnits + unmappedLines > 0 ? mappedUnits / (mappedUnits + unmappedLines) : 0;
+    const whtRate = Number(contribution.rules?.wht_rate ?? 0.08);
+    const wht = spend * whtRate;
+    // CM3 = revenue − COGS − delivery − returns − COD − ads − WHT.
+    // NOT net profit — fixed costs (payroll, rent, tools) are not modelled;
+    // launching email/SMS costs have no data source yet.
+    const cm3 = netRevenue - cogs - delivery - returnsCost - codCost - spend - wht;
     const byDate = new Map<string, { spend: number; revenue: number }>();
     for (const t of windowed) {
       const cur = byDate.get(t.date) ?? { spend: 0, revenue: 0 };
@@ -195,7 +201,7 @@ function MarketingInner() {
     );
     return {
       spend, purchases, purchaseValue, netRevenue, chart, liveAccounts, scopeSlug,
-      cogs, wht, cm3, costedCoverage,
+      cogs, delivery, returnsCost, codCost, rtsParcels, wht, cm3, costedCoverage,
     };
   }, [growth, liveBrandId, liveMarkets, bounds.from, bounds.to, platformFilter]);
 
@@ -204,7 +210,7 @@ function MarketingInner() {
   // one click focuses the whole page on a single brand.
   const brandPerf = useMemo(() => {
     if (!growth) return null;
-    const { ads, liveBrands, commerce } = growth;
+    const { ads, liveBrands, contribution } = growth;
     const mktOk = (m: string | null) => liveMarkets.length === 0 || liveMarkets.includes(m ?? "");
 
     const bySlug = new Map<string | null, { spend: number; purchases: number; value: number }>();
@@ -219,16 +225,18 @@ function MarketingInner() {
     }
 
     const revenueBySlug = new Map<string, number>();
-    const econBySlug = new Map<string, { cogs: number; units: number; costed: number }>();
-    for (const r of commerce) {
+    const econBySlug = new Map<string, { cogs: number; varCosts: number; units: number; unmapped: number }>();
+    const whtRate = Number(contribution.rules?.wht_rate ?? 0.08);
+    for (const r of contribution.rows) {
       if (!mktOk(r.market) || r.brand_id === null) continue;
       const slug = liveBrands.find((b) => b.id === r.brand_id)?.slug;
       if (!slug) continue;
       revenueBySlug.set(slug, (revenueBySlug.get(slug) ?? 0) + toMYR(Number(r.revenue), r.currency_code));
-      const cur = econBySlug.get(slug) ?? { cogs: 0, units: 0, costed: 0 };
-      cur.cogs += toMYR(Number(r.cogs), r.currency_code);
-      cur.units += Number(r.units);
-      cur.costed += Number(r.costed_units);
+      const cur = econBySlug.get(slug) ?? { cogs: 0, varCosts: 0, units: 0, unmapped: 0 };
+      cur.cogs += Number(r.cogs_myr);
+      cur.varCosts += Number(r.delivery_myr) + Number(r.returns_myr) + Number(r.cod_myr);
+      cur.units += Number(r.base_units);
+      cur.unmapped += Number(r.unmapped_lines);
       econBySlug.set(slug, cur);
     }
 
@@ -238,12 +246,12 @@ function MarketingInner() {
       const revenue = slug === null ? 0 : (revenueBySlug.get(slug) ?? 0);
       const brand = slug === null ? undefined : liveBrands.find((b) => b.slug === slug);
       const econ = slug === null ? undefined : econBySlug.get(slug);
-      const coverage = econ && econ.units > 0 ? econ.costed / econ.units : 0;
-      const wht = ad.spend * 0.08;
-      // CM3 (partial) only renders on ≥90% costed coverage — the
-      // house rule: no margin math built on thin cost data.
+      const coverage = econ && econ.units + econ.unmapped > 0 ? econ.units / (econ.units + econ.unmapped) : 0;
+      const wht = ad.spend * whtRate;
+      // CM3 only renders on ≥90% SKU-mapping coverage — the house rule:
+      // no margin math built on thin data.
       const cm3 = econ && coverage >= 0.9 && revenue > 0
-        ? revenue - econ.cogs - ad.spend - wht
+        ? revenue - econ.cogs - econ.varCosts - ad.spend - wht
         : null;
       return {
         slug,
@@ -253,6 +261,7 @@ function MarketingInner() {
         ...ad,
         revenue,
         cogs: econ?.cogs ?? null,
+        varCosts: econ?.varCosts ?? null,
         cm3,
         blendedMer: ad.spend > 0 && revenue > 0 ? revenue / ad.spend : null,
         platformMer: ad.spend > 0 && ad.value > 0 ? ad.value / ad.spend : null,
@@ -266,9 +275,10 @@ function MarketingInner() {
         value: m.value + r.value,
         revenue: m.revenue + r.revenue,
         cogs: m.cogs + (r.cogs ?? 0),
+        varCosts: m.varCosts + (r.varCosts ?? 0),
         cm3: m.cm3 + (r.cm3 ?? 0),
       }),
-      { spend: 0, purchases: 0, value: 0, revenue: 0, cogs: 0, cm3: 0 },
+      { spend: 0, purchases: 0, value: 0, revenue: 0, cogs: 0, varCosts: 0, cm3: 0 },
     );
     return { rows, mix };
   }, [growth, liveMarkets, bounds.from, bounds.to, platformFilter]);
@@ -359,6 +369,7 @@ function MarketingInner() {
                     <th className="pb-2 text-right font-medium">Fullkit revenue</th>
                     <th className="pb-2 text-right font-medium">Blended MER</th>
                     <th className="pb-2 text-right font-medium">COGS</th>
+                    <th className="pb-2 text-right font-medium">Fulfilment</th>
                     <th className="pb-2 text-right font-medium">CM3*</th>
                   </tr>
                 </thead>
@@ -378,6 +389,7 @@ function MarketingInner() {
                       {brandPerf.mix.spend > 0 && brandPerf.mix.revenue > 0 ? (brandPerf.mix.revenue / brandPerf.mix.spend).toFixed(2) : "—"}
                     </td>
                     <td className="tnum py-2 text-right">RM {Math.round(brandPerf.mix.cogs).toLocaleString()}</td>
+                    <td className="tnum py-2 text-right">RM {Math.round(brandPerf.mix.varCosts).toLocaleString()}</td>
                     <td className={cn("tnum py-2 text-right", brandPerf.mix.cm3 < 0 && "text-destructive")}>
                       RM {Math.round(brandPerf.mix.cm3).toLocaleString()}
                     </td>
@@ -417,6 +429,7 @@ function MarketingInner() {
                           {r.blendedMer !== null ? r.blendedMer.toFixed(2) : "—"}
                         </td>
                         <td className="tnum py-2 text-right">{r.cogs !== null ? `RM ${Math.round(r.cogs).toLocaleString()}` : "—"}</td>
+                        <td className="tnum py-2 text-right">{r.varCosts !== null ? `RM ${Math.round(r.varCosts).toLocaleString()}` : "—"}</td>
                         <td className={cn("tnum py-2 text-right", r.cm3 !== null && r.cm3 < 0 && "text-destructive")}>
                           {r.cm3 !== null ? `RM ${Math.round(r.cm3).toLocaleString()}` : "—"}
                         </td>
@@ -427,10 +440,11 @@ function MarketingInner() {
               </table>
             </div>
             <p className="mt-2 text-[11px] text-muted-foreground">
-              *CM3 = contribution after ads (partial): revenue − COGS − ad spend − WHT 8% on ad spend. Delivery,
-              returns, COD fees, and other marketing costs are not yet in the cost model and are not deducted; a
-              brand renders “—” below 90% costed-unit coverage. Net profit would further remove fixed costs
-              (payroll, rent, tools) — not modelled yet.
+              *CM3 = revenue − COGS − fulfilment (zone delivery + return legs + COD fees) − ad spend − WHT on ad
+              spend, per the Finance cost rules (unit RM7 · west RM8.50 · east RM15 · SG RM35 · COD RM5 · WHT 8%).
+              Returns: courier RTS legs costed per parcel; returned-order revenue nets out via order statuses.
+              Launching email/SMS costs have no data source yet. Net profit would further remove fixed costs
+              (payroll, rent, tools) — not modelled. A brand renders “—” below 90% SKU-mapping coverage.
             </p>
           </CardContent>
         </Card>
@@ -624,13 +638,13 @@ function MarketingInner() {
             hint={
               liveView.costedCoverage >= 0.9
                 ? `CM3 margin ${liveView.netRevenue > 0 ? formatPercent(liveView.cm3 / liveView.netRevenue, 0) : "—"} · not net profit: fixed costs excluded`
-                : `Needs ≥90% costed units (now ${formatPercent(liveView.costedCoverage, 0)})`
+                : `Needs ≥90% SKU-mapping coverage (now ${formatPercent(liveView.costedCoverage, 0)})`
             }
             info={{
-              title: "Contribution after ads (CM3, partial)",
-              formula: `Fullkit revenue − COGS (RM ${Math.round(liveView.cogs).toLocaleString()}) − ad spend (RM ${Math.round(liveView.spend).toLocaleString()}) − WHT 8% on ad spend (RM ${Math.round(liveView.wht).toLocaleString()}).`,
-              source: "Orders + effective-dated COGS + warehouse ad spend",
-              caveat: "Partial by declaration: delivery cost, returns, COD fees, and other marketing costs have no data structure yet and are NOT deducted. Cost structure is product-level only today. Renders only at ≥90% costed-unit coverage.",
+              title: "Contribution after ads (CM3)",
+              formula: `Fullkit revenue − COGS (RM ${Math.round(liveView.cogs).toLocaleString()}) − delivery (RM ${Math.round(liveView.delivery).toLocaleString()}) − returns (RM ${Math.round(liveView.returnsCost).toLocaleString()} · ${liveView.rtsParcels} RTS parcels) − COD fees (RM ${Math.round(liveView.codCost).toLocaleString()}) − ad spend (RM ${Math.round(liveView.spend).toLocaleString()}) − WHT (RM ${Math.round(liveView.wht).toLocaleString()}).`,
+              source: "Orders (zone by postcode, COD by payment method) + NinjaVan RTS parcels + warehouse ad spend + Finance cost rules",
+              caveat: "Launching email/SMS and other marketing costs have no data source yet. Fixed costs (payroll, rent, tools) excluded — this is contribution, not net profit. Pack sizes default to 1 until set, understating COGS.",
             }}
           />
         </section>

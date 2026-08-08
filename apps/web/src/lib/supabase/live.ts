@@ -828,6 +828,49 @@ export async function fetchCommerceRange(from: string, to: string): Promise<Live
   return (data ?? []) as LiveCommerceRangeRow[];
 }
 
+// ── Full variable-cost contribution model (CM2/CM3) ─────────────────────────
+
+export interface ContributionRules {
+  effective_from: string;
+  unit_cost_myr: number;
+  delivery_my_west: number;
+  delivery_my_east: number;
+  delivery_sg_myr: number;
+  cod_fee: number;
+  wht_rate: number;
+  note: string | null;
+}
+
+export interface ContributionRow {
+  brand_id: number | null;
+  market: string;
+  currency_code: string;
+  orders: number;
+  cod_orders: number;
+  east_orders: number;
+  revenue: number;
+  base_units: number;
+  unmapped_lines: number;
+  rts_parcels: number;
+  /** Cost lines are MYR (rules are MYR; the operator sheets convert SG the same way). */
+  cogs_myr: number;
+  delivery_myr: number;
+  returns_myr: number;
+  cod_myr: number;
+}
+
+export interface LiveContribution {
+  rules: ContributionRules | null;
+  rows: ContributionRow[];
+}
+
+/** Revenue + full variable-cost lines per brand × market for an inclusive MYT range (max 400 days). */
+export async function fetchContributionRange(from: string, to: string): Promise<LiveContribution> {
+  const { data, error } = await getSupabase().rpc("live_contribution_range", { p_from: from, p_to: to });
+  if (error) throw new Error(error.message);
+  return (data ?? { rules: null, rows: [] }) as LiveContribution;
+}
+
 // ── Growth ads (warehouse pipeline, ADR-0003) ───────────────────────────────
 
 export interface GrowthAdsRow {
