@@ -179,10 +179,11 @@ function MarketingInner() {
     const costedCoverage = mappedUnits + unmappedLines > 0 ? mappedUnits / (mappedUnits + unmappedLines) : 0;
     const whtRate = Number(contribution.rules?.wht_rate ?? 0.08);
     const wht = spend * whtRate;
-    // CM3 = revenue − COGS − delivery − returns − COD − ads − WHT.
-    // NOT net profit — fixed costs (payroll, rent, tools) are not modelled;
-    // launching email/SMS costs have no data source yet.
-    const cm3 = netRevenue - cogs - delivery - returnsCost - codCost - spend - wht;
+    // CM2 = revenue − COGS − fulfilment (delivery, return legs, COD fees);
+    // CM3 = CM2 − ads − WHT. NOT net profit — fixed costs (payroll, rent,
+    // tools) are not modelled; launching email/SMS costs have no source yet.
+    const cm2 = netRevenue - cogs - delivery - returnsCost - codCost;
+    const cm3 = cm2 - spend - wht;
     const byDate = new Map<string, { spend: number; revenue: number }>();
     for (const t of windowed) {
       const cur = byDate.get(t.date) ?? { spend: 0, revenue: 0 };
@@ -201,7 +202,7 @@ function MarketingInner() {
     );
     return {
       spend, purchases, purchaseValue, netRevenue, chart, liveAccounts, scopeSlug,
-      cogs, delivery, returnsCost, codCost, rtsParcels, wht, cm3, costedCoverage,
+      cogs, delivery, returnsCost, codCost, rtsParcels, wht, cm2, cm3, costedCoverage,
     };
   }, [growth, liveBrandId, liveMarkets, bounds.from, bounds.to, platformFilter]);
 
@@ -625,6 +626,26 @@ function MarketingInner() {
               title: "Fullkit revenue",
               formula: "Recognized order revenue (processing + completed) from the order tables, brand/market scoped, currency-converted to MYR — the same number the Command Centre trusts.",
               source: "Fullkit orders (live_scorecard)",
+            }}
+          />
+          <MetricCard
+            metricKey="contribution"
+            label="Contribution before ads (CM2)"
+            value={
+              liveView.costedCoverage >= 0.9 && liveView.netRevenue > 0
+                ? formatMoney(Math.round(liveView.cm2) * 100, "MYR", { compact: true })
+                : "—"
+            }
+            hint={
+              liveView.costedCoverage >= 0.9
+                ? `CM2 margin ${liveView.netRevenue > 0 ? formatPercent(liveView.cm2 / liveView.netRevenue, 0) : "—"} · before ad spend`
+                : `Needs ≥90% SKU-mapping coverage (now ${formatPercent(liveView.costedCoverage, 0)})`
+            }
+            info={{
+              title: "Contribution before ads (CM2)",
+              formula: `Fullkit revenue − COGS (RM ${Math.round(liveView.cogs).toLocaleString()}) − delivery (RM ${Math.round(liveView.delivery).toLocaleString()}) − returns (RM ${Math.round(liveView.returnsCost).toLocaleString()}) − COD fees (RM ${Math.round(liveView.codCost).toLocaleString()}). What each order earns after making and delivering it, before any marketing.`,
+              source: "Orders + Finance cost rules + NinjaVan RTS parcels",
+              caveat: "The gap between CM2 and CM3 is your total ad cost incl. WHT — CM2 is the ceiling ads can spend into before the P&L goes negative.",
             }}
           />
           <MetricCard
