@@ -82,6 +82,7 @@ const FIELD_DEFS: FieldDef[] = [
   { field: "suspect_orders", label: "Suspect-detail orders", type: "number" },
   { field: "cancelled_orders", label: "Cancelled / failed orders", type: "number" },
   { field: "distinct_names", label: "Distinct recipient names", type: "number" },
+  { field: "shared_address_count", label: "Profiles at same address", type: "number" },
   { field: "last_order_days", label: "Days since last order", type: "number" },
   { field: "first_order_days", label: "Days since first order", type: "number" },
 ];
@@ -98,6 +99,9 @@ const STARTERS: { key: string; name: string; conditions: SegmentCondition[] }[] 
   { key: "loyal", name: "Loyal", conditions: [{ field: "repeat", op: "eq", value: "loyal" }] },
   { key: "at_risk", name: "At risk", conditions: [{ field: "activity", op: "eq", value: "at_risk" }] },
   { key: "resellers", name: "Resellers", conditions: [{ field: "classification", op: "eq", value: "reseller" }] },
+  // Multiple identities converging on one normalized delivery address —
+  // reseller / drop-point candidates that phone-first identity can't merge.
+  { key: "shared_address", name: "Shared address", conditions: [{ field: "shared_address_count", op: "gte", value: 2 }] },
   { key: "joy_buyers", name: "Joy buyers", conditions: [{ field: "classification", op: "eq", value: "joy_buyer" }] },
   { key: "cod_heavy", name: "COD-heavy", conditions: [
     { field: "cod_share", op: "gte", value: 80 }, { field: "total_orders", op: "gte", value: 2 },
@@ -308,13 +312,27 @@ function CustomersInner() {
         enableSorting: false,
         cell: ({ row }) => {
           const c = row.original.classification;
+          const shared = Number(row.original.shared_address_count ?? 0);
+          const addrChip = shared >= 2
+            ? <Badge variant="outline" className="tnum text-[10px] text-muted-foreground">×{shared} addr</Badge>
+            : null;
           if (c === "reseller") {
-            return <Badge variant="outline" className="border-info/30 bg-info/10 text-[10px] text-info">reseller</Badge>;
+            return (
+              <span className="inline-flex items-center gap-1">
+                <Badge variant="outline" className="border-info/30 bg-info/10 text-[10px] text-info">reseller</Badge>
+                {addrChip}
+              </span>
+            );
           }
           if (c === "joy_buyer") {
-            return <Badge variant="outline" className="border-warning/30 bg-warning/10 text-[10px] text-warning">joy buyer</Badge>;
+            return (
+              <span className="inline-flex items-center gap-1">
+                <Badge variant="outline" className="border-warning/30 bg-warning/10 text-[10px] text-warning">joy buyer</Badge>
+                {addrChip}
+              </span>
+            );
           }
-          return <span className="text-[11px] text-muted-foreground">—</span>;
+          return addrChip ?? <span className="text-[11px] text-muted-foreground">—</span>;
         },
       },
       {
@@ -347,7 +365,7 @@ function CustomersInner() {
     <PageBody className="max-w-none">
       <PageHeader
         title="Customers"
-        description={`Live mirror · ${total.toLocaleString()} identities resolved from order history (phone-first, e-mail fallback) · contact details masked by default`}
+        description={`Live mirror · ${total.toLocaleString()} identities resolved from order history (phone → address → e-mail) · contact details masked by default`}
       />
 
       {/* segments — saved filter sets, shared workspace-wide */}
@@ -615,6 +633,8 @@ const EXPORT_COLUMNS: {
   { key: "first_order_at", label: "First order date", group: "commerce", value: (r) => r.first_order_at?.slice(0, 10) ?? "" },
   { key: "last_order_at", label: "Last order date", group: "commerce", value: (r) => r.last_order_at?.slice(0, 10) ?? "" },
   { key: "classification", label: "Classification", group: "commerce", value: (r) => r.classification },
+  { key: "shared_address_count", label: "Profiles at same address", group: "commerce", value: (r) =>
+    r.shared_address_count != null ? String(r.shared_address_count) : "" },
 ];
 
 const EXPORT_DEFAULTS = new Set([

@@ -473,6 +473,17 @@ as $$
   where o.id = p_order_id
 $$;
 
+-- ── Refresh cron: statement_timeout guard ───────────────────────────────────
+-- The rebuilt MV normalizes an address per order row; a full refresh can
+-- exceed the postgres role's 2-minute statement_timeout default. Same name
+-- replaces the existing job in place.
+
+select cron.schedule(
+  'customers-read-refresh',
+  '7,22,37,52 * * * *',
+  $$set statement_timeout = '10min'; refresh materialized view concurrently private.customers_read$$
+);
+
 -- ── Grants ──────────────────────────────────────────────────────────────────
 
 revoke all on function public.live_customers(integer, integer, text, bigint, text[], jsonb) from public, anon;

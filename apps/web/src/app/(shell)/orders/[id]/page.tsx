@@ -17,6 +17,7 @@ import {
   fetchLiveBrands,
   fetchNvShipmentForOrder,
   fetchOrderCorrection,
+  fetchOrderIdentityKey,
   fetchShipReadiness,
   fetchWooConnections,
   SHIP_ISSUE_LABELS,
@@ -85,13 +86,6 @@ function freshnessMeta(lastSuccessAt: string | null): StatusMeta {
   return fresh ? { label: "fresh", tone: "success" } : { label: "aging", tone: "warning" };
 }
 
-function identityKeyOf(o: LiveOrderRow): string | null {
-  const phone = (o.customer?.phone ?? "").replace(/[^0-9]/g, "");
-  if (phone) return phone;
-  const email = (o.customer?.email ?? "").toLowerCase();
-  return email || null;
-}
-
 interface WooRaw {
   payment_method_title?: string;
   shipping_total?: string;
@@ -107,6 +101,7 @@ function OrderDetailInner() {
   const [nv, setNv] = useState<{ shipment: LiveNvShipment; events: LiveNvEvent[] } | null>(null);
   const [readiness, setReadiness] = useState<ShipReadinessRow | null | "unknown">("unknown");
   const [correction, setCorrection] = useState<OrderCorrection | null>(null);
+  const [idKey, setIdKey] = useState<string | null>(null);
   const [fixOpen, setFixOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -131,6 +126,7 @@ function OrderDetailInner() {
         const ref = row.order_number ?? row.source_order_id;
         fetchNvShipmentForOrder(ref).then(setNv).catch(() => setNv(null));
         fetchOrderCorrection(row.id).then(setCorrection).catch(() => setCorrection(null));
+        fetchOrderIdentityKey(row.id).then(setIdKey).catch(() => setIdKey(null));
         if (["pending", "on-hold", "processing"].includes(row.source_status)) {
           // Membership check against the flagged list; absence = ship-ready.
           fetchShipReadiness(30)
@@ -172,7 +168,6 @@ function OrderDetailInner() {
   const nextAction = nextActionFor(order.source_status);
   const storeLabel = conn?.name.match(/\(([^)]+)\)/)?.[1] ?? "—";
   const market = conn?.config?.country_code ?? "—";
-  const idKey = identityKeyOf(order);
   const isException = order.source_status === "failed" || order.source_status === "on-hold";
   const shippingTotal = Number(raw.shipping_total ?? 0);
   const discountTotal = Number(raw.discount_total ?? 0);

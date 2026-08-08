@@ -137,9 +137,13 @@ function CustomerDetailInner() {
             <h1 className="text-lg font-semibold tracking-tight">{p.display_name ?? "Unknown customer"}</h1>
             <Badge variant="outline" className="capitalize">{lc}</Badge>
             <Badge variant="outline" className="uppercase">{tier}</Badge>
+            {Number(p.shared_address_count ?? 0) >= 2 && (
+              <Badge variant="outline" className="tnum text-muted-foreground">×{p.shared_address_count} at address</Badge>
+            )}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            {p.phone ? "phone-keyed" : "e-mail-keyed"} · {p.country ?? "—"} · first order {relative(p.first_order_at)} · owner:{" "}
+            {identityKey.startsWith("a:") ? "address-keyed" : identityKey.includes("@") ? "e-mail-keyed" : "phone-keyed"} ·{" "}
+            {p.country ?? "—"} · first order {relative(p.first_order_at)} · owner:{" "}
             unassigned
           </p>
         </div>
@@ -227,6 +231,49 @@ function CustomerDetailInner() {
               )}
             </CardContent>
           </Card>
+
+          {/* address siblings — the reseller / drop-point linking layer */}
+          {(detail.address_siblings ?? []).length > 0 && (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <CardTitle className="text-sm font-medium">Same address</CardTitle>
+                  <Badge variant="outline" className="tnum text-[10px]">
+                    ×{p.shared_address_count ?? (detail.address_siblings.length + 1)} profiles
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Other customer profiles whose latest order ships to this normalized address — a reseller /
+                  drop-point signal. Profiles are never merged.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <ul className="divide-y">
+                  {detail.address_siblings.map((s) => (
+                    <li key={s.identity_key} className="flex flex-wrap items-center gap-2 py-2 first:pt-0 last:pb-0">
+                      <Link
+                        href={`/customers/${encodeURIComponent(s.identity_key)}`}
+                        className="font-medium text-info underline-offset-2 hover:underline"
+                      >
+                        {s.display_name ?? s.identity_key}
+                      </Link>
+                      {s.classification === "reseller" && (
+                        <Badge variant="outline" className="border-info/30 bg-info/10 text-[10px] text-info">reseller</Badge>
+                      )}
+                      {s.classification === "joy_buyer" && (
+                        <Badge variant="outline" className="border-warning/30 bg-warning/10 text-[10px] text-warning">joy buyer</Badge>
+                      )}
+                      <span className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
+                        <span className="tnum">{s.total_orders} order{Number(s.total_orders) === 1 ? "" : "s"}</span>
+                        <span className="tnum">rev {Number(s.revenue_total).toFixed(0)}</span>
+                        <span className="tnum">last {fmtDate(s.last_order_at)}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
 
           {/* conversation & activity */}
           <Card>

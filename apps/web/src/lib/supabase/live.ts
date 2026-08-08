@@ -327,6 +327,10 @@ export interface LiveCustomerRow {
   revenue_by_currency: Record<string, number> | null;
   revenue_total: number;
   classification: "regular" | "reseller" | "joy_buyer";
+  /** 'a:'||md5(normalized latest address); null when no order passes the address quality gate. */
+  address_key: string | null;
+  /** Profiles (this one included) whose latest address normalizes to the same key. Null without an address_key. */
+  shared_address_count: number | null;
   total_count: number;
 }
 
@@ -430,9 +434,21 @@ export interface CustomerAddress {
   corrected: boolean;
 }
 
+/** Another profile whose latest order ships to the same normalized address. */
+export interface AddressSibling {
+  identity_key: string;
+  display_name: string | null;
+  total_orders: number;
+  revenue_total: number;
+  classification: "regular" | "reseller" | "joy_buyer";
+  last_order_at: string | null;
+}
+
 export interface LiveCustomerDetail {
   /** Latest order's delivery address, correction-overlaid. Null when no orders. */
   address: CustomerAddress | null;
+  /** Profiles sharing this customer's normalized address — reseller/drop-point signal, never merged. */
+  address_siblings: AddressSibling[];
   profile: Omit<LiveCustomerRow, "total_count"> & { workspace_id: number };
   orders: {
     id: number;
@@ -455,6 +471,13 @@ export async function fetchLiveCustomerDetail(identityKey: string): Promise<Live
   });
   if (error) throw new Error(error.message);
   return (data ?? null) as LiveCustomerDetail | null;
+}
+
+/** Server-side identity key for an order — the one place the resolution expression lives. */
+export async function fetchOrderIdentityKey(orderId: number): Promise<string | null> {
+  const { data, error } = await getSupabase().rpc("order_identity_key", { p_order_id: orderId });
+  if (error) throw new Error(error.message);
+  return (data as string | null) ?? null;
 }
 
 /* ---------- ship-readiness validation gate (read-only) ---------- */
