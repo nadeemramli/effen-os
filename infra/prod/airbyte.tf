@@ -188,12 +188,15 @@ resource "airbyte_connection" "meta" {
   prefix         = "meta_${each.key}_"
   status         = each.value.active ? "active" : "inactive"
 
-  # Staggered across six 30-min waves (19:00–21:30 UTC = 03:00–05:30 MYT):
-  # 30 connections firing simultaneously thundering-herd Meta's per-user
-  # rate limit and jobs die after hours of throttled crawling. dbt runs
-  # 20:30 UTC and mart-sync 22:00 UTC — late-wave deltas land next morning,
-  # which daily-grain analytics tolerates.
-  schedule = {
+  # BACKFILL MODE (var.meta_backfill_mode = true): schedules are manual and
+  # a sequential runner drives connections strictly one at a time — the
+  # concurrent fleet kept failing even in staggered waves. Once every
+  # account's history has landed, flip the variable to restore the
+  # staggered nightly waves (19:00–21:30 UTC = 03:00–05:30 MYT; dbt 20:30,
+  # mart-sync 22:00 — late-wave deltas land next morning).
+  schedule = var.meta_backfill_mode ? {
+    schedule_type = "manual"
+    } : {
     schedule_type = "cron"
     cron_expression = format(
       "0 %d %d * * ? UTC",

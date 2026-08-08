@@ -19,6 +19,12 @@ variable "budget_amount" {
   default     = 130 # ~USD 30
 }
 
+variable "meta_backfill_mode" {
+  description = "True while historical backfills run: Meta connections have no cron schedule; the sequential runner drives them one at a time. Flip to false to restore staggered nightly waves."
+  type        = bool
+  default     = true
+}
+
 variable "github_repo" {
   description = "GitHub repo allowed to authenticate via Workload Identity Federation"
   type        = string
