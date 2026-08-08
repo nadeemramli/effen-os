@@ -188,9 +188,18 @@ resource "airbyte_connection" "meta" {
   prefix         = "meta_${each.key}_"
   status         = each.value.active ? "active" : "inactive"
 
+  # Staggered across six 30-min waves (19:00–21:30 UTC = 03:00–05:30 MYT):
+  # 30 connections firing simultaneously thundering-herd Meta's per-user
+  # rate limit and jobs die after hours of throttled crawling. dbt runs
+  # 20:30 UTC and mart-sync 22:00 UTC — late-wave deltas land next morning,
+  # which daily-grain analytics tolerates.
   schedule = {
-    schedule_type   = "cron"
-    cron_expression = "0 0 19 * * ? UTC" # 03:00 MYT daily
+    schedule_type = "cron"
+    cron_expression = format(
+      "0 %d %d * * ? UTC",
+      (index(sort(keys(local.meta_sources)), each.key) % 2) * 30,
+      19 + floor(index(sort(keys(local.meta_sources)), each.key) % 6 / 2),
+    )
   }
 
   configurations = {
