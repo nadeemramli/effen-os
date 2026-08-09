@@ -22,7 +22,7 @@ variable "budget_amount" {
 variable "meta_backfill_mode" {
   description = "True while historical backfills run: Meta connections have no cron schedule; the sequential runner drives them one at a time. Flip to false to restore staggered nightly waves."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "github_repo" {
