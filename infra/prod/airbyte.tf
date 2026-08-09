@@ -116,9 +116,11 @@ resource "airbyte_connection" "supabase_to_bq" {
 # changes.
 #
 # Map keys are permanent — renaming one destroys/recreates its
-# connection and drops incremental sync state. active=false for
-# banned/disabled accounts (connection exists, schedule off — their
-# history arrives via the CSV-export path, ADR-0003).
+# connection and drops incremental sync state. All 40 accounts are
+# active, INCLUDING banned/disabled ones: the 2026-08-09 recovery test
+# proved Meta still serves banned-account insights via API (all 10
+# recovered), so nightly syncs keep their frozen history maintained and
+# the ADR-0003 CSV-export path is no longer needed for these accounts.
 locals {
   meta_sources = {
     "5_azman_lk"            = { id = "d5a9bd5e-51ee-4593-9caf-a231c90cea76", active = true }
@@ -126,13 +128,13 @@ locals {
     "acc_01"                = { id = "32bedcaf-f5db-47cb-9b73-ab6a68797bc3", active = true }
     "131_hazim"             = { id = "60de127e-4222-4977-a7fa-92df78ef2679", active = true }
     "147_hazim"             = { id = "924fe6c2-febc-4641-a73c-aaed22962192", active = true }
-    "1060_pali"             = { id = "dac79a72-c652-4a25-9aba-368c1333ca10", active = false }
+    "1060_pali"             = { id = "dac79a72-c652-4a25-9aba-368c1333ca10", active = true }
     "1061_hazim"            = { id = "f104c71c-3977-4033-ab31-6ad7185bebb3", active = true }
-    "1062_haiqal"           = { id = "f37f1d74-d89c-4da2-9c85-972f49dd9c19", active = false }
-    "1076_pali"             = { id = "0d56dd02-b0ab-4141-8513-e3fd9e43632f", active = false }
-    "1077_pali_erxsg"       = { id = "f49c4cf3-b448-41dd-b942-12a6b2fcbb53", active = false }
-    "1153_pali"             = { id = "13bbc884-228a-4516-a93b-55ae14551273", active = false }
-    "1154_pali"             = { id = "e0043d82-cddb-4745-8377-a72845e8e420", active = false }
+    "1062_haiqal"           = { id = "f37f1d74-d89c-4da2-9c85-972f49dd9c19", active = true }
+    "1076_pali"             = { id = "0d56dd02-b0ab-4141-8513-e3fd9e43632f", active = true }
+    "1077_pali_erxsg"       = { id = "f49c4cf3-b448-41dd-b942-12a6b2fcbb53", active = true }
+    "1153_pali"             = { id = "13bbc884-228a-4516-a93b-55ae14551273", active = true }
+    "1154_pali"             = { id = "e0043d82-cddb-4745-8377-a72845e8e420", active = true }
     "1300_pali"             = { id = "9aca613f-c68d-4698-a891-31e3c5a737dd", active = true }
     "1301_pali_erxsg"       = { id = "01162331-b419-4857-8bbb-6044e240507c", active = true }
     "1302_hazim"            = { id = "a40f419c-0224-48fc-bfa8-3b5c15760a2f", active = true }
@@ -145,7 +147,7 @@ locals {
     "1604_amar_glycoxil_sg" = { id = "ce4b714c-5250-4626-8799-b0d7d982d47c", active = true }
     "1605_amar_glycoxil_my" = { id = "926fb43e-fc5e-4dc6-af3a-db852449aa2c", active = true }
     "1606"                  = { id = "a3a90979-a039-426b-a641-aba541f2b481", active = true }
-    "2115_pali_test"        = { id = "dec94379-7cdf-48ed-a4a4-aa88ff718668", active = false }
+    "2115_pali_test"        = { id = "dec94379-7cdf-48ed-a4a4-aa88ff718668", active = true }
     "2131_hazim"            = { id = "0b9b4c73-bb31-474b-9e02-75a4a7ca1abb", active = true }
     "adipocyde_my_1"        = { id = "f26171a5-1be5-45c9-b3dd-e239907ed4c0", active = true }
     "adipocyde_my_2"        = { id = "4049ab75-cb90-44b3-a427-369b480e3f9d", active = true }
@@ -157,9 +159,9 @@ locals {
     "metaponin_my"          = { id = "4db7de49-f67f-485a-a911-abff8a379d9f", active = true }
     "synovil_my_1"          = { id = "1280ad4d-cc57-47bd-933f-4583ac30d21a", active = true }
     "synovil_my_2"          = { id = "cabd4958-56c8-4a1b-8e8c-c21d6a0e0480", active = true }
-    "synovil_sg_1"          = { id = "95a8de3d-494a-4b40-aac4-8f68dd4a1623", active = false }
-    "synovil_sg_2"          = { id = "2e9202f4-1316-408c-9194-8bb556c0970c", active = false }
-    "synovil_sg_3"          = { id = "715a3cd9-95ae-454d-b0e2-7924db1e838f", active = false }
+    "synovil_sg_1"          = { id = "95a8de3d-494a-4b40-aac4-8f68dd4a1623", active = true }
+    "synovil_sg_2"          = { id = "2e9202f4-1316-408c-9194-8bb556c0970c", active = true }
+    "synovil_sg_3"          = { id = "715a3cd9-95ae-454d-b0e2-7924db1e838f", active = true }
     "synovil_sg_amir"       = { id = "5d784f12-651e-4f72-a55e-66cf054be62f", active = true }
   }
 }
