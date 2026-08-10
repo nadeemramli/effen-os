@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MetricCard } from "@/components/metrics/metric-card";
+import { MetricCard, MetricCardSkeleton } from "@/components/metrics/metric-card";
 import { useAppStore } from "@/lib/store/provider";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import {
@@ -103,9 +103,13 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
   if (state.kind === "no-session" || state.kind === "error") return <>{fallback}</>;
   if (state.kind === "checking") {
     return (
-      <section aria-label="Commercial scorecard" className="grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7">
+      <section
+        aria-label="Commercial scorecard"
+        role="status"
+        className="grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7"
+      >
         {Array.from({ length: 7 }, (_, i) => (
-          <div key={i} className="h-24 animate-pulse rounded-lg border bg-muted/30" />
+          <MetricCardSkeleton key={i} />
         ))}
       </section>
     );
