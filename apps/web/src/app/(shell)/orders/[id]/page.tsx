@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Loader2, ShieldAlert } from "lucide-react";
+import { ArrowLeft, Loader2, ShieldAlert, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,13 +15,19 @@ import { EmptyState } from "@/components/states";
 import { LiveGuard } from "@/components/auth/live-guard";
 import { getSupabase } from "@/lib/supabase/client";
 import {
+  fetchAiSuggestion,
+  fetchFulfilmentForOrder,
   fetchLiveBrands,
   fetchNvShipmentForOrder,
   fetchOrderCorrection,
   fetchOrderIdentityKey,
   fetchShipReadiness,
   fetchWooConnections,
+  FULFILMENT_STAGE_LABELS,
+  holdFulfilmentOrder,
+  releaseFulfilmentOrder,
   SHIP_ISSUE_LABELS,
+  type AiSuggestion,
   type LiveBrand,
   type LiveNvEvent,
   type LiveNvShipment,
@@ -80,6 +87,13 @@ function relative(iso: string | null): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
+function holdCountdown(eligibleAt: string): string {
+  const min = Math.round((new Date(eligibleAt).getTime() - Date.now()) / 60_000);
+  return min > 0
+    ? `submittable in ${Math.max(min, 1)}m — hold now to stop it`
+    : "past hold window — next shadow run logs it";
+}
+
 /** Connection freshness against the 15-minute SLA (3× = aging). */
 function freshnessMeta(lastSuccessAt: string | null): StatusMeta {
   const fresh = lastSuccessAt !== null && Date.now() - new Date(lastSuccessAt).getTime() < 45 * 60_000;
@@ -90,7 +104,8 @@ interface WooRaw {
   payment_method_title?: string;
   shipping_total?: string;
   discount_total?: string;
-  billing?: { address_1?: string; first_name?: string; last_name?: string };
+  billing?: { address_1?: string; first_name?: string; last_name?: string; state?: string };
+  shipping?: { address_1?: string; first_name?: string; last_name?: string; state?: string; postcode?: string; city?: string };
 }
 
 function OrderDetailInner() {
@@ -101,6 +116,9 @@ function OrderDetailInner() {
   const [nv, setNv] = useState<{ shipment: LiveNvShipment; events: LiveNvEvent[] } | null>(null);
   const [readiness, setReadiness] = useState<ShipReadinessRow | null | "unknown">("unknown");
   const [correction, setCorrection] = useState<OrderCorrection | null>(null);
+  const [pipeline, setPipeline] = useState<Awaited<ReturnType<typeof fetchFulfilmentForOrder>>>(null);
+  const [aiSuggestion, setAiSuggestion] = useState<AiSuggestion | null>(null);
+  const [holding, setHolding] = useState(false);
   const [idKey, setIdKey] = useState<string | null>(null);
   const [fixOpen, setFixOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -118,7 +136,6 @@ function OrderDetailInner() {
         fetchWooConnections(),
       ]);
       const row = (data ?? null) as LiveOrderRow | null;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setOrder(row);
       setBrands(b);
       setConnections(c);
@@ -126,6 +143,8 @@ function OrderDetailInner() {
         const ref = row.order_number ?? row.source_order_id;
         fetchNvShipmentForOrder(ref).then(setNv).catch(() => setNv(null));
         fetchOrderCorrection(row.id).then(setCorrection).catch(() => setCorrection(null));
+        fetchFulfilmentForOrder(row.id).then(setPipeline).catch(() => setPipeline(null));
+        fetchAiSuggestion(row.id).then(setAiSuggestion).catch(() => setAiSuggestion(null));
         fetchOrderIdentityKey(row.id).then(setIdKey).catch(() => setIdKey(null));
         if (["pending", "on-hold", "processing"].includes(row.source_status)) {
           // Membership check against the flagged list; absence = ship-ready.
@@ -180,6 +199,12 @@ function OrderDetailInner() {
     })),
     { at: order.updated_at_source ?? null, actor: storeLabel, label: `Source status → ${order.source_status}` },
     { at: order.synced_at, actor: "woo-sync connector", label: "Mirrored into Fullkit", tone: "text-muted-foreground" },
+    ...(pipeline?.held_at
+      ? [{ at: pipeline.held_at, actor: pipeline.held_by ?? "operator", label: "Held before courier submission" }]
+      : []),
+    ...(pipeline?.released_at
+      ? [{ at: pipeline.released_at, actor: pipeline.released_by ?? "operator", label: "Hold released — re-entered the gate" }]
+      : []),
   ];
 
   return (
@@ -349,6 +374,31 @@ function OrderDetailInner() {
                     </p>
                   </div>
                 )}
+                {pipeline && (
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-muted-foreground">Pipeline (pilot)</span>
+                    <span className="flex flex-col items-end gap-0.5">
+                      {tonePill({
+                        label: FULFILMENT_STAGE_LABELS[pipeline.stage] ?? pipeline.stage,
+                        tone:
+                          pipeline.stage === "exception" ? "warning"
+                          : pipeline.stage === "held" ? "warning"
+                          : pipeline.stage === "cancelled" || pipeline.stage === "failed" ? "neutral"
+                          : "info",
+                      })}
+                      {pipeline.stage === "gate_passed" && pipeline.eligible_at && (
+                        <span className="tnum text-[11px] text-muted-foreground">
+                          {holdCountdown(pipeline.eligible_at)}
+                        </span>
+                      )}
+                      {pipeline.stage === "held" && (
+                        <span className="text-[11px] text-muted-foreground">
+                          held by {pipeline.held_by ?? "—"}{pipeline.hold_reason ? ` · ${pipeline.hold_reason}` : ""}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between"><span className="text-muted-foreground">Fulfilment</span><span>{order.source_status === "completed" ? "Fulfilled" : order.source_status === "processing" ? "To fulfil (Fighter operates)" : "—"}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Courier</span><span>{nv ? "Ninja Van" : "—"}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Tracking</span><span className="tnum">{nv?.shipment.tracking_id ?? "—"}</span></div>
@@ -420,6 +470,33 @@ function OrderDetailInner() {
                   {correction ? "Edit shipping correction" : "Fix shipping details"}
                 </Button>
               )}
+              {pipeline && ["intake", "exception", "gate_passed", "held"].includes(pipeline.stage) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-start"
+                  disabled={holding}
+                  onClick={async () => {
+                    setHolding(true);
+                    try {
+                      if (pipeline.stage === "held") {
+                        await releaseFulfilmentOrder(order.id);
+                        toast.success("Hold released", { description: "Re-graded on the next gate tick with a fresh hold window." });
+                      } else {
+                        await holdFulfilmentOrder(order.id);
+                        toast.success("Order held", { description: "Frozen before courier submission until explicitly released." });
+                      }
+                      setReloadKey((k) => k + 1);
+                    } catch (e) {
+                      toast.error("Could not update the hold", { description: (e as Error).message });
+                    } finally {
+                      setHolding(false);
+                    }
+                  }}
+                >
+                  {holding ? "Working…" : pipeline.stage === "held" ? "Release hold" : "Hold order"}
+                </Button>
+              )}
               {["Assign owner", "Resend confirmation", "Add note"].map((a) => (
                 <Button key={a} variant="outline" size="sm" className="w-full justify-start" disabled>
                   {a}
@@ -435,6 +512,36 @@ function OrderDetailInner() {
               </p>
             </CardContent>
           </Card>
+
+          {aiSuggestion && ["pending", "on-hold", "processing"].includes(order.source_status) && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-1.5 text-sm font-medium">
+                  <Sparkles className="size-4 text-info" aria-hidden />
+                  AI address suggestion
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-xs">
+                <ul className="space-y-1">
+                  {Object.entries(aiSuggestion.payload.fields).map(([k, v]) => (
+                    <li key={k} className="flex justify-between gap-2">
+                      <span className="capitalize text-muted-foreground">{k.replace("_1", "").replace("_", " ")}</span>
+                      <span className="text-right">{v}</span>
+                    </li>
+                  ))}
+                </ul>
+                {aiSuggestion.payload.rationale && (
+                  <p className="text-muted-foreground">{aiSuggestion.payload.rationale}</p>
+                )}
+                <p className="tnum text-[11px] text-muted-foreground">
+                  confidence {Math.round((aiSuggestion.payload.confidence ?? 0) * 100)}% · {aiSuggestion.model} · suggest-only, never auto-applied
+                </p>
+                <Button size="sm" variant="outline" className="w-full" onClick={() => setFixOpen(true)}>
+                  Review in fix dialog
+                </Button>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader><CardTitle className="text-sm font-medium">Scope</CardTitle></CardHeader>
@@ -460,10 +567,12 @@ function OrderDetailInner() {
         current={{
           name: correction?.corrected.name ?? order.customer?.name ?? "",
           phone: correction?.corrected.phone ?? order.customer?.phone ?? "",
-          address_1: correction?.corrected.address_1 ?? raw.billing?.address_1 ?? "",
-          postcode: correction?.corrected.postcode ?? order.customer?.postcode ?? "",
-          city: correction?.corrected.city ?? order.customer?.city ?? "",
+          address_1: correction?.corrected.address_1 ?? raw.shipping?.address_1 ?? raw.billing?.address_1 ?? "",
+          postcode: correction?.corrected.postcode ?? raw.shipping?.postcode ?? order.customer?.postcode ?? "",
+          city: correction?.corrected.city ?? raw.shipping?.city ?? order.customer?.city ?? "",
+          state: correction?.corrected.state ?? raw.shipping?.state ?? raw.billing?.state ?? "",
         }}
+        aiSuggestion={aiSuggestion}
         suggestions={readiness !== "unknown" && readiness ? readiness.suggestions : undefined}
         issues={
           readiness !== "unknown" && readiness

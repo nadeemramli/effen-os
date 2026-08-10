@@ -490,6 +490,8 @@ export interface ShipReadinessRow {
   placed_at: string | null;
   source_status: string;
   issues: string[];
+  /** Yellow lane: bounce predictors that don't block the gate (AI-suggest triggers). */
+  warnings: string[];
   suggestions: Record<string, string>;
   correction_status: "staged" | "applied" | null;
   total_checked: number;
@@ -553,8 +555,198 @@ export const SHIP_ISSUE_LABELS: Record<string, string> = {
   phone_invalid: "phone invalid",
   postcode_format: "postcode format",
   address_incomplete: "address incomplete",
+  address_too_short: "address too short",
+  postcode_state_mismatch: "postcode ≠ state",
   city_missing: "city missing",
+  // yellow warnings
+  address_no_street_keyword: "no street name",
+  address_no_unit: "no unit/house no.",
 };
+
+/* ---------- fulfilment pipeline (ADR-0006, Synovil MY pilot) ---------- */
+
+export interface FulfilmentPipelineRow {
+  order_read_id: number;
+  integration_id: number;
+  brand_id: number | null;
+  order_number: string;
+  customer_name: string | null;
+  city: string | null;
+  postcode: string | null;
+  total: number;
+  currency_code: string;
+  stage: string;
+  gate_issues: string[];
+  gate_warnings: string[];
+  eligible_at: string | null;
+  held_by: string | null;
+  held_at: string | null;
+  hold_reason: string | null;
+  tracking_id: string | null;
+  placed_at: string | null;
+  updated_at: string;
+}
+
+export const FULFILMENT_STAGE_LABELS: Record<string, string> = {
+  intake: "intake",
+  exception: "exception",
+  gate_passed: "gate passed",
+  held: "held",
+  ready_to_submit: "ready to submit",
+  shadow_logged: "shadow logged",
+  submitted: "submitted",
+  in_transit: "in transit",
+  delivered: "delivered",
+  failed: "failed",
+  cancelled: "cancelled",
+};
+
+/** Pipeline rows for fulfilment-enabled (pilot) stores; held rows always included. */
+export async function fetchFulfilmentPipeline(days = 14): Promise<FulfilmentPipelineRow[]> {
+  const { data, error } = await getSupabase().rpc("live_fulfilment_pipeline", { p_days: days });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as FulfilmentPipelineRow[];
+}
+
+/** Freezes an order before courier submission. Frozen until explicitly released. */
+export async function holdFulfilmentOrder(orderId: number, reason?: string): Promise<void> {
+  const { error } = await getSupabase().rpc("hold_fulfilment_order", {
+    p_order_read_id: orderId,
+    p_reason: reason ?? null,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Releases a held order back into the gate — re-graded with a fresh hold window. */
+export async function releaseFulfilmentOrder(orderId: number): Promise<void> {
+  const { error } = await getSupabase().rpc("release_fulfilment_order", {
+    p_order_read_id: orderId,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** One order's pipeline row (null when the store isn't fulfilment-enabled). */
+export async function fetchFulfilmentForOrder(orderId: number): Promise<{
+  stage: string;
+  gate_issues: string[];
+  gate_warnings: string[];
+  eligible_at: string | null;
+  held_by: string | null;
+  held_at: string | null;
+  hold_reason: string | null;
+  released_by: string | null;
+  released_at: string | null;
+  tracking_id: string | null;
+} | null> {
+  const { data, error } = await getSupabase()
+    .from("order_fulfilment")
+    .select("stage, gate_issues, gate_warnings, eligible_at, held_by, held_at, hold_reason, released_by, released_at, tracking_id")
+    .eq("order_read_id", orderId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ?? null;
+}
+
+/* ---------- AI address assist (suggest-only, ADR-0006) ---------- */
+
+export interface AiSuggestion {
+  id: number;
+  order_read_id: number;
+  payload: {
+    fields: Partial<Record<"name" | "phone" | "address_1" | "postcode" | "city" | "state", string>>;
+    confidence: number;
+    rationale: string;
+  };
+  model: string;
+  status: "pending" | "shown" | "accepted" | "rejected" | "superseded" | "failed";
+  created_at: string;
+}
+
+/** Latest open AI proposal for an order, if any. */
+export async function fetchAiSuggestion(orderId: number): Promise<AiSuggestion | null> {
+  const { data, error } = await getSupabase()
+    .from("ai_suggestions")
+    .select("id, order_read_id, payload, model, status, created_at")
+    .eq("order_read_id", orderId)
+    .in("status", ["pending", "shown"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data ?? null) as AiSuggestion | null;
+}
+
+/** Order ids with an open AI proposal — powers the "AI fix suggested" hints. */
+export async function fetchAiSuggestedOrderIds(): Promise<Set<number>> {
+  const { data, error } = await getSupabase()
+    .from("ai_suggestions")
+    .select("order_read_id")
+    .in("status", ["pending", "shown"]);
+  if (error) throw new Error(error.message);
+  return new Set((data ?? []).map((r) => r.order_read_id as number));
+}
+
+/** Records the admin's (possibly edited) fix AND closes the suggestion, atomically. */
+export async function acceptAiSuggestion(
+  suggestionId: number,
+  corrected: Record<string, string>,
+  note?: string,
+): Promise<void> {
+  const { error } = await getSupabase().rpc("accept_ai_suggestion", {
+    p_suggestion_id: suggestionId,
+    p_corrected: corrected,
+    p_note: note ?? null,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function rejectAiSuggestion(suggestionId: number, reason?: string): Promise<void> {
+  const { error } = await getSupabase().rpc("reject_ai_suggestion", {
+    p_suggestion_id: suggestionId,
+    p_reason: reason ?? null,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export interface LiveAiConnection {
+  id: number;
+  status: string;
+  last_success_at: string | null;
+  config: { model?: string; batch_cap?: number; daily_cap?: number; ai_scope?: string } | null;
+  notes: string | null;
+}
+
+export async function fetchAiConnection(): Promise<LiveAiConnection | null> {
+  const { data, error } = await getSupabase()
+    .from("integration_connections")
+    .select("id, status, last_success_at, config, notes")
+    .eq("provider", "OpenRouter")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data ?? null) as LiveAiConnection | null;
+}
+
+/** Stores the OpenRouter API key in Vault (hq_admin only, audited). */
+export async function setAiConnection(apiKey: string): Promise<void> {
+  const { error } = await getSupabase().rpc("set_ai_connection", { p_api_key: apiKey });
+  if (error) throw new Error(error.message);
+}
+
+/* ---------- NV shadow submission report (ADR-0006 exit-gate evidence) ---------- */
+
+export interface ShadowReport {
+  totals: Record<string, number>;
+  coverage_pct: number | null;
+  open: number;
+  daily: { day: string; shadow: number; matched: number; mismatched: number }[];
+  recent_exceptions: { order_number: string; status: string; compare: Record<string, unknown> | null; created_at: string }[];
+}
+
+export async function fetchShadowReport(days = 14): Promise<ShadowReport> {
+  const { data, error } = await getSupabase().rpc("live_shadow_report", { p_days: days });
+  if (error) throw new Error(error.message);
+  return (data ?? { totals: {}, coverage_pct: null, open: 0, daily: [], recent_exceptions: [] }) as ShadowReport;
+}
 
 /* ---------- Ninja Van shipment read-side ---------- */
 

@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ClipboardCheck, Loader2, PackageCheck, ShieldAlert, Truck } from "lucide-react";
+import { ClipboardCheck, GitBranch, Loader2, PackageCheck, ShieldAlert, Sparkles, Truck } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,19 +12,27 @@ import { tonePill } from "@/components/status/status-pill";
 import { EmptyState } from "@/components/states";
 import { LiveGuard } from "@/components/auth/live-guard";
 import {
+  fetchAiSuggestedOrderIds,
+  fetchFulfilmentPipeline,
   fetchLiveBrands,
   fetchLiveOrdersPage,
   fetchNvNetwork,
+  fetchShadowReport,
   fetchShipReadiness,
   fetchWooConnections,
+  FULFILMENT_STAGE_LABELS,
+  releaseFulfilmentOrder,
   SHIP_ISSUE_LABELS,
+  type FulfilmentPipelineRow,
   type LiveBrand,
   type LiveNvShipment,
   type LiveOrderRow,
   type LiveWooConnection,
+  type ShadowReport,
   type ShipReadinessRow,
 } from "@/lib/supabase/live";
 import { useAppStore } from "@/lib/store/provider";
+import { cn } from "@/lib/utils";
 
 /* Original pick → pack → handover layout, live-fed:
  * - To pick        = Woo `processing` orders (paid, awaiting fulfilment)
@@ -43,6 +52,14 @@ function relative(iso: string | null): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+function cnStage(stage: string, count: number): string {
+  return cn(
+    "tnum mt-0.5 text-base font-semibold",
+    stage === "exception" && count > 0 && "text-warning",
+    stage === "held" && count > 0 && "text-info",
+  );
+}
+
 function skuSummary(o: LiveOrderRow): string {
   const first = o.items?.[0];
   if (!first) return "—";
@@ -60,6 +77,10 @@ function FulfilmentInner() {
   const [readiness, setReadiness] = useState<{ rows: ShipReadinessRow[]; checked: number; flagged: number; corrected: number }>({ rows: [], checked: 0, flagged: 0, corrected: 0 });
   const [brands, setBrands] = useState<LiveBrand[]>([]);
   const [connections, setConnections] = useState<LiveWooConnection[]>([]);
+  const [pipeline, setPipeline] = useState<FulfilmentPipelineRow[]>([]);
+  const [shadow, setShadow] = useState<ShadowReport | null>(null);
+  const [aiOrderIds, setAiOrderIds] = useState<Set<number>>(new Set());
+  const [releasing, setReleasing] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   const reload = useCallback(async () => {
@@ -72,18 +93,24 @@ function FulfilmentInner() {
           ? conns.filter((c) => liveMarkets.includes(c.config?.country_code ?? "")).map((c) => c.id)
           : null;
       const base = { page: 1, pageSize: 8, brandId: liveBrandId, integrationId: null, integrationIn, currency: null, sinceHours: null, search: "" };
-      const [pick, hold, nv, b, ready] = await Promise.all([
+      const [pick, hold, nv, b, ready, pipe, shadowReport, aiIds] = await Promise.all([
         fetchLiveOrdersPage({ ...base, status: "processing" }),
         fetchLiveOrdersPage({ ...base, status: null, statusIn: ["on-hold", "failed"] }),
         fetchNvNetwork(),
         fetchLiveBrands(),
         fetchShipReadiness(14),
+        fetchFulfilmentPipeline(14).catch(() => [] as FulfilmentPipelineRow[]),
+        fetchShadowReport(14).catch(() => null),
+        fetchAiSuggestedOrderIds().catch(() => new Set<number>()),
       ]);
       setToPick(pick);
       setHolds(hold);
       setNetwork(nv);
       setBrands(b);
       setReadiness(ready);
+      setPipeline(pipe);
+      setShadow(shadowReport);
+      setAiOrderIds(aiIds);
     } finally {
       setLoading(false);
     }
@@ -206,6 +233,99 @@ function FulfilmentInner() {
         )}
       </p>
 
+      {pipeline.length > 0 && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <GitBranch className="size-4 text-info" aria-hidden />
+              Fulfilment pipeline — Synovil MY pilot (shadow mode)
+            </CardTitle>
+            <Badge variant="outline" className="border-info/30 bg-info/10 text-[10px] text-info">
+              writes nothing external
+            </Badge>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              {(["intake", "exception", "held", "gate_passed", "shadow_logged"] as const).map((stage) => {
+                const count = pipeline.filter((r) => r.stage === stage).length;
+                return (
+                  <div key={stage} className="rounded-md border px-3 py-2">
+                    <div className="text-[11px] capitalize text-muted-foreground">{FULFILMENT_STAGE_LABELS[stage]}</div>
+                    <div className={cnStage(stage, count)}>{count}</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {pipeline.some((r) => r.stage === "held") && (
+              <div>
+                <div className="mb-1.5 text-xs font-medium text-muted-foreground">Held orders — frozen until released</div>
+                <ul className="divide-y">
+                  {pipeline.filter((r) => r.stage === "held").map((r) => (
+                    <li key={r.order_read_id} className="flex items-center gap-3 py-2 first:pt-0 last:pb-0">
+                      <Link href={`/orders/${r.order_read_id}`} className="text-sm font-medium text-info underline-offset-2 hover:underline">
+                        #{r.order_number}
+                      </Link>
+                      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                        {r.held_by ?? "—"}{r.hold_reason ? ` · ${r.hold_reason}` : ""}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        disabled={releasing === r.order_read_id}
+                        onClick={async () => {
+                          setReleasing(r.order_read_id);
+                          try {
+                            await releaseFulfilmentOrder(r.order_read_id);
+                            toast.success(`#${r.order_number} released`, { description: "Re-graded on the next gate tick." });
+                            await reload();
+                          } catch (e) {
+                            toast.error("Release failed", { description: (e as Error).message });
+                          } finally {
+                            setReleasing(null);
+                          }
+                        }}
+                      >
+                        Release
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {shadow && (
+              <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <span className="font-medium text-foreground">Shadow evidence (14d)</span>
+                  <span className="tnum">
+                    coverage {shadow.coverage_pct !== null ? `${shadow.coverage_pct}%` : "—"} · target ≥99% for 2 weeks
+                  </span>
+                  {Object.entries(shadow.totals).map(([k, v]) => (
+                    <span key={k} className="tnum text-muted-foreground">{k} {v}</span>
+                  ))}
+                </div>
+                {shadow.recent_exceptions.length > 0 && (
+                  <ul className="mt-1.5 space-y-0.5 text-muted-foreground">
+                    {shadow.recent_exceptions.slice(0, 5).map((x, i) => (
+                      <li key={i} className="tnum">
+                        #{x.order_number} — {x.status}
+                        {x.compare?.woo_status ? ` (source ${String(x.compare.woo_status)})` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  Shadow payloads scored against Woo order outcomes (Fighter shipping flips the source status) —
+                  per-field payload diffs arrive with the NV order-details API. Nothing is sent to Ninja Van.
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
         {QUEUES.map((q) => (
           <Card key={q.title}>
@@ -290,6 +410,12 @@ function FulfilmentInner() {
                   {r.issues.length === 0
                     ? tonePill({ label: "corrected · staged", tone: "info" })
                     : tonePill({ label: "not ship-ready", tone: "warning" })}
+                  {aiOrderIds.has(r.id) && (
+                    <span className="flex shrink-0 items-center gap-1 text-[11px] text-info">
+                      <Sparkles className="size-3" aria-hidden />
+                      AI fix suggested
+                    </span>
+                  )}
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                     {r.issues.length === 0
                       ? "Fixed in Fullkit — reaches the courier when write propagation is enabled"
