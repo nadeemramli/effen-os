@@ -168,6 +168,29 @@
   .tnum {
     font-variant-numeric: tabular-nums;
   }
+
+  /* Skeleton pulse with a 150ms entry delay: fast loads resolve before the
+     skeleton ever becomes visible, so there is no flash on warm caches. */
+  .animate-skeleton {
+    animation:
+      skeleton-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) 0.15s infinite,
+      skeleton-in 0.2s ease-out 0.15s backwards;
+  }
+}
+
+@keyframes skeleton-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes skeleton-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

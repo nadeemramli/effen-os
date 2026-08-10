@@ -2,6 +2,7 @@
 
 import { Info } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Popover,
   PopoverContent,
@@ -130,6 +131,20 @@ export function MetricCard({ metricKey, label, value, delta, hint, className, in
         )}
       </div>
       {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+    </Card>
+  );
+}
+
+/** Same geometry as MetricCard so the swap to real data causes no layout shift. */
+export function MetricCardSkeleton({ className, hint = true }: { className?: string; hint?: boolean }) {
+  return (
+    <Card className={cn("gap-1.5 px-4 py-3", className)} role="status" aria-label="Loading metric">
+      <div className="flex items-center justify-between gap-2">
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="size-3.5 rounded-full" />
+      </div>
+      <Skeleton className="h-8 w-28" />
+      {hint && <Skeleton className="h-4 w-36" />}
     </Card>
   );
 }

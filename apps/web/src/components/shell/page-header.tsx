@@ -4,7 +4,8 @@ import { cn } from "@/lib/utils";
 
 interface PageHeaderProps {
   title: string;
-  description?: string;
+  /** Plain text or rich content — e.g. sentences with InlineCount placeholders. */
+  description?: React.ReactNode;
   children?: React.ReactNode;
   className?: string;
 }

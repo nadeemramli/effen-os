@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
-import { AlertTriangle, Inbox, Lock } from "lucide-react";
+import { AlertTriangle, Inbox, Loader2, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { MetricCardSkeleton } from "@/components/metrics/metric-card";
 import { PERMISSION_EXPLAINERS, ROLE_LABELS, type PermissionKey } from "@/lib/rbac/matrix";
 import { useSession } from "@/hooks/use-session";
 import { cn } from "@/lib/utils";
@@ -75,18 +76,37 @@ export function PermissionDenied({ permission }: { permission: PermissionKey }) 
 
 /* ---------- skeletons ---------- */
 
-export function SkeletonTable({ rows = 8, cols = 6 }: { rows?: number; cols?: number }) {
+const CELL_WIDTHS = ["w-3/4", "w-1/2", "w-full"];
+
+/** Matches DataTable geometry: h-9 header row, dense body rows, framed border. */
+export function SkeletonTable({
+  rows = 8,
+  cols = 6,
+  framed = true,
+  className,
+}: {
+  rows?: number;
+  cols?: number;
+  framed?: boolean;
+  className?: string;
+}) {
   return (
-    <div className="space-y-2" role="status" aria-label="Loading">
-      <div className="flex gap-3">
+    <div
+      role="status"
+      aria-label="Loading"
+      className={cn(framed && "overflow-hidden rounded-lg border", className)}
+    >
+      <div className="flex h-9 items-center gap-3 border-b px-3">
         {Array.from({ length: cols }).map((_, i) => (
-          <Skeleton key={i} className="h-4 flex-1" />
+          <Skeleton key={i} className="h-3.5 flex-1" />
         ))}
       </div>
       {Array.from({ length: rows }).map((_, r) => (
-        <div key={r} className="flex gap-3">
+        <div key={r} className={cn("flex h-[33px] items-center gap-3 px-3", r > 0 && "border-t")}>
           {Array.from({ length: cols }).map((_, c) => (
-            <Skeleton key={c} className="h-8 flex-1" />
+            <div key={c} className="flex-1">
+              <Skeleton className={cn("h-4", CELL_WIDTHS[(r + c) % CELL_WIDTHS.length])} />
+            </div>
           ))}
         </div>
       ))}
@@ -94,12 +114,59 @@ export function SkeletonTable({ rows = 8, cols = 6 }: { rows?: number; cols?: nu
   );
 }
 
-export function SkeletonCards({ count = 4 }: { count?: number }) {
+export function SkeletonCards({
+  count = 4,
+  className,
+  hint = true,
+}: {
+  count?: number;
+  className?: string;
+  hint?: boolean;
+}) {
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" role="status" aria-label="Loading">
+    <div
+      className={cn("grid grid-cols-2 gap-3 lg:grid-cols-4", className)}
+      role="status"
+      aria-label="Loading"
+    >
       {Array.from({ length: count }).map((_, i) => (
-        <Skeleton key={i} className="h-24 rounded-lg" />
+        <MetricCardSkeleton key={i} hint={hint} />
       ))}
     </div>
+  );
+}
+
+/* ---------- inline loading ---------- */
+
+/**
+ * A number interpolated into a sentence or button label. Pass null while the
+ * value is still loading and a small inline bar renders instead — never "0".
+ */
+export function InlineCount({
+  value,
+  width = "w-10",
+}: {
+  value: number | string | null;
+  width?: string;
+}) {
+  if (value !== null) return <>{typeof value === "number" ? value.toLocaleString() : value}</>;
+  return (
+    <Skeleton
+      className={cn("inline-block h-3.5 translate-y-[2px] rounded", width)}
+      aria-label="loading"
+    />
+  );
+}
+
+/** Refetch-in-progress affordance shown next to data that stays visible. */
+export function RefreshChip({ label = "Updating…", className }: { label?: string; className?: string }) {
+  return (
+    <span
+      role="status"
+      className={cn("inline-flex items-center gap-1.5 text-xs text-muted-foreground", className)}
+    >
+      <Loader2 className="size-3 animate-spin" aria-hidden />
+      {label}
+    </span>
   );
 }
