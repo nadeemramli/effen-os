@@ -31,7 +31,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
+import { ErrorState, SkeletonTable } from "@/components/states";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
 import { LiveGuard } from "@/components/auth/live-guard";
 import {
@@ -85,6 +87,9 @@ type Data = {
   connections: LiveWooConnection[];
   legalEntities: { id: number; legal_name: string }[];
 };
+
+const PAGE_DESCRIPTION =
+  "Two catalogs, side by side: the canonical plane (SKUs, prices, effective-dated COGS — owned here) and each store's published Woo plane, reconciled through confirmed mappings.";
 
 function CatalogInner() {
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
@@ -171,15 +176,50 @@ function CatalogInner() {
   if (error) {
     return (
       <PageBody>
-        <PageHeader title="Catalog" description="Live catalog." />
-        <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
+        <PageHeader title="Catalog" description={PAGE_DESCRIPTION} />
+        <ErrorState
+          title="Could not load the catalog"
+          description={error}
+          retry={() => {
+            setError(null);
+            reload();
+          }}
+        />
       </PageBody>
     );
   }
   if (!data) {
+    // Page frame renders immediately; each section loads in place.
     return (
-      <PageBody className="flex min-h-96 items-center justify-center">
-        <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading catalog" />
+      <PageBody className="max-w-none">
+        <PageHeader title="Catalog" description={PAGE_DESCRIPTION} />
+        <div role="status" aria-label="Loading catalog" className="space-y-5">
+          <section className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="rounded-lg border bg-card px-3 py-2.5">
+                <Skeleton className="h-5 w-28" />
+                <Skeleton className="mt-1.5 h-3.5 w-36" />
+                <Skeleton className="mt-1 h-3.5 w-24" />
+              </div>
+            ))}
+          </section>
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="rounded-lg border bg-card px-3 py-2.5">
+                <Skeleton className="h-3.5 w-24" />
+                <Skeleton className="mt-1.5 h-6 w-16" />
+              </div>
+            ))}
+          </section>
+          <Card>
+            <CardHeader>
+              <Skeleton className="h-5 w-48" />
+            </CardHeader>
+            <CardContent>
+              <SkeletonTable rows={8} cols={6} framed={false} />
+            </CardContent>
+          </Card>
+        </div>
       </PageBody>
     );
   }
@@ -191,10 +231,7 @@ function CatalogInner() {
 
   return (
     <PageBody className="max-w-none">
-      <PageHeader
-        title="Catalog"
-        description="Two catalogs, side by side: the canonical plane (SKUs, prices, effective-dated COGS — owned here) and each store's published Woo plane, reconciled through confirmed mappings."
-      />
+      <PageHeader title="Catalog" description={PAGE_DESCRIPTION} />
 
       {/* Brand strip — compact context, full detail in the sheet. */}
       <section aria-label="Brands" className="grid grid-cols-2 gap-2 lg:grid-cols-4">

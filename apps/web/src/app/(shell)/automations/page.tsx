@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { Loader2, Zap } from "lucide-react";
+import { Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
+import { ErrorState, SkeletonTable } from "@/components/states";
 import { LiveGuard } from "@/components/auth/live-guard";
+import { useLiveQuery } from "@/hooks/use-live-query";
 import { fetchAutomationHealth, type AutomationHealth } from "@/lib/supabase/live";
 import { cn } from "@/lib/utils";
 
@@ -400,28 +402,49 @@ const STATUS_TONE: Record<Status, string> = {
   planned: "text-muted-foreground",
 };
 
-function AutomationsInner() {
-  const [health, setHealth] = useState<AutomationHealth | null>(null);
-  const [error, setError] = useState<string | null>(null);
+const PAGE_DESCRIPTION =
+  "Every rule that runs without a human — defined in code or in-app — grouped by the department that owns the outcome. No invisible automation: each entry names its trigger, its guardrail, and its live health.";
 
-  useEffect(() => {
-    fetchAutomationHealth()
-      .then(setHealth)
-      .catch((e: Error) => setError(e.message));
-  }, []);
+function AutomationsInner() {
+  const {
+    data: health,
+    error,
+    reload,
+  } = useLiveQuery<AutomationHealth>(() => fetchAutomationHealth(), []);
 
   if (error) {
     return (
       <PageBody>
-        <PageHeader title="Automations" description="Automation registry." />
-        <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
+        <PageHeader title="Automations" description={PAGE_DESCRIPTION} />
+        <ErrorState title="Could not load automation health" description={error} retry={() => void reload()} />
       </PageBody>
     );
   }
   if (!health) {
+    // Page frame renders immediately; sections load in place.
     return (
-      <PageBody className="flex min-h-96 items-center justify-center">
-        <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading automations" />
+      <PageBody className="max-w-6xl">
+        <PageHeader title="Automations" description={PAGE_DESCRIPTION} />
+        <div role="status" aria-label="Loading automations" className="space-y-5">
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="rounded-lg border bg-card px-3 py-2.5">
+                <Skeleton className="h-3.5 w-24" />
+                <Skeleton className="mt-1.5 h-6 w-12" />
+              </div>
+            ))}
+          </section>
+          {Array.from({ length: 2 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader>
+                <Skeleton className="h-5 w-32" />
+              </CardHeader>
+              <CardContent>
+                <SkeletonTable rows={3} cols={5} framed={false} />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </PageBody>
     );
   }
@@ -433,10 +456,7 @@ function AutomationsInner() {
 
   return (
     <PageBody className="max-w-6xl">
-      <PageHeader
-        title="Automations"
-        description="Every rule that runs without a human — defined in code or in-app — grouped by the department that owns the outcome. No invisible automation: each entry names its trigger, its guardrail, and its live health."
-      />
+      <PageHeader title="Automations" description={PAGE_DESCRIPTION} />
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
