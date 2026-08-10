@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Loader2, ShieldAlert, Sparkles } from "lucide-react";
+import { ArrowLeft, ShieldAlert, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -175,9 +175,52 @@ function OrderDetailInner() {
   const idKey = idKeyState === "loading" ? null : idKeyState;
 
   if (order === "loading") {
+    // Header line + card grid mirror the loaded layout so content lands
+    // without a jump.
     return (
-      <PageBody className="flex min-h-96 items-center justify-center">
-        <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading order" />
+      <PageBody className="max-w-none">
+        <div role="status" aria-label="Loading order" className="space-y-5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Button asChild variant="ghost" size="icon" className="size-7" aria-label="Back to orders">
+                <Link href="/orders"><ArrowLeft className="size-4" /></Link>
+              </Button>
+              <Skeleton className="h-6 w-32" />
+              <Skeleton className="h-5 w-24 rounded-full" />
+            </div>
+            <Skeleton className="mt-2 h-4 w-80" />
+            <Skeleton className="mt-1.5 h-4 w-64" />
+          </div>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_290px]">
+            <div className="min-w-0 space-y-4">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Card key={i}>
+                  <CardHeader>
+                    <Skeleton className="h-5 w-28" />
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <Skeleton className="h-4 w-3/4" />
+                    <Skeleton className="h-4 w-1/2" />
+                    <Skeleton className="h-4 w-2/3" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            <div className="space-y-4">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <Card key={i}>
+                  <CardHeader>
+                    <Skeleton className="h-5 w-24" />
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-2/3" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </div>
       </PageBody>
     );
   }

@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Loader2, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PageBody } from "@/components/shell/page-header";
 import { tonePill } from "@/components/status/status-pill";
-import { EmptyState } from "@/components/states";
+import { EmptyState, ErrorState } from "@/components/states";
 import { LiveGuard } from "@/components/auth/live-guard";
 import {
   fetchLiveBrands,
@@ -74,16 +75,22 @@ function CustomerDetailInner() {
 
   const [detail, setDetail] = useState<LiveCustomerDetail | null | "loading">("loading");
   const [brands, setBrands] = useState<LiveBrand[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     // Fetch-on-mount; every setState happens after an await.
     void (async () => {
-      const [d, b] = await Promise.all([fetchLiveCustomerDetail(identityKey), fetchLiveBrands()]);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setDetail(d);
-      setBrands(b);
+      try {
+        const [d, b] = await Promise.all([fetchLiveCustomerDetail(identityKey), fetchLiveBrands()]);
+        setDetail(d);
+        setBrands(b);
+      } catch (e) {
+        // Without this the page would sit on the skeleton forever.
+        setError((e as Error).message);
+      }
     })();
-  }, [identityKey]);
+  }, [identityKey, reloadKey]);
 
   const purchasedSkus = useMemo(() => {
     if (detail === "loading" || !detail) return [] as [string, { qty: number; last: string | null; name: string | null }][];
@@ -100,10 +107,60 @@ function CustomerDetailInner() {
     return [...map.entries()].sort(([, a], [, b]) => b.qty - a.qty);
   }, [detail]);
 
-  if (detail === "loading") {
+  if (error) {
     return (
-      <PageBody className="flex min-h-96 items-center justify-center">
-        <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading customer" />
+      <PageBody className="max-w-3xl">
+        <ErrorState
+          title="Could not load this customer"
+          description={error}
+          retry={() => {
+            setError(null);
+            setDetail("loading");
+            setReloadKey((k) => k + 1);
+          }}
+        />
+      </PageBody>
+    );
+  }
+
+  if (detail === "loading") {
+    // Header line + value strip + card grid mirror the loaded layout.
+    return (
+      <PageBody className="max-w-none">
+        <div role="status" aria-label="Loading customer" className="space-y-5">
+          <div>
+            <div className="flex items-center gap-2">
+              <Button asChild variant="ghost" size="icon" className="size-7" aria-label="Back to customers">
+                <Link href="/customers"><ArrowLeft className="size-4" /></Link>
+              </Button>
+              <Skeleton className="h-6 w-44" />
+              <Skeleton className="h-5 w-16 rounded-full" />
+            </div>
+            <Skeleton className="mt-2 h-4 w-72" />
+          </div>
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-6">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="rounded-lg border bg-card px-3 py-2.5">
+                <Skeleton className="h-3.5 w-20" />
+                <Skeleton className="mt-1.5 h-5 w-16" />
+              </div>
+            ))}
+          </section>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Card key={i}>
+                <CardHeader>
+                  <Skeleton className="h-5 w-28" />
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-4 w-1/2" />
+                  <Skeleton className="h-4 w-2/3" />
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
       </PageBody>
     );
   }

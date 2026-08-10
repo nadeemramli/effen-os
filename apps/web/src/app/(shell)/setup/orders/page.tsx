@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Database, Loader2 } from "lucide-react";
+import { ArrowLeft, Database } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Select,
@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/sheet";
 import { LiveGuard } from "@/components/auth/live-guard";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
-import { EmptyState } from "@/components/states";
+import { EmptyState, SkeletonTable } from "@/components/states";
 import {
   fetchLiveBrands,
   fetchLiveOrders,
@@ -86,7 +86,7 @@ function LiveOrdersInner() {
       </PageHeader>
 
       {loading ? (
-        <div className="flex justify-center py-12"><Loader2 className="size-5 animate-spin text-muted-foreground" aria-label="Loading" /></div>
+        <SkeletonTable rows={8} cols={8} />
       ) : orders.length === 0 ? (
         <EmptyState
           icon={Database}

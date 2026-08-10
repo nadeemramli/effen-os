@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -203,7 +204,30 @@ function BrandsInner() {
       )}
 
       {loading ? (
-        <div className="flex justify-center py-12"><Loader2 className="size-5 animate-spin text-muted-foreground" aria-label="Loading" /></div>
+        <div
+          className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]"
+          role="status"
+          aria-label="Loading brands"
+        >
+          <div className="space-y-1.5">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="rounded-lg border px-3 py-2.5">
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="mt-1.5 h-3.5 w-36" />
+              </div>
+            ))}
+          </div>
+          <Card>
+            <CardHeader>
+              <Skeleton className="h-5 w-40" />
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-4 w-2/3" />
+            </CardContent>
+          </Card>
+        </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
           {/* brand list */}
