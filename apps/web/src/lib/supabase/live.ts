@@ -1095,6 +1095,8 @@ export interface GrowthAdsRow {
   spend: number;
   purchases: number | null;
   purchase_value: number | null;
+  impressions: number | null;
+  clicks: number | null;
   accounts: number;
   banned_spend: number | null;
 }
@@ -1107,6 +1109,8 @@ export interface GrowthTrendPoint {
   spend: number;
   purchases: number | null;
   purchase_value: number | null;
+  impressions: number | null;
+  clicks: number | null;
 }
 
 export interface GrowthAccount {

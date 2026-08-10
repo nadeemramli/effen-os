@@ -160,6 +160,8 @@ function MarketingInner() {
     const spend = windowed.reduce((s, t) => s + Number(t.spend), 0);
     const purchases = windowed.reduce((s, t) => s + Number(t.purchases ?? 0), 0);
     const purchaseValue = windowed.reduce((s, t) => s + Number(t.purchase_value ?? 0), 0);
+    const impressions = windowed.reduce((s, t) => s + Number(t.impressions ?? 0), 0);
+    const clicks = windowed.reduce((s, t) => s + Number(t.clicks ?? 0), 0);
     const scopeBrandIds = scopeSlug === null
       ? null
       : new Set(liveBrands.filter((b) => b.slug === scopeSlug).map((b) => b.id));
@@ -169,6 +171,8 @@ function MarketingInner() {
       .filter((r) => scopeBrandIds === null || (r.brand_id !== null && scopeBrandIds.has(r.brand_id)))
       .filter((r) => liveMarkets.length === 0 || liveMarkets.includes(r.market));
     const netRevenue = scoped.reduce((s, r) => s + toMYR(Number(r.revenue), r.currency_code), 0);
+    const fkOrders = scoped.reduce((s, r) => s + Number(r.orders), 0);
+    const codOrders = scoped.reduce((s, r) => s + Number(r.cod_orders), 0);
     const cogs = scoped.reduce((s, r) => s + Number(r.cogs_myr), 0);
     const delivery = scoped.reduce((s, r) => s + Number(r.delivery_myr), 0);
     const returnsCost = scoped.reduce((s, r) => s + Number(r.returns_myr), 0);
@@ -202,6 +206,7 @@ function MarketingInner() {
     );
     return {
       spend, purchases, purchaseValue, netRevenue, chart, liveAccounts, scopeSlug,
+      impressions, clicks, fkOrders, codOrders,
       cogs, delivery, returnsCost, codCost, rtsParcels, wht, cm2, cm3, costedCoverage,
     };
   }, [growth, liveBrandId, liveMarkets, bounds.from, bounds.to, platformFilter]);
@@ -626,6 +631,55 @@ function MarketingInner() {
               title: "Fullkit revenue",
               formula: "Recognized order revenue (processing + completed) from the order tables, brand/market scoped, currency-converted to MYR — the same number the Command Centre trusts.",
               source: "Fullkit orders (live_scorecard)",
+            }}
+          />
+          <MetricCard
+            metricKey="orders"
+            label="Fullkit orders"
+            value={liveView.fkOrders.toLocaleString()}
+            hint={`${liveView.fkOrders > 0 ? formatPercent(liveView.codOrders / liveView.fkOrders, 0) : "—"} COD`}
+            info={{
+              title: "Fullkit orders",
+              formula: "Recognized orders (processing + completed) in the selected scope and window — the same population as Fullkit revenue. Hint shows the COD share.",
+              source: "Order tables (live_contribution_range)",
+            }}
+          />
+          <MetricCard
+            metricKey="orders"
+            label="AOV"
+            value={liveView.fkOrders > 0 ? `RM ${(liveView.netRevenue / liveView.fkOrders).toFixed(0)}` : "—"}
+            hint="Fullkit revenue ÷ orders"
+            info={{
+              title: "Average order value",
+              formula: "Fullkit recognized revenue (MYR-converted) ÷ recognized orders, same scope and window.",
+              source: "Order tables",
+              caveat: "Cross-currency scopes convert SGD at the app's display rate — pick one market for a pure-currency AOV.",
+            }}
+          />
+          <MetricCard
+            metricKey="ad_spend"
+            label="Cost per order"
+            value={liveView.fkOrders > 0 && liveView.spend > 0 ? `RM ${(liveView.spend / liveView.fkOrders).toFixed(0)}` : "—"}
+            hint="Ad spend ÷ Fullkit orders — blended"
+            info={{
+              title: "Cost per order (blended)",
+              formula: "Warehouse ad spend ÷ Fullkit recognized orders. Blended across all orders — not per-campaign attribution; compare with CPP (platform-claimed cost per purchase).",
+              source: "Warehouse spend ÷ order tables",
+            }}
+          />
+          <MetricCard
+            metricKey="ad_spend"
+            label="Media: CPM"
+            value={liveView.impressions > 0 ? `RM ${((liveView.spend / liveView.impressions) * 1000).toFixed(2)}` : "—"}
+            hint={
+              liveView.impressions > 0
+                ? `CTR ${formatPercent(liveView.clicks / liveView.impressions, 2)} · CPC RM ${liveView.clicks > 0 ? (liveView.spend / liveView.clicks).toFixed(2) : "—"}`
+                : "No impressions in window"
+            }
+            info={{
+              title: "Media efficiency",
+              formula: "CPM = spend ÷ impressions × 1000; CTR = clicks ÷ impressions; CPC = spend ÷ clicks — all platform-reported, over the scope and window.",
+              source: "Warehouse pipeline (platform-reported delivery metrics)",
             }}
           />
           <MetricCard

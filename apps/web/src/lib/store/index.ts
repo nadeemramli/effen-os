@@ -40,13 +40,20 @@ export function rangeDays(dateRange: DateRangeKey, custom: CustomDateRange | nul
   }
 }
 
-/** Inclusive ISO date bounds for the selected range (real calendar, not the demo clock). */
+/** ISO date (YYYY-MM-DD) in Asia/Kuala_Lumpur — the business day everywhere. */
+function mytDate(msOffset = 0): string {
+  return new Date(Date.now() + msOffset).toLocaleDateString("en-CA", {
+    timeZone: "Asia/Kuala_Lumpur",
+  });
+}
+
+/** Inclusive ISO date bounds for the selected range, in MYT business days
+ * (real calendar, not the demo clock). UTC here would skew every window by
+ * a day between midnight and 08:00 MYT. */
 export function rangeBounds(dateRange: DateRangeKey, custom: CustomDateRange | null): CustomDateRange {
-  const today = new Date().toISOString().slice(0, 10);
   if (dateRange === "custom" && custom) return custom;
   const days = rangeDays(dateRange, custom);
-  const from = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
-  return { from, to: today };
+  return { from: mytDate(-(days - 1) * 86_400_000), to: mytDate() };
 }
 
 /** Human label for the selected range. */
