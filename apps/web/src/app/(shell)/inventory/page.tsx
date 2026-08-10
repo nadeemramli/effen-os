@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { Boxes, Loader2 } from "lucide-react";
+import { useMemo } from "react";
+import { Boxes } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
+import { ErrorState, SkeletonTable } from "@/components/states";
 import { LiveGuard } from "@/components/auth/live-guard";
+import { useLiveQuery } from "@/hooks/use-live-query";
 import {
   fetchLiveBrands,
   fetchLiveMerchandise,
@@ -27,29 +30,24 @@ type Data = {
   production: Map<number, LiveProductionItem>;
 };
 
+const PAGE_DESCRIPTION =
+  "Sales velocity per canonical SKU from the live order mirror. Physical stock stays with Fighter until the inventory spine lands.";
+
 function InventoryInner() {
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
-  const [data, setData] = useState<Data | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const [products, brands, queue, prod] = await Promise.all([
-          fetchLiveMerchandise(),
-          fetchLiveBrands(),
-          fetchSkuMappingQueue(),
-          fetchLiveProduction().catch(() => null),
-        ]);
-        const production = new Map<number, LiveProductionItem>();
-        for (const item of prod?.items ?? []) {
-          if (item.product_id !== null) production.set(item.product_id, item);
-        }
-        setData({ products, brands, unmappedCount: queue.length, production });
-      } catch (e) {
-        setError((e as Error).message);
-      }
-    })();
+  const { data, error, reload } = useLiveQuery<Data>(async () => {
+    const [products, brands, queue, prod] = await Promise.all([
+      fetchLiveMerchandise(),
+      fetchLiveBrands(),
+      fetchSkuMappingQueue(),
+      fetchLiveProduction().catch(() => null),
+    ]);
+    const production = new Map<number, LiveProductionItem>();
+    for (const item of prod?.items ?? []) {
+      if (item.product_id !== null) production.set(item.product_id, item);
+    }
+    return { products, brands, unmappedCount: queue.length, production };
   }, []);
 
   const rows = useMemo(() => {
@@ -71,15 +69,36 @@ function InventoryInner() {
   if (error) {
     return (
       <PageBody>
-        <PageHeader title="Inventory" description="Live SKU velocity." />
-        <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
+        <PageHeader title="Inventory" description={PAGE_DESCRIPTION} />
+        <ErrorState title="Could not load inventory" description={error} retry={() => void reload()} />
       </PageBody>
     );
   }
   if (!data) {
+    // Page frame renders immediately; each section loads in place.
     return (
-      <PageBody className="flex min-h-96 items-center justify-center">
-        <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading inventory" />
+      <PageBody className="max-w-none">
+        <PageHeader title="Inventory" description={PAGE_DESCRIPTION} />
+        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4" role="status" aria-label="Loading inventory">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="rounded-lg border bg-card px-3 py-2.5">
+              <Skeleton className="h-3.5 w-24" />
+              <Skeleton className="mt-1.5 h-6 w-20" />
+            </div>
+          ))}
+        </section>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <Boxes className="size-4 text-muted-foreground" aria-hidden />
+              Velocity by SKU
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">Velocity = units sold in the trailing 14 days ÷ 14.</p>
+          </CardHeader>
+          <CardContent>
+            <SkeletonTable rows={8} cols={8} framed={false} />
+          </CardContent>
+        </Card>
       </PageBody>
     );
   }
@@ -90,10 +109,7 @@ function InventoryInner() {
 
   return (
     <PageBody className="max-w-none">
-      <PageHeader
-        title="Inventory"
-        description="Sales velocity per canonical SKU from the live order mirror. Physical stock stays with Fighter until the inventory spine lands."
-      />
+      <PageHeader title="Inventory" description={PAGE_DESCRIPTION} />
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[

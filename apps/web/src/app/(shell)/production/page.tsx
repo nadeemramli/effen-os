@@ -17,7 +17,9 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
+import { ErrorState } from "@/components/states";
 import { LiveGuard } from "@/components/auth/live-guard";
 import {
   cancelProductionInbound,
@@ -57,6 +59,9 @@ const STAGE_LABEL: Record<string, string> = {
 
 const FREIGHT_LABEL: Record<string, string> = { sea: "Sea", air: "Air", sea_air: "Sea + Air" };
 
+const PAGE_DESCRIPTION =
+  "Raw material → premix → in-progress → in-stock, per product in base units. Backlog is computed from unfulfilled orders; every count change is audited and ledger-explained.";
+
 function rel(iso: string): string {
   const min = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
   if (min < 1) return "just now";
@@ -93,15 +98,51 @@ function ProductionInner() {
   if (error) {
     return (
       <PageBody>
-        <PageHeader title="Production" description="Factory pipeline." />
-        <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>
+        <PageHeader title="Production" description={PAGE_DESCRIPTION} />
+        <ErrorState
+          title="Could not load production"
+          description={error}
+          retry={() => {
+            setError(null);
+            reload();
+          }}
+        />
       </PageBody>
     );
   }
   if (!data) {
+    // Page frame renders immediately; sections load in place.
     return (
-      <PageBody className="flex min-h-96 items-center justify-center">
-        <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading production" />
+      <PageBody className="max-w-6xl">
+        <PageHeader title="Production" description={PAGE_DESCRIPTION} />
+        <div role="status" aria-label="Loading production" className="space-y-5">
+          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="rounded-lg border bg-card px-3 py-2.5">
+                <Skeleton className="h-3.5 w-24" />
+                <Skeleton className="mt-1.5 h-6 w-20" />
+              </div>
+            ))}
+          </section>
+          {Array.from({ length: 2 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                <Skeleton className="h-5 w-44" />
+                <Skeleton className="h-8 w-28" />
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {Array.from({ length: 4 }).map((_, j) => (
+                    <div key={j} className="rounded-md border px-3 py-2">
+                      <Skeleton className="h-3.5 w-20" />
+                      <Skeleton className="mt-1.5 h-6 w-14" />
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </PageBody>
     );
   }
@@ -122,10 +163,7 @@ function ProductionInner() {
 
   return (
     <PageBody className="max-w-6xl">
-      <PageHeader
-        title="Production"
-        description="Raw material → premix → in-progress → in-stock, per product in base units. Backlog is computed from unfulfilled orders; every count change is audited and ledger-explained."
-      >
+      <PageHeader title="Production" description={PAGE_DESCRIPTION}>
         <Button size="sm" className="gap-1.5" onClick={() => setItemDialog("new")}>
           <Plus className="size-3.5" aria-hidden /> New product line
         </Button>
