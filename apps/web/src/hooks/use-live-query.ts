@@ -29,27 +29,36 @@ export function useLiveQuery<T>(
   const [inFlight, setInFlight] = useState(true);
   // Monotonic token: a stale response (scope changed mid-flight) is ignored.
   const token = useRef(0);
-  const hasData = data !== null;
+  // Latest fetcher via ref so `deps` alone decides reruns — callers pass
+  // inline closures. This effect is declared first, so it runs before the
+  // fetch effect below on every commit.
+  const fetcherRef = useRef(fetcher);
+  useEffect(() => {
+    fetcherRef.current = fetcher;
+  });
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const run = useCallback(async () => {
     const ticket = ++token.current;
     setInFlight(true);
     setError(null);
     try {
-      const result = await fetcher();
+      const result = await fetcherRef.current();
       if (token.current === ticket) setData(result);
     } catch (e) {
       if (token.current === ticket) setError((e as Error).message);
     } finally {
       if (token.current === ticket) setInFlight(false);
     }
-  }, deps);
+  }, []);
 
   useEffect(() => {
+    // Same fetch-on-mount idiom as the pages this hook replaces.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void run();
-  }, [run]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run, ...deps]);
 
+  const hasData = data !== null;
   return {
     data,
     error,

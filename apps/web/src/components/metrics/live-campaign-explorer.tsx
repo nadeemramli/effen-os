@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SkeletonTable } from "@/components/states";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
 import { useAppStore } from "@/lib/store/provider";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
@@ -50,7 +51,12 @@ export function LiveCampaignExplorer({
   /** Selected platform filter from the page; empty = all platforms. */
   platforms: string[];
 }) {
-  const [data, setData] = useState<{ campaigns: GrowthCampaigns; brands: LiveBrand[] } | null>(null);
+  // "checking" renders a skeleton (a live session may be about to supply
+  // data); "absent" is the resolved no-live-data case where the demo
+  // fallback is honest.
+  const [state, setState] = useState<
+    "checking" | "absent" | { campaigns: GrowthCampaigns; brands: LiveBrand[] }
+  >(() => (isSupabaseConfigured() ? "checking" : "absent"));
   const [limit, setLimit] = useState<number>(10);
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
@@ -59,25 +65,41 @@ export function LiveCampaignExplorer({
     if (!isSupabaseConfigured()) return;
     void (async () => {
       const { data: session } = await getSupabase().auth.getSession();
-      if (!session.session) return;
+      if (!session.session) {
+        setState("absent");
+        return;
+      }
       try {
         const [res, brands] = await Promise.all([
           getSupabase().rpc("live_growth_campaigns", { p_days: 30, p_limit: 200 }),
           fetchLiveBrands(),
         ]);
         const campaigns = res.data as GrowthCampaigns | null;
-        if (!res.error && campaigns && campaigns.rows.length > 0) {
-          setData({ campaigns, brands });
-        }
+        setState(
+          !res.error && campaigns && campaigns.rows.length > 0 ? { campaigns, brands } : "absent",
+        );
       } catch (e) {
         // Fallback (demo explorer) renders; never a blank card.
         console.warn("growth campaigns fetch failed", e);
+        setState("absent");
       }
     })();
   }, []);
 
-  if (!data) return <>{fallback}</>;
-  const { campaigns, brands } = data;
+  if (state === "checking") {
+    return (
+      <Card role="status" aria-label="Loading campaign explorer">
+        <CardHeader>
+          <CardTitle className="text-sm font-medium">Campaign explorer</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <SkeletonTable rows={6} cols={7} framed={false} />
+        </CardContent>
+      </Card>
+    );
+  }
+  if (state === "absent") return <>{fallback}</>;
+  const { campaigns, brands } = state;
 
   const scopeSlug = liveBrandId === null ? null : (brands.find((b) => b.id === liveBrandId)?.slug ?? null);
   const scoped = campaigns.rows.filter(

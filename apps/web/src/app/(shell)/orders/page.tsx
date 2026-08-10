@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { parseAsInteger, parseAsString, useQueryState } from "nuqs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ChevronLeft, ChevronRight, Loader2, Plus, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DataTable } from "@/components/tables/data-table";
+import { InlineCount, RefreshChip } from "@/components/states";
 import { tonePill } from "@/components/status/status-pill";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { LiveGuard } from "@/components/auth/live-guard";
@@ -125,7 +126,8 @@ function OrdersInner() {
   const [page, setPage] = useQueryState("page", parseAsInteger.withDefault(1));
 
   const [brands, setBrands] = useState<LiveBrand[]>([]);
-  const [connections, setConnections] = useState<LiveWooConnection[]>([]);
+  // null until the reference fetch resolves — the header count must not read "0 stores".
+  const [connections, setConnections] = useState<LiveWooConnection[] | null>(null);
   const [rows, setRows] = useState<LiveOrderRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -134,13 +136,12 @@ function OrdersInner() {
 
   const activeView = SAVED_VIEWS.find((v) => v.key === view) ?? SAVED_VIEWS[0]!;
   const brandById = useMemo(() => new Map(brands.map((b) => [b.id, b])), [brands]);
-  const connById = useMemo(() => new Map(connections.map((c) => [c.id, c])), [connections]);
+  const connById = useMemo(() => new Map((connections ?? []).map((c) => [c.id, c])), [connections]);
 
   useEffect(() => {
     // Reference data once on mount; every setState happens after an await.
     void (async () => {
       const [b, c] = await Promise.all([fetchLiveBrands(), fetchWooConnections()]);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setBrands(b.filter((x) => x.status === "active"));
       setConnections(c);
     })();
@@ -159,7 +160,7 @@ function OrdersInner() {
         integrationId: store === "any" ? null : Number(store),
         integrationIn:
           liveMarkets.length > 0
-            ? connections.filter((c) => liveMarkets.includes(c.config?.country_code ?? "")).map((c) => c.id)
+            ? (connections ?? []).filter((c) => liveMarkets.includes(c.config?.country_code ?? "")).map((c) => c.id)
             : null,
         status: status === "any" ? null : status,
         statusIn: status === "any" ? activeView.statusIn : null,
@@ -304,7 +305,13 @@ function OrdersInner() {
     <PageBody className="max-w-none">
       <PageHeader
         title="Orders"
-        description={`Live mirror · ${total.toLocaleString()} orders in view across ${connections.length} connected stores · source stays authoritative · states derived per dimension, never merged`}
+        description={
+          <>
+            Live mirror · <InlineCount value={loading && rows.length === 0 ? null : total} /> orders in
+            view across <InlineCount value={connections ? connections.length : null} width="w-5" />{" "}
+            connected stores · source stays authoritative · states derived per dimension, never merged
+          </>
+        }
       >
         <Button asChild size="sm" className="gap-1.5">
           <Link href="/orders/new">
@@ -359,7 +366,7 @@ function OrdersInner() {
           <SelectTrigger className="h-8 w-44 text-xs" aria-label="Store"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="any">Any store</SelectItem>
-            {connections
+            {(connections ?? [])
               .filter((c) => liveMarkets.length === 0 || liveMarkets.includes(c.config?.country_code ?? ""))
               .map((c) => (
                 <SelectItem key={c.id} value={String(c.id)}>{storeLabel(c)}</SelectItem>
@@ -407,29 +414,30 @@ function OrdersInner() {
         )}
       </div>
 
-      {loading && rows.length === 0 ? (
-        <div className="flex justify-center py-12"><Loader2 className="size-5 animate-spin text-muted-foreground" aria-label="Loading orders" /></div>
-      ) : error ? (
+      {error ? (
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           Could not load the live orders mirror: {error}
         </div>
       ) : (
         <>
-          <div className={cn(loading && "pointer-events-none opacity-60")}>
-            <DataTable
-              columns={columns}
-              data={rows}
-              pageSize={PAGE_SIZE}
-              rowKey={(o) => String(o.id)}
-              onRowClick={(o) => router.push(`/orders/${o.id}`)}
-              emptyTitle="No orders match"
-              emptyDescription="Adjust the saved view or filters. New orders appear within the 15-minute sync window; use Setup → Store connections → Sync now to pull immediately."
-            />
-          </div>
+          <DataTable
+            columns={columns}
+            data={rows}
+            loading={loading}
+            pageSize={PAGE_SIZE}
+            rowKey={(o) => String(o.id)}
+            onRowClick={(o) => router.push(`/orders/${o.id}`)}
+            emptyTitle="No orders match"
+            emptyDescription="Adjust the saved view or filters. New orders appear within the 15-minute sync window; use Setup → Store connections → Sync now to pull immediately."
+          />
           {/* server-side pagination */}
           <div className="flex items-center justify-between px-1">
-            <span className="tnum text-xs text-muted-foreground">
-              {total.toLocaleString()} orders · page {Math.min(page, pageCount)} of {pageCount.toLocaleString()}
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="tnum">
+                <InlineCount value={loading && rows.length === 0 ? null : total} /> orders · page{" "}
+                {Math.min(page, pageCount)} of {pageCount.toLocaleString()}
+              </span>
+              {loading && rows.length > 0 && <RefreshChip />}
             </span>
             <div className="flex gap-1">
               <Button

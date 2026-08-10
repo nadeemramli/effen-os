@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PageBody } from "@/components/shell/page-header";
 import { tonePill } from "@/components/status/status-pill";
 import { EmptyState } from "@/components/states";
@@ -113,13 +114,16 @@ function OrderDetailInner() {
   const [order, setOrder] = useState<LiveOrderRow | null | "loading">("loading");
   const [brands, setBrands] = useState<LiveBrand[]>([]);
   const [connections, setConnections] = useState<LiveWooConnection[]>([]);
-  const [nv, setNv] = useState<{ shipment: LiveNvShipment; events: LiveNvEvent[] } | null>(null);
+  // Secondary panels resolve after the order itself: "loading" until each
+  // follow-up fetch lands, so absence ("—", explainer prose) is never shown
+  // for data that is merely still in flight.
+  const [nvState, setNv] = useState<{ shipment: LiveNvShipment; events: LiveNvEvent[] } | null | "loading">("loading");
   const [readiness, setReadiness] = useState<ShipReadinessRow | null | "unknown">("unknown");
-  const [correction, setCorrection] = useState<OrderCorrection | null>(null);
-  const [pipeline, setPipeline] = useState<Awaited<ReturnType<typeof fetchFulfilmentForOrder>>>(null);
-  const [aiSuggestion, setAiSuggestion] = useState<AiSuggestion | null>(null);
+  const [correctionState, setCorrection] = useState<OrderCorrection | null | "loading">("loading");
+  const [pipelineState, setPipeline] = useState<Awaited<ReturnType<typeof fetchFulfilmentForOrder>> | "loading">("loading");
+  const [aiSuggestionState, setAiSuggestion] = useState<AiSuggestion | null | "loading">("loading");
   const [holding, setHolding] = useState(false);
-  const [idKey, setIdKey] = useState<string | null>(null);
+  const [idKeyState, setIdKey] = useState<string | null | "loading">("loading");
   const [fixOpen, setFixOpen] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -160,6 +164,15 @@ function OrderDetailInner() {
     () => (order && order !== "loading" ? connections.find((c) => c.id === order.integration_id) : undefined),
     [order, connections],
   );
+
+  // Resolved views: existing render sites treat "still fetching" as absent,
+  // and the few spots where the difference matters check the *Loading flags.
+  const nv = nvState === "loading" ? null : nvState;
+  const nvLoading = nvState === "loading";
+  const correction = correctionState === "loading" ? null : correctionState;
+  const pipeline = pipelineState === "loading" ? null : pipelineState;
+  const aiSuggestion = aiSuggestionState === "loading" ? null : aiSuggestionState;
+  const idKey = idKeyState === "loading" ? null : idKeyState;
 
   if (order === "loading") {
     return (
@@ -400,10 +413,19 @@ function OrderDetailInner() {
                   </div>
                 )}
                 <div className="flex justify-between"><span className="text-muted-foreground">Fulfilment</span><span>{order.source_status === "completed" ? "Fulfilled" : order.source_status === "processing" ? "To fulfil (Fighter operates)" : "—"}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Courier</span><span>{nv ? "Ninja Van" : "—"}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Tracking</span><span className="tnum">{nv?.shipment.tracking_id ?? "—"}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Shipment</span><span>{nv?.shipment.status ?? "—"}</span></div>
-                {!nv && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Courier</span>
+                  {nvLoading ? <Skeleton className="h-4 w-20" /> : <span>{nv ? "Ninja Van" : "—"}</span>}
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Tracking</span>
+                  {nvLoading ? <Skeleton className="h-4 w-24" /> : <span className="tnum">{nv?.shipment.tracking_id ?? "—"}</span>}
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Shipment</span>
+                  {nvLoading ? <Skeleton className="h-4 w-24" /> : <span>{nv?.shipment.status ?? "—"}</span>}
+                </div>
+                {!nvLoading && !nv && (
                   <p className="mt-1 rounded-md border bg-muted/40 px-2 py-1.5 text-xs text-muted-foreground">
                     Parcels currently carry Fighter consignment ids — tracking links here once the Fighter
                     bridge or NV order-details API provides the mapping.

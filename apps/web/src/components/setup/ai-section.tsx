@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { CheckCircle2, Loader2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ErrorState } from "@/components/states";
+import { useLiveQuery } from "@/hooks/use-live-query";
 import {
   Dialog,
   DialogContent,
@@ -26,25 +29,20 @@ import { cn } from "@/lib/utils";
  * human in the fix-shipping dialog.
  */
 export function AiSection() {
-  const [connection, setConnection] = useState<LiveAiConnection | null>(null);
-  const [loading, setLoading] = useState(true);
   const [configOpen, setConfigOpen] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const reload = useCallback(async () => {
-    try {
-      setConnection(await fetchAiConnection());
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    // Fetch-on-mount; every setState happens after an await.
-    void reload();
-  }, [reload]);
-
+  const {
+    data,
+    error,
+    loading,
+    reload,
+  } = useLiveQuery<{ connection: LiveAiConnection | null }>(
+    async () => ({ connection: await fetchAiConnection() }),
+    [],
+  );
+  const connection = data?.connection ?? null;
   const active = connection?.status === "healthy";
 
   return (
@@ -64,15 +62,38 @@ export function AiSection() {
           variant="outline"
           className={cn(
             "text-[10px]",
-            active ? "border-success/30 bg-success/10 text-success" : "text-muted-foreground",
+            !loading && active ? "border-success/30 bg-success/10 text-success" : "text-muted-foreground",
           )}
         >
-          {active ? "suggesting" : connection ? connection.status.replace("_", " ") : "—"}
+          {loading
+            ? "checking…"
+            : active
+              ? "suggesting"
+              : connection
+                ? connection.status.replace("_", " ")
+                : "—"}
         </Badge>
       </CardHeader>
       <CardContent className="space-y-3">
         {loading ? (
-          <div className="flex justify-center py-4"><Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="Loading" /></div>
+          <dl
+            className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4"
+            role="status"
+            aria-label="Loading AI connection"
+          >
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex justify-between gap-2 sm:block">
+                <Skeleton className="h-3.5 w-14" />
+                <Skeleton className="h-3.5 w-20 sm:mt-1" />
+              </div>
+            ))}
+          </dl>
+        ) : error ? (
+          <ErrorState
+            title="Could not load AI connection"
+            description={error}
+            retry={() => void reload()}
+          />
         ) : (
           <>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">

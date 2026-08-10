@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DataTable } from "@/components/tables/data-table";
+import { InlineCount, RefreshChip } from "@/components/states";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { LiveGuard } from "@/components/auth/live-guard";
 import { getSupabase } from "@/lib/supabase/client";
@@ -365,7 +366,12 @@ function CustomersInner() {
     <PageBody className="max-w-none">
       <PageHeader
         title="Customers"
-        description={`Live mirror · ${total.toLocaleString()} identities resolved from order history (phone → address → e-mail) · contact details masked by default`}
+        description={
+          <>
+            Live mirror · <InlineCount value={loading && rows.length === 0 ? null : total} /> identities
+            resolved from order history (phone → address → e-mail) · contact details masked by default
+          </>
+        }
       />
 
       {/* segments — saved filter sets, shared workspace-wide */}
@@ -431,10 +437,18 @@ function CustomersInner() {
           {builderOpen ? "Hide filters" : "Filters"}
           {conditions.length > 0 && <span className="tnum rounded-full bg-accent px-1.5">{conditions.length}</span>}
         </Button>
-        <Button variant="outline" size="sm" className="ml-auto h-7 gap-1 text-xs" onClick={() => setExportOpen(true)}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto h-7 gap-1 text-xs"
+          disabled={loading && rows.length === 0}
+          onClick={() => setExportOpen(true)}
+        >
           <Download className="size-3.5" aria-hidden />
           Export CSV
-          <span className="tnum text-muted-foreground">({total.toLocaleString()})</span>
+          <span className="tnum text-muted-foreground">
+            (<InlineCount value={loading && rows.length === 0 ? null : total} width="w-6" />)
+          </span>
         </Button>
       </div>
 
@@ -547,29 +561,30 @@ function CustomersInner() {
         )}
       </div>
 
-      {loading && rows.length === 0 ? (
-        <div className="flex justify-center py-12"><Loader2 className="size-5 animate-spin text-muted-foreground" aria-label="Loading customers" /></div>
-      ) : error ? (
+      {error ? (
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           Could not load the customer read-model: {error}
         </div>
       ) : (
         <>
-          <div className={cn(loading && "pointer-events-none opacity-60")}>
-            <DataTable
-              columns={columns}
-              data={rows}
-              pageSize={PAGE_SIZE}
-              rowKey={(c) => c.identity_key}
-              onRowClick={(c) => router.push(`/customers/${encodeURIComponent(c.identity_key)}`)}
-              emptyTitle="No customers match"
-              emptyDescription="Identities are resolved from the live order mirror and refresh every 15 minutes."
-            />
-          </div>
+          <DataTable
+            columns={columns}
+            data={rows}
+            loading={loading}
+            pageSize={PAGE_SIZE}
+            rowKey={(c) => c.identity_key}
+            onRowClick={(c) => router.push(`/customers/${encodeURIComponent(c.identity_key)}`)}
+            emptyTitle="No customers match"
+            emptyDescription="Identities are resolved from the live order mirror and refresh every 15 minutes."
+          />
           <div className="flex items-center justify-between px-1">
-            <span className="tnum text-xs text-muted-foreground">
-              {total.toLocaleString()} identities · page {Math.min(page, pageCount)} of {pageCount.toLocaleString()} ·
-              refreshed every 15 min from orders_read
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="tnum">
+                <InlineCount value={loading && rows.length === 0 ? null : total} /> identities · page{" "}
+                {Math.min(page, pageCount)} of {pageCount.toLocaleString()} · refreshed every 15 min from
+                orders_read
+              </span>
+              {loading && rows.length > 0 && <RefreshChip />}
             </span>
             <div className="flex gap-1">
               <Button variant="outline" size="icon" className="size-7" disabled={page <= 1 || loading}

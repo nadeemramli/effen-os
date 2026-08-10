@@ -1,16 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ClipboardCheck, GitBranch, Loader2, PackageCheck, ShieldAlert, Sparkles, Truck } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ClipboardCheck, GitBranch, PackageCheck, ShieldAlert, Sparkles, Truck } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { tonePill } from "@/components/status/status-pill";
-import { EmptyState } from "@/components/states";
+import { EmptyState, ErrorState, InlineCount, RefreshChip } from "@/components/states";
 import { LiveGuard } from "@/components/auth/live-guard";
+import { useLiveQuery } from "@/hooks/use-live-query";
 import {
   fetchAiSuggestedOrderIds,
   fetchFulfilmentPipeline,
@@ -27,8 +29,6 @@ import {
   type LiveBrand,
   type LiveNvShipment,
   type LiveOrderRow,
-  type LiveWooConnection,
-  type ShadowReport,
   type ShipReadinessRow,
 } from "@/lib/supabase/live";
 import { useAppStore } from "@/lib/store/provider";
@@ -67,60 +67,62 @@ function skuSummary(o: LiveOrderRow): string {
   return `${first.sku ?? first.name ?? "item"} ×${first.quantity}${more}`;
 }
 
+/** Mirrors a queue Card (header + row list) while the floor snapshot loads. */
+function QueueCardSkeleton({ rows = 5 }: { rows?: number }) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <Skeleton className="h-5 w-36" />
+        <Skeleton className="h-5 w-8 rounded-full" />
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {Array.from({ length: rows }).map((_, i) => (
+          <div key={i} className="space-y-1.5">
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-3 w-1/2" />
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 function FulfilmentInner() {
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
 
-  const [toPick, setToPick] = useState<{ rows: LiveOrderRow[]; total: number }>({ rows: [], total: 0 });
-  const [holds, setHolds] = useState<{ rows: LiveOrderRow[]; total: number }>({ rows: [], total: 0 });
-  const [network, setNetwork] = useState<Awaited<ReturnType<typeof fetchNvNetwork>> | null>(null);
-  const [readiness, setReadiness] = useState<{ rows: ShipReadinessRow[]; checked: number; flagged: number; corrected: number }>({ rows: [], checked: 0, flagged: 0, corrected: 0 });
-  const [brands, setBrands] = useState<LiveBrand[]>([]);
-  const [connections, setConnections] = useState<LiveWooConnection[]>([]);
-  const [pipeline, setPipeline] = useState<FulfilmentPipelineRow[]>([]);
-  const [shadow, setShadow] = useState<ShadowReport | null>(null);
-  const [aiOrderIds, setAiOrderIds] = useState<Set<number>>(new Set());
   const [releasing, setReleasing] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    try {
-      const conns = await fetchWooConnections();
-      setConnections(conns);
-      const integrationIn =
-        liveMarkets.length > 0
-          ? conns.filter((c) => liveMarkets.includes(c.config?.country_code ?? "")).map((c) => c.id)
-          : null;
-      const base = { page: 1, pageSize: 8, brandId: liveBrandId, integrationId: null, integrationIn, currency: null, sinceHours: null, search: "" };
-      const [pick, hold, nv, b, ready, pipe, shadowReport, aiIds] = await Promise.all([
-        fetchLiveOrdersPage({ ...base, status: "processing" }),
-        fetchLiveOrdersPage({ ...base, status: null, statusIn: ["on-hold", "failed"] }),
-        fetchNvNetwork(),
-        fetchLiveBrands(),
-        fetchShipReadiness(14),
-        fetchFulfilmentPipeline(14).catch(() => [] as FulfilmentPipelineRow[]),
-        fetchShadowReport(14).catch(() => null),
-        fetchAiSuggestedOrderIds().catch(() => new Set<number>()),
-      ]);
-      setToPick(pick);
-      setHolds(hold);
-      setNetwork(nv);
-      setBrands(b);
-      setReadiness(ready);
-      setPipeline(pipe);
-      setShadow(shadowReport);
-      setAiOrderIds(aiIds);
-    } finally {
-      setLoading(false);
-    }
+  // One floor snapshot per scope; scope changes refetch with the stale floor
+  // dimmed, and a failed fetch surfaces instead of rendering a clean floor.
+  const { data, error, loading, refreshing, reload } = useLiveQuery(async () => {
+    const conns = await fetchWooConnections();
+    const integrationIn =
+      liveMarkets.length > 0
+        ? conns.filter((c) => liveMarkets.includes(c.config?.country_code ?? "")).map((c) => c.id)
+        : null;
+    const base = { page: 1, pageSize: 8, brandId: liveBrandId, integrationId: null, integrationIn, currency: null, sinceHours: null, search: "" };
+    const [pick, hold, nv, b, ready, pipe, shadowReport, aiIds] = await Promise.all([
+      fetchLiveOrdersPage({ ...base, status: "processing" }),
+      fetchLiveOrdersPage({ ...base, status: null, statusIn: ["on-hold", "failed"] }),
+      fetchNvNetwork(),
+      fetchLiveBrands(),
+      fetchShipReadiness(14),
+      fetchFulfilmentPipeline(14).catch(() => [] as FulfilmentPipelineRow[]),
+      fetchShadowReport(14).catch(() => null),
+      fetchAiSuggestedOrderIds().catch(() => new Set<number>()),
+    ]);
+    return { toPick: pick, holds: hold, network: nv, brands: b, readiness: ready, pipeline: pipe, shadow: shadowReport, aiOrderIds: aiIds };
   }, [liveBrandId, liveMarkets]);
 
-  useEffect(() => {
-    // Server-side queues re-run on scope change.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void reload();
-  }, [reload]);
+  const toPick = data?.toPick ?? { rows: [] as LiveOrderRow[], total: 0 };
+  const holds = data?.holds ?? { rows: [] as LiveOrderRow[], total: 0 };
+  const network = data?.network ?? null;
+  const readiness = data?.readiness ?? { rows: [] as ShipReadinessRow[], checked: 0, flagged: 0, corrected: 0 };
+  const brands = data?.brands ?? ([] as LiveBrand[]);
+  const pipeline = data?.pipeline ?? ([] as FulfilmentPipelineRow[]);
+  const shadow = data?.shadow ?? null;
+  const aiOrderIds = data?.aiOrderIds ?? new Set<number>();
 
   const brandName = (id: number | null) => brands.find((b) => b.id === id)?.name ?? "—";
 
@@ -139,14 +141,6 @@ function FulfilmentInner() {
   const nextAction = (o: LiveOrderRow) =>
     o.source_status === "on-hold" ? "Review hold — verify payment or release" :
     o.source_status === "failed" ? "Follow up failed payment with buyer" : "—";
-
-  if (loading && !network) {
-    return (
-      <PageBody className="flex min-h-96 items-center justify-center">
-        <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading fulfilment floor" />
-      </PageBody>
-    );
-  }
 
   const QUEUES: {
     title: string;
@@ -198,7 +192,8 @@ function FulfilmentInner() {
         title="Fulfilment"
         description="Pick → pack → handover for the KL fulfilment centre. Every move lands on the order's evidence timeline."
       >
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          {refreshing && <RefreshChip />}
           {(["ninja_van", "jnt"] as const).map((c) => {
             const count = c === "ninja_van" ? pendingPickup.length : 0;
             return (
@@ -212,7 +207,9 @@ function FulfilmentInner() {
               >
                 <Truck className="size-3.5" aria-hidden />
                 {c === "jnt" ? "J&T" : "Ninja Van"} manifest
-                <Badge variant="secondary" className="tnum ml-1 h-4 px-1 text-[10px]">{count}</Badge>
+                <Badge variant="secondary" className="tnum ml-1 h-4 px-1 text-[10px]">
+                  <InlineCount value={loading ? null : count} width="w-3" />
+                </Badge>
               </Button>
             );
           })}
@@ -233,6 +230,26 @@ function FulfilmentInner() {
         )}
       </p>
 
+      {error ? (
+        <ErrorState
+          title="Could not load the fulfilment floor"
+          description={`Queues and exceptions are unavailable right now — nothing here is confirmed clear. ${error}`}
+          retry={() => void reload()}
+        />
+      ) : loading ? (
+        <div className="space-y-5" role="status" aria-label="Loading fulfilment floor">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <QueueCardSkeleton key={i} />
+            ))}
+          </div>
+          <QueueCardSkeleton rows={4} />
+        </div>
+      ) : (
+        <div
+          className={cn("space-y-5", refreshing && "pointer-events-none opacity-60")}
+          aria-busy={refreshing || undefined}
+        >
       {pipeline.length > 0 && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -439,6 +456,8 @@ function FulfilmentInner() {
           )}
         </CardContent>
       </Card>
+        </div>
+      )}
     </PageBody>
   );
 }

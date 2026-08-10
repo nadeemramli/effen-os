@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { CheckCircle2, KeyRound, Loader2, RefreshCcw, Store } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ErrorState, InlineCount, RefreshChip } from "@/components/states";
+import { useLiveQuery } from "@/hooks/use-live-query";
 import {
   Dialog,
   DialogContent,
@@ -44,12 +47,32 @@ function fmtTime(iso: string | null): string {
   return new Date(iso).toLocaleString("en-MY", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Kuala_Lumpur" });
 }
 
+/** Mirrors a connection Card while the connections snapshot loads. */
+function ConnectionCardSkeleton() {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between space-y-0">
+        <div className="space-y-1.5">
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="h-3.5 w-56" />
+        </div>
+        <Skeleton className="h-5 w-16 rounded-full" />
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+          <Skeleton className="h-3.5 w-full" />
+          <Skeleton className="h-3.5 w-full" />
+        </div>
+        <div className="flex gap-2">
+          <Skeleton className="h-8 flex-1" />
+          <Skeleton className="h-8 flex-1" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ConnectionsInner() {
-  const [connections, setConnections] = useState<LiveWooConnection[]>([]);
-  const [runs, setRuns] = useState<LiveSyncRun[]>([]);
-  const [counts, setCounts] = useState<Record<number, number>>({});
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [editing, setEditing] = useState<LiveWooConnection | null>(null);
   const [baseUrl, setBaseUrl] = useState("");
   const [ck, setCk] = useState("");
@@ -57,30 +80,24 @@ function ConnectionsInner() {
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState<number | "all" | null>(null);
 
-  const reload = useCallback(async () => {
-    try {
-      const conns = await fetchWooConnections();
-      setConnections(conns);
-      const [runRows, ...countRows] = await Promise.all([
-        fetchRecentRuns(conns.map((c) => c.id)),
-        ...conns.map((c) => fetchOrdersReadCount(c.id)),
-      ]);
-      setRuns(runRows);
-      setCounts(Object.fromEntries(conns.map((c, i) => [c.id, countRows[i] ?? 0])));
-      setLoadError(null);
-    } catch (e) {
-      setLoadError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
+  // Connections, runs, and per-store counts land as one snapshot, so a
+  // post-save reload can never flash "0 orders mirrored" between setStates.
+  const { data, error, loading, refreshing, reload } = useLiveQuery(async () => {
+    const conns = await fetchWooConnections();
+    const [runRows, ...countRows] = await Promise.all([
+      fetchRecentRuns(conns.map((c) => c.id)),
+      ...conns.map((c) => fetchOrdersReadCount(c.id)),
+    ]);
+    return {
+      connections: conns,
+      runs: runRows,
+      counts: Object.fromEntries(conns.map((c, i) => [c.id, countRows[i] ?? 0])) as Record<number, number>,
+    };
   }, []);
 
-  useEffect(() => {
-    // Fetch-on-mount: every setState in reload() happens after an await,
-    // so nothing is set synchronously within the effect body.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void reload();
-  }, [reload]);
+  const connections = data?.connections ?? [];
+  const runs = data?.runs ?? ([] as LiveSyncRun[]);
+  const counts = data?.counts ?? null;
 
   async function handleSave() {
     if (!editing) return;
@@ -122,6 +139,7 @@ function ConnectionsInner() {
         description="Live WooCommerce read-side — one connection, one read-only key pair, and one checkpoint per brand site."
       >
         <div className="flex items-center gap-2">
+          {refreshing && <RefreshChip />}
           <Link href="/setup/brands" className="text-sm text-info underline-offset-2 hover:underline">
             Brands & catalog
           </Link>
@@ -143,16 +161,29 @@ function ConnectionsInner() {
         orders per click).
       </p>
 
-      {loadError && (
+      {error && data && (
         <p className="rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          Failed to load connections: {loadError}
+          Failed to refresh connections: {error}
         </p>
       )}
 
       {loading ? (
-        <div className="flex justify-center py-12"><Loader2 className="size-5 animate-spin text-muted-foreground" aria-label="Loading" /></div>
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2" role="status" aria-label="Loading connections">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <ConnectionCardSkeleton key={i} />
+          ))}
+        </div>
+      ) : error && !data ? (
+        <ErrorState
+          title="Could not load store connections"
+          description={error}
+          retry={() => void reload()}
+        />
       ) : (
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div
+          className={cn("grid grid-cols-1 gap-3 lg:grid-cols-2", refreshing && "pointer-events-none opacity-60")}
+          aria-busy={refreshing || undefined}
+        >
           {connections.map((c) => {
             const connRuns = runs.filter((r) => r.integration_id === c.id).slice(0, 3);
             const configured = Boolean(c.config?.base_url);
@@ -165,7 +196,8 @@ function ConnectionsInner() {
                       {c.name}
                     </CardTitle>
                     <p className="tnum mt-0.5 text-xs text-muted-foreground">
-                      {c.config?.base_url ?? "no store URL yet"} · {counts[c.id] ?? 0} orders mirrored
+                      {c.config?.base_url ?? "no store URL yet"} ·{" "}
+                      <InlineCount value={counts ? (counts[c.id] ?? 0) : null} width="w-8" /> orders mirrored
                     </p>
                   </div>
                   <Badge variant="outline" className={cn("text-[10px] capitalize", STATUS_TONE[c.status])}>

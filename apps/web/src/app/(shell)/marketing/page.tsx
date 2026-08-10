@@ -6,11 +6,12 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Info, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChartCard } from "@/components/charts/chart-card";
+import { ChartCard, ChartCardSkeleton } from "@/components/charts/chart-card";
 import { ChartLegend, SpendRevenueTrend } from "@/components/charts/commercial-charts";
 import { LiveAdsPanel } from "@/components/metrics/live-ads-panel";
 import { LiveCampaignExplorer } from "@/components/metrics/live-campaign-explorer";
-import { MetricCard } from "@/components/metrics/metric-card";
+import { MetricCard, MetricCardSkeleton } from "@/components/metrics/metric-card";
+import { SkeletonTable } from "@/components/states";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { MoneyCell } from "@/components/tables/cells";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
@@ -56,13 +57,16 @@ function MarketingInner() {
   const setLiveBrand = useAppStore((s) => s.setLiveBrand);
 
   // Warehouse-fed live surfaces (ADR-0003) — one fetch shared by the spend
-  // panel, account coverage, scorecard, and trend. Demo store renders when
-  // absent.
-  const [growth, setGrowth] = useState<{
-    ads: GrowthAds;
-    liveBrands: LiveBrand[];
-    contribution: LiveContribution;
-  } | null>(null);
+  // panel, account coverage, scorecard, and trend. Explicit states so a live
+  // session never silently sees demo numbers: "demo" only without a session,
+  // "loading" renders skeletons, "error" keeps demo visible behind a banner.
+  const [live, setLive] = useState<
+    | { kind: "demo" }
+    | { kind: "loading" }
+    | { kind: "ready"; ads: GrowthAds; liveBrands: LiveBrand[]; contribution: LiveContribution }
+    | { kind: "error"; message: string }
+  >(() => (isSupabaseConfigured() ? { kind: "loading" } : { kind: "demo" }));
+  const [retryKey, setRetryKey] = useState(0);
 
   // Platform filter (empty = all). Future sources (TikTok, Google, Shopee,
   // TikTok Shop, Lazada) appear automatically once their facts land.
@@ -75,9 +79,17 @@ function MarketingInner() {
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
+    let cancelled = false;
     void (async () => {
       const { data: s } = await getSupabase().auth.getSession();
-      if (!s.session) return;
+      if (!s.session) {
+        // Signed-out keeps the instant demo store — no skeletons, no banner.
+        if (!cancelled) setLive({ kind: "demo" });
+        return;
+      }
+      // Range changes refetch behind the current numbers; only a first load
+      // (or retry after an error) drops to skeletons.
+      if (!cancelled) setLive((prev) => (prev.kind === "ready" ? prev : { kind: "loading" }));
       try {
         // Warehouse window must reach back to the range start (max 400d);
         // commerce revenue/COGS come from the range RPC directly.
@@ -92,14 +104,21 @@ function MarketingInner() {
             () => ({ rules: null, rows: [] }) as LiveContribution,
           ),
         ]);
-        if (ads) setGrowth({ ads, liveBrands, contribution });
+        if (cancelled) return;
+        // No warehouse data at all is a legitimate demo fallback, not an error.
+        setLive(ads ? { kind: "ready", ads, liveBrands, contribution } : { kind: "demo" });
       } catch (e) {
-        // Live surfaces degrade to the demo store; never a blank page.
-        console.warn("growth ads fetch failed", e);
+        if (!cancelled) setLive({ kind: "error", message: (e as Error).message });
       }
     })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.dateRange, session.customRange]);
+  }, [session.dateRange, session.customRange, retryKey]);
+
+  const growth = live.kind === "ready" ? live : null;
+  const liveLoading = live.kind === "loading";
   const keys = useMemo(() => new Set(Array.from({ length: days }, (_, i) => dateKey(i))), [days]);
 
   const scopedCampaigns = campaigns.filter(
@@ -293,6 +312,19 @@ function MarketingInner() {
         description="Consolidated ads view — warehouse spend and platform attribution beside Fullkit order truth. Accounts are connected in Airbyte; the register mirrors them."
       />
 
+      {live.kind === "error" && (
+        <p className="flex items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+          <span>Live ads mirror unavailable — showing demo data. {live.message}</span>
+          <button
+            type="button"
+            className="shrink-0 font-medium underline-offset-2 hover:underline"
+            onClick={() => setRetryKey((k) => k + 1)}
+          >
+            Retry
+          </button>
+        </p>
+      )}
+
       {/* platform scope + focused-brand chip (live mode) */}
       {growth && (
         <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
@@ -347,6 +379,16 @@ function MarketingInner() {
       )}
 
       {/* brand performance — the per-brand money story + the all-brands mix */}
+      {liveBrandId === null && liveLoading && (
+        <Card role="status" aria-label="Loading brand performance">
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Brand performance</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SkeletonTable rows={4} cols={8} framed={false} />
+          </CardContent>
+        </Card>
+      )}
       {liveBrandId === null && brandPerf && (
         <Card>
           <CardHeader>
@@ -524,6 +566,15 @@ function MarketingInner() {
             )}
           </CardContent>
         </Card>
+      ) : liveLoading ? (
+        <Card role="status" aria-label="Loading ad accounts">
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Ad accounts</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <SkeletonTable rows={5} cols={6} framed={false} />
+          </CardContent>
+        </Card>
       ) : (
       <section aria-label="Account coverage" className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {adAccounts.map((a) => (
@@ -669,6 +720,16 @@ function MarketingInner() {
             }}
           />
         </section>
+      ) : liveLoading ? (
+        <section
+          aria-label="Loading scorecard"
+          role="status"
+          className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+        >
+          {Array.from({ length: 8 }).map((_, i) => (
+            <MetricCardSkeleton key={i} />
+          ))}
+        </section>
       ) : (
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7">
         <MetricCard metricKey="ad_spend" value={formatMoney(totalSpend, "MYR", { compact: true })} hint={`Last ${days} day${days > 1 ? "s" : ""}`} />
@@ -694,13 +755,17 @@ function MarketingInner() {
       </section>
       )}
 
-      <ChartCard
-        title={`Spend vs platform-attributed revenue — ${rangeLabel(session.dateRange, session.customRange)}`}
-        subtitle={liveView ? "Warehouse pipeline — platform purchase value vs spend, MYR" : "MYR-normalized across all connected accounts"}
-        right={<ChartLegend items={[{ label: "Platform revenue", color: "var(--chart-1)" }, { label: "Ad spend", color: "var(--chart-2)" }]} />}
-      >
-        <SpendRevenueTrend data={liveView ? liveView.chart : trendData} currencyLabel="RM" />
-      </ChartCard>
+      {liveLoading ? (
+        <ChartCardSkeleton height={224} />
+      ) : (
+        <ChartCard
+          title={`Spend vs platform-attributed revenue — ${rangeLabel(session.dateRange, session.customRange)}`}
+          subtitle={liveView ? "Warehouse pipeline — platform purchase value vs spend, MYR" : "MYR-normalized across all connected accounts"}
+          right={<ChartLegend items={[{ label: "Platform revenue", color: "var(--chart-1)" }, { label: "Ad spend", color: "var(--chart-2)" }]} />}
+        >
+          <SpendRevenueTrend data={liveView ? liveView.chart : trendData} currencyLabel="RM" />
+        </ChartCard>
+      )}
 
       {/* campaign explorer — live warehouse table when data exists, demo otherwise */}
       <LiveCampaignExplorer platforms={platformFilter} fallback={

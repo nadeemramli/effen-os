@@ -80,30 +80,38 @@ export function TopBar() {
   // read the live workspace, not the synthetic seed.
   const isLive = session.authEmail !== null;
   const [liveBrands, setLiveBrands] = useState<LiveBrand[]>([]);
-  const [liveStale, setLiveStale] = useState<number | null>(null);
+  // "checking" until the connections fetch resolves; "unknown" if it fails —
+  // the pill must never claim "All fresh" before it has actually checked.
+  const [liveStale, setLiveStale] = useState<number | "checking" | "unknown">("checking");
   const [liveMarketOptions, setLiveMarketOptions] = useState<string[]>([]);
   useEffect(() => {
     if (!isLive) return;
     void (async () => {
-      const [b, c] = await Promise.all([fetchLiveBrands(), fetchWooConnections()]);
-      setLiveBrands(b.filter((x) => x.status === "active"));
-      // A configured connection is stale when its last success is older than
-      // 3× its freshness SLA (matching freshnessOf's "stale" band).
-      setLiveMarketOptions(
-        [...new Set(c.map((x) => x.config?.country_code).filter((m): m is string => !!m))].sort(),
-      );
-      const configured = c.filter((x) => x.status !== "pending_setup");
-      setLiveStale(
-        configured.filter(
-          (x) =>
-            !x.last_success_at ||
-            Date.now() - new Date(x.last_success_at).getTime() > 3 * 15 * 60_000,
-        ).length,
-      );
+      try {
+        const [b, c] = await Promise.all([fetchLiveBrands(), fetchWooConnections()]);
+        setLiveBrands(b.filter((x) => x.status === "active"));
+        // A configured connection is stale when its last success is older than
+        // 3× its freshness SLA (matching freshnessOf's "stale" band).
+        setLiveMarketOptions(
+          [...new Set(c.map((x) => x.config?.country_code).filter((m): m is string => !!m))].sort(),
+        );
+        const configured = c.filter((x) => x.status !== "pending_setup");
+        setLiveStale(
+          configured.filter(
+            (x) =>
+              !x.last_success_at ||
+              Date.now() - new Date(x.last_success_at).getTime() > 3 * 15 * 60_000,
+          ).length,
+        );
+      } catch {
+        setLiveStale("unknown");
+      }
     })();
   }, [isLive]);
 
-  const staleCount = isLive ? (liveStale ?? 0) : integrations.filter((i) => i.status === "stale").length;
+  const staleCount: number | "checking" | "unknown" = isLive
+    ? liveStale
+    : integrations.filter((i) => i.status === "stale").length;
   const unread = isLive ? 0 : notifications.filter((n) => !n.read).length;
   const canCreateOrder = visibleRoutes(session.role).some((r) => r.key === "orders");
 
@@ -242,17 +250,36 @@ export function TopBar() {
           href={isLive ? "/setup/connections" : "/data-health"}
           className={cn(
             "inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            staleCount > 0
-              ? "border-warning/30 bg-warning/12 text-warning"
-              : "border-success/25 bg-success/12 text-success",
+            typeof staleCount !== "number"
+              ? "border-border bg-muted/40 text-muted-foreground"
+              : staleCount > 0
+                ? "border-warning/30 bg-warning/12 text-warning"
+                : "border-success/25 bg-success/12 text-success",
           )}
-          aria-label={`Data freshness: ${staleCount} stale sources`}
+          aria-label={
+            typeof staleCount !== "number"
+              ? "Data freshness: checking"
+              : `Data freshness: ${staleCount} stale sources`
+          }
         >
           <span
-            className={cn("size-1.5 rounded-full", staleCount > 0 ? "bg-warning" : "bg-success")}
+            className={cn(
+              "size-1.5 rounded-full",
+              typeof staleCount !== "number"
+                ? "bg-muted-foreground/50"
+                : staleCount > 0
+                  ? "bg-warning"
+                  : "bg-success",
+            )}
             aria-hidden
           />
-          {staleCount > 0 ? `${staleCount} stale` : "All fresh"}
+          {staleCount === "checking"
+            ? "Checking…"
+            : staleCount === "unknown"
+              ? "Freshness unknown"
+              : staleCount > 0
+                ? `${staleCount} stale`
+                : "All fresh"}
         </Link>
 
         {isLive ? (

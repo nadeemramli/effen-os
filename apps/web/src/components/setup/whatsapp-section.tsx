@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Check, Copy, Loader2, MessageSquareText, Radio } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ErrorState } from "@/components/states";
+import { useLiveQuery } from "@/hooks/use-live-query";
 import {
   Dialog,
   DialogContent,
@@ -62,40 +65,31 @@ function CopyField({ label, value }: { label: string; value: string }) {
 }
 
 export function WhatsAppSection() {
-  const [connection, setConnection] = useState<LiveWaConnection | null>(null);
-  const [numbers, setNumbers] = useState<LiveWaNumber[]>([]);
-  const [brands, setBrands] = useState<LiveBrand[]>([]);
-  const [counts, setCounts] = useState({ conversations: 0, messages: 0 });
-  const [loading, setLoading] = useState(true);
   const [configOpen, setConfigOpen] = useState(false);
   const [appSecret, setAppSecret] = useState("");
   const [accessToken, setAccessToken] = useState("");
   const [verifyToken, setVerifyToken] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const reload = useCallback(async () => {
-    try {
-      const [conn, nums, b, c] = await Promise.all([
-        fetchWaConnection(),
-        fetchWaNumbers(),
-        fetchLiveBrands(),
-        fetchWaCounts(),
-      ]);
-      setConnection(conn);
-      setNumbers(nums);
-      setBrands(b.filter((x) => x.status === "active"));
-      setCounts(c);
-    } finally {
-      setLoading(false);
-    }
+  const { data, error, loading, reload } = useLiveQuery(async () => {
+    const [conn, nums, b, c] = await Promise.all([
+      fetchWaConnection(),
+      fetchWaNumbers(),
+      fetchLiveBrands(),
+      fetchWaCounts(),
+    ]);
+    return {
+      connection: conn as LiveWaConnection | null,
+      numbers: nums as LiveWaNumber[],
+      brands: b.filter((x) => x.status === "active") as LiveBrand[],
+      counts: c,
+    };
   }, []);
 
-  useEffect(() => {
-    // Fetch-on-mount; every setState happens after an await.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void reload();
-  }, [reload]);
-
+  const connection = data?.connection ?? null;
+  const numbers = data?.numbers ?? [];
+  const brands = data?.brands ?? [];
+  const counts = data?.counts ?? { conversations: 0, messages: 0 };
   const receiving = Boolean(connection?.last_success_at);
 
   return (
@@ -115,16 +109,29 @@ export function WhatsAppSection() {
           variant="outline"
           className={cn(
             "gap-1 text-[10px]",
-            receiving ? "border-success/30 bg-success/10 text-success" : "text-muted-foreground",
+            !loading && receiving ? "border-success/30 bg-success/10 text-success" : "text-muted-foreground",
           )}
         >
           <Radio className="size-3" aria-hidden />
-          {receiving ? "receiving" : "not connected"}
+          {loading ? "checking…" : receiving ? "receiving" : "not connected"}
         </Badge>
       </CardHeader>
       <CardContent className="space-y-4">
         {loading ? (
-          <div className="flex justify-center py-6"><Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="Loading" /></div>
+          <div className="grid grid-cols-3 gap-3" role="status" aria-label="Loading WhatsApp status">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="rounded-md border px-3 py-2">
+                <Skeleton className="h-3.5 w-20" />
+                <Skeleton className="mt-1 h-6 w-12" />
+              </div>
+            ))}
+          </div>
+        ) : error ? (
+          <ErrorState
+            title="Could not load WhatsApp status"
+            description={error}
+            retry={() => void reload()}
+          />
         ) : (
           <>
             <div className="grid grid-cols-3 gap-3">
