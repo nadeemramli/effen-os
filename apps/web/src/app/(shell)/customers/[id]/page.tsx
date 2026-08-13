@@ -18,6 +18,7 @@ import {
   type LiveBrand,
   type LiveCustomerDetail,
 } from "@/lib/supabase/live";
+import { FX_TO_MYR } from "@/lib/domain/metrics";
 import { maskEmail, maskPhone } from "@/lib/utils/mask";
 import { cn } from "@/lib/utils";
 
@@ -50,6 +51,32 @@ function tierOf(revenue: Record<string, number> | null): string {
   const total = Object.values(revenue ?? {}).reduce((s, v) => s + Number(v), 0);
   // Thresholds calibrated to the live value distribution (p99/p95/p75).
   return total >= 900 ? "vip" : total >= 600 ? "high" : total >= 230 ? "mid" : "low";
+}
+
+function moneyMyr(v: number): string {
+  const abs = Math.abs(v);
+  const s = abs >= 10_000 ? `${(abs / 1000).toFixed(1)}k` : abs.toFixed(0);
+  return `${v < 0 ? "−" : ""}RM ${s}`;
+}
+
+/** Contribution LTV in MYR: revenue converted at the app FX, minus variable costs. */
+function contributionLtv(c: LiveCustomerDetail["contribution"] | undefined): { value: string; estimated: boolean } {
+  if (!c || c.orders === 0) return { value: "—", estimated: false };
+  const revMyr = Object.entries(c.revenue_by_currency ?? {}).reduce(
+    (s, [ccy, v]) => s + Number(v) * (FX_TO_MYR[ccy] ?? 1), 0);
+  const ltv = revMyr - Number(c.cogs_myr) - Number(c.delivery_myr) - Number(c.cod_myr);
+  // Modeled costs with unmapped SKU lines understate COGS — flag as estimate.
+  return { value: moneyMyr(ltv), estimated: c.unmapped_lines > 0 };
+}
+
+/** COD share + return rate; the label needs enough orders to mean anything. */
+function riskLine(r: LiveCustomerDetail["risk"] | undefined): string {
+  if (!r || r.total_orders === 0) return "—";
+  const codPct = Math.round((r.cod_orders / r.total_orders) * 100);
+  const rtsPct = Math.round((r.returned_orders / r.total_orders) * 100);
+  const label = r.total_orders < 3 ? "low signal"
+    : rtsPct >= 25 ? "high" : rtsPct >= 10 ? "elevated" : "low";
+  return `${label} · ${rtsPct}% returned · ${codPct}% COD`;
 }
 
 function revenueLine(byCcy: Record<string, number> | null): string {
@@ -182,6 +209,7 @@ function CustomerDetailInner() {
   const tier = tierOf(p.revenue_by_currency);
   const lc = lifecycle(p.last_order_at);
   const repeat = Number(p.total_orders) >= 5 ? "loyal" : Number(p.total_orders) > 1 ? "repeat" : "first-time";
+  const ltv = contributionLtv(detail.contribution);
 
   return (
     <PageBody className="max-w-none">
@@ -211,10 +239,10 @@ function CustomerDetailInner() {
         {[
           { label: "Lifetime orders", value: String(p.total_orders) },
           { label: "Recognized revenue", value: revenueLine(p.revenue_by_currency) },
-          { label: "Contribution LTV", value: "— until COGS connects" },
+          { label: ltv.estimated ? "Contribution LTV (est.)" : "Contribution LTV", value: ltv.value },
           { label: "Last order", value: relative(p.last_order_at) },
           { label: "Repeat state", value: repeat },
-          { label: "COD / return risk", value: "— not connected" },
+          { label: "COD / return risk", value: riskLine(detail.risk) },
         ].map((m) => (
           <div key={m.label} className="rounded-lg border bg-card px-3 py-2.5">
             <div className="text-[11px] text-muted-foreground">{m.label}</div>

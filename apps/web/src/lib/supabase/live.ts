@@ -463,6 +463,26 @@ export interface LiveCustomerDetail {
     placed_at: string | null;
   }[];
   wa_conversations: number;
+  /** Variable-cost rollup over ALL recognized orders (not just the 100 above).
+   * Costs are MYR (fighter-era orders use their actual recorded costs; the
+   * rest use contribution_cost_rules); revenue stays by currency. */
+  contribution: {
+    orders: number;
+    revenue_by_currency: Record<string, number>;
+    cogs_myr: number;
+    delivery_myr: number;
+    cod_myr: number;
+    actual_cost_orders: number;
+    unmapped_lines: number;
+  };
+  /** Status × payment split over ALL orders — COD share and return rate. */
+  risk: {
+    total_orders: number;
+    cod_orders: number;
+    returned_orders: number;
+    cancelled_orders: number;
+    cod_returned_orders: number;
+  };
 }
 
 export async function fetchLiveCustomerDetail(identityKey: string): Promise<LiveCustomerDetail | null> {
@@ -1095,6 +1115,8 @@ export interface GrowthAdsRow {
   spend: number;
   purchases: number | null;
   purchase_value: number | null;
+  impressions: number | null;
+  clicks: number | null;
   accounts: number;
   banned_spend: number | null;
 }
@@ -1107,6 +1129,8 @@ export interface GrowthTrendPoint {
   spend: number;
   purchases: number | null;
   purchase_value: number | null;
+  impressions: number | null;
+  clicks: number | null;
 }
 
 export interface GrowthAccount {
