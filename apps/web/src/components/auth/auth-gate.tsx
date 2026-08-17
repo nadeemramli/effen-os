@@ -118,7 +118,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           user_id: userId,
           workspace_id: workspaceId,
           default_brand_slug: slug,
-          default_date_range: dateRange,
+          // A custom range has no from/to in the row — keep the last preset.
+          ...(dateRange === "custom" ? {} : { default_date_range: dateRange }),
           updated_at: new Date().toISOString(),
         })
         .then(({ error }) => {

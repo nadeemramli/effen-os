@@ -45,5 +45,5 @@ export interface PreferencesRow {
   workspace_id: number;
   theme: "dark" | "light";
   default_brand_slug: string | null;
-  default_date_range: "today" | "7d" | "30d";
+  default_date_range: "today" | "7d" | "30d" | "90d" | "1y";
 }

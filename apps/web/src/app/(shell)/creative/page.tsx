@@ -165,7 +165,7 @@ function CreativeInner() {
       <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
         <Palette className="size-3.5" aria-hidden />
         Performance loops back: the fatigue flag on CRE-0009 comes from diagnosis DIA-0001 (AD-0003b CTR 1.8% → 0.9%) —
-        see <Link href="/prophit" className="text-info underline-offset-2 hover:underline">Prophit</Link>.
+        see <Link href="/profit" className="text-info underline-offset-2 hover:underline">Profit</Link>.
       </p>
 
       {/* launch approval */}

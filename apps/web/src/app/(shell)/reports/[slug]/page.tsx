@@ -123,7 +123,7 @@ function ReportDetailInner() {
             <p className="mt-2 text-[11px] text-muted-foreground">
               Drill through: <Link href="/orders" className="text-info underline-offset-2 hover:underline">orders</Link> ·{" "}
               <Link href="/marketing" className="text-info underline-offset-2 hover:underline">campaigns</Link> ·{" "}
-              <Link href="/prophit" className="text-info underline-offset-2 hover:underline">variance diagnosis</Link>
+              <Link href="/profit" className="text-info underline-offset-2 hover:underline">variance diagnosis</Link>
             </p>
           </CardContent>
         </Card>
@@ -324,7 +324,7 @@ function ReportDetailInner() {
           </table>
           <p className="mt-2 text-[11px] text-muted-foreground">
             VER-TON-100 shows no period sales because it has been stocked out — the constraint, not demand. See{" "}
-            <Link href="/prophit" className="text-info underline-offset-2 hover:underline">REC-0033</Link>.
+            <Link href="/profit" className="text-info underline-offset-2 hover:underline">REC-0033</Link>.
           </p>
         </CardContent>
       </Card>

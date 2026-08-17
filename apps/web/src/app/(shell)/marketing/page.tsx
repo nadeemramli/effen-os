@@ -955,7 +955,7 @@ function CampaignRows({
                 </div>
                 {stockoutSkus.length > 0 && (
                   <p className="rounded border border-destructive/25 bg-destructive/10 px-2 py-1.5 text-destructive">
-                    This campaign advertises a stocked-out SKU — see Prophit recommendation REC-0033.
+                    This campaign advertises a stocked-out SKU — see Growth recommendation REC-0033.
                   </p>
                 )}
                 <div className="flex items-center gap-2 text-muted-foreground">

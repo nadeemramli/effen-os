@@ -138,8 +138,8 @@ export default function CommandCenterPage() {
       icon: Sparkles,
       label: "Approvals waiting",
       count: pending.length,
-      detail: "Prophit recommendations awaiting a decision",
-      href: "/prophit",
+      detail: "Growth recommendations awaiting a decision",
+      href: "/profit",
       tone: "ai" as const,
     },
   ];
@@ -183,7 +183,7 @@ export default function CommandCenterPage() {
       <section aria-label="Morning briefing">
         <p className="max-w-3xl text-balance text-xl font-medium leading-relaxed tracking-tight">
           Good morning{persona.name === "Nadeem" ? "" : `, ${persona.name.split(" ")[0]}`}.{" "}
-          <Link href="/prophit" className="rounded text-ai underline decoration-ai/40 underline-offset-4 outline-none hover:decoration-ai focus-visible:ring-2 focus-visible:ring-ring">
+          <Link href="/profit" className="rounded text-ai underline decoration-ai/40 underline-offset-4 outline-none hover:decoration-ai focus-visible:ring-2 focus-visible:ring-ring">
             {word(pending.length)} item{pending.length === 1 ? "" : "s"} need{pending.length === 1 ? "s" : ""} a decision
           </Link>
           ,{" "}
@@ -293,7 +293,7 @@ export default function CommandCenterPage() {
         </ChartCard>
         <ChartCard
           title="Daily contribution, 30 days"
-          subtitle="Contribution after marketing vs the Prophit daily expectation"
+          subtitle="Contribution after marketing vs the Growth Engine daily expectation"
           right={<ChartLegend items={[{ label: "Plan", color: "var(--muted-foreground)" }, { label: "Actual", color: "var(--chart-1)" }]} />}
         >
           <ContributionTrend data={trend} currencyLabel="RM" />
@@ -330,7 +330,7 @@ export default function CommandCenterPage() {
                       w.entityRef.startsWith("order:")
                         ? `/orders/${w.entityRef.split(":")[1]}`
                         : w.entityRef.startsWith("recommendation:")
-                          ? "/prophit"
+                          ? "/profit"
                           : w.entityRef.startsWith("integration:")
                             ? `/integrations/${w.entityRef.split(":")[1]}`
                             : "/command-center"
@@ -355,10 +355,10 @@ export default function CommandCenterPage() {
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle className="flex items-center gap-1.5 text-sm font-medium">
               <Sparkles className="size-4 text-ai" aria-hidden />
-              Prophit recommendations
+              Growth recommendations
             </CardTitle>
             <Button asChild variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs">
-              <Link href="/prophit">
+              <Link href="/profit">
                 All <ArrowRight className="size-3" aria-hidden />
               </Link>
             </Button>
@@ -368,7 +368,7 @@ export default function CommandCenterPage() {
               .sort((a, b) => b.expectedContributionImpact - a.expectedContributionImpact)
               .slice(0, 4)
               .map((r) => (
-                <Link key={r.id} href="/prophit" className="block py-2.5 outline-none first:pt-0 last:pb-0 focus-visible:ring-2 focus-visible:ring-ring">
+                <Link key={r.id} href="/profit" className="block py-2.5 outline-none first:pt-0 last:pb-0 focus-visible:ring-2 focus-visible:ring-ring">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="truncate text-sm font-medium">{r.title}</span>
                     <span className="tnum shrink-0 text-sm font-semibold text-success">

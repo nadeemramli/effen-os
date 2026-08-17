@@ -1128,6 +1128,8 @@ export interface ContributionRow {
 export interface LiveContribution {
   rules: ContributionRules | null;
   rows: ContributionRow[];
+  /** Freshness of the commerce_daily spine the rows were summed from (null when empty). */
+  refreshed_at?: string | null;
 }
 
 /** Revenue + full variable-cost lines per brand × market for an inclusive MYT range (max 400 days). */
