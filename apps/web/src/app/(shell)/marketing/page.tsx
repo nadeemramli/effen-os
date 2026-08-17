@@ -768,9 +768,9 @@ function MarketingInner() {
             }
             info={{
               title: "Contribution after ads (CM3)",
-              formula: `Fullkit revenue − COGS (RM ${Math.round(liveView.cogs).toLocaleString()}) − delivery (RM ${Math.round(liveView.delivery).toLocaleString()}) − returns (RM ${Math.round(liveView.returnsCost).toLocaleString()} · ${liveView.rtsParcels} RTS parcels) − COD fees (RM ${Math.round(liveView.codCost).toLocaleString()}) − ad spend (RM ${Math.round(liveView.spend).toLocaleString()}) − WHT (RM ${Math.round(liveView.wht).toLocaleString()}).`,
+              formula: `Fullkit revenue − COGS (RM ${Math.round(liveView.cogs).toLocaleString()}) − delivery (RM ${Math.round(liveView.delivery).toLocaleString()}) − returns (RM ${Math.round(liveView.returnsCost).toLocaleString()} · ${Math.round(liveView.rtsParcels).toLocaleString()} RTS parcels) − COD fees (RM ${Math.round(liveView.codCost).toLocaleString()}) − ad spend (RM ${Math.round(liveView.spend).toLocaleString()}) − WHT (RM ${Math.round(liveView.wht).toLocaleString()}).`,
               source: "Orders (zone by postcode, COD by payment method) + NinjaVan RTS parcels + warehouse ad spend + Finance cost rules",
-              caveat: "Launching email/SMS and other marketing costs have no data source yet. Fixed costs (payroll, rent, tools) excluded — this is contribution, not net profit. Pack sizes default to 1 until set, understating COGS.",
+              caveat: "Launching email/SMS and other marketing costs have no data source yet. Fixed costs (payroll, rent, tools) excluded — this is contribution, not net profit. Pack sizes default to 1 until set, understating COGS. RTS parcels are Fighter-booked and mostly unlinked to orders, so their return cost is allocated across MY brands by order share.",
             }}
           />
         </section>

@@ -245,6 +245,8 @@ function ProfitInner() {
       adsMissing: ads === null,
       rules: contribution.rules,
       refreshedAt: contribution.refreshed_at ?? null,
+      rtsLinked: Number(contribution.rts_linked_parcels ?? 0),
+      rtsUnlinked: Number(contribution.rts_unlinked_parcels ?? 0),
     };
   }, [data, liveBrandId, liveMarkets, bounds.from, bounds.to]);
 
@@ -320,9 +322,9 @@ function ProfitInner() {
               hint={`Delivery ${rm(view.total.delivery)} · returns ${rm(view.total.returns)} · COD ${rm(view.total.cod)}`}
               info={{
                 title: "Fulfilment cost",
-                formula: `One parcel per recognized order at the zone rate (west RM ${view.rules?.delivery_my_west ?? 8.5} · east RM ${view.rules?.delivery_my_east ?? 15} · SG RM ${view.rules?.delivery_sg_myr ?? 35}); returns = RTS parcels × blended zone rate (${view.total.rtsParcels} parcels); COD = COD orders × RM ${view.rules?.cod_fee ?? 5}.`,
-                source: "Orders (zone by postcode, COD by payment method) + NinjaVan RTS parcels + Finance cost rules",
-                caveat: "SG returns have no courier feed yet — returns are MY only.",
+                formula: `One parcel per recognized order at the zone rate (west RM ${view.rules?.delivery_my_west ?? 8.5} · east RM ${view.rules?.delivery_my_east ?? 15} · SG RM ${view.rules?.delivery_sg_myr ?? 35}); returns = Ninja Van returned-to-sender parcels × blended zone rate (${Math.round(view.total.rtsParcels).toLocaleString()} parcels in window: ${view.rtsLinked.toLocaleString()} linked to an order, ${view.rtsUnlinked.toLocaleString()} allocated to MY brands by order share); COD = COD orders × RM ${view.rules?.cod_fee ?? 5}.`,
+                source: "Orders (zone by postcode, COD by payment method) + Ninja Van RTS events (first \"Returned to Sender\" per parcel) + Finance cost rules",
+                caveat: "Parcels are Fighter-booked, so most carry no store order: their return cost is allocated across MY brands by order share until Fullkit books Ninja Van itself. SG returns have no courier feed yet.",
               }}
             />
             <MetricCard
@@ -452,7 +454,7 @@ function ProfitInner() {
                 <p className="font-medium text-foreground">Out of scope by design</p>
                 <p>This is contribution, not net profit. Fixed costs (payroll, rent, tools) live with Finance and are not modelled here. Payment-gateway fees and marketplace commissions will be added when a marketplace is connected and settlement data lands.</p>
                 <ul className="list-disc space-y-1 pl-4">
-                  <li>SG returns have no courier feed, so returns are MY only.</li>
+                  <li>Returns count Ninja Van &quot;Returned to Sender&quot; parcels; most are Fighter-booked with no store order, so their cost is allocated to MY brands by order share (labelled in the Fulfilment card). SG returns have no courier feed.</li>
                   <li>Pack sizes default to 1 until set, which understates COGS.</li>
                   <li>SGD is converted at a fixed display rate (×{FX_TO_MYR.SGD}); pick one market for a pure-currency P&L.</li>
                   <li>Cost rules are edited in SQL today (<code>save_contribution_rules</code>).</li>

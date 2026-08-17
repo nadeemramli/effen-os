@@ -89,3 +89,34 @@ postcode, address line, COD amount.
 - Billing vs shipping: Woo orders can carry a distinct shipping block; the
   grader and payload builder prefer `raw->shipping` per field, falling back
   to billing, and `state` joins the correctable-field allowlist.
+
+## Addendum 2026-08-17 — returns (RTS) tracking
+
+Returns showed RM0 everywhere although 557 parcels had a "Returned to
+Sender" event since the webhook went live. Verified causes and what
+changed (`20260817000008_nv_returns.sql`):
+
+- `nv_shipments.brand_id` was never written and the contribution `rts`
+  join was NULL-unsafe. Now `nv_shipments` carries durable **`rts_at`**
+  (first RTS event), `rts_reason`, `on_rts_leg`, `order_read_id`,
+  maintained by triggers on `nv_events` / `nv_shipments`; the webhook's
+  out-of-order guard compares instants (it compared differently shaped
+  timestamp strings and never fired).
+- Linkage: `private.link_nv_shipment` resolves `FIGHTER-<id>` through the
+  Fighter staging (~107 of 8,711 parcels — the export ends before the
+  webhook started), then `orders_read.order_number = order_ref` (the ref
+  Fullkit will use once it books NV). The webhook payload has no
+  recipient/COD/brand, so no further linkage is possible today; it becomes
+  native when the pipeline goes live. Decided: no NV order-details API
+  ask and no recurring Fighter export for this — wait for live.
+- Attribution in `live_contribution_range`: linked parcels count on their
+  brand; unlinked ones are **allocated across MY brand rows by
+  recognized-order share**, and the payload says so
+  (`rts_linked_parcels`, `rts_unlinked_parcels`, `rts_allocated`). Profit
+  and Marketing label the number accordingly.
+- Fulfilment gains a "Returned to sender" lane (`live_nv_returns`):
+  returned in window, in return transit (on RTS leg, not back), avg days
+  pickup→RTS, reason breakdown, latest parcels. RTS parcels no longer
+  double-list as generic courier exceptions.
+- `live_production` RTS/"already shipped" joins go through
+  `order_read_id` (honest but sparse until linkage exists).

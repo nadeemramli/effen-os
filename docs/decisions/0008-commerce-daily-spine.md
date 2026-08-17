@@ -48,6 +48,9 @@ Reconciled: spine orders/revenue == recognized orders in `orders_read`.
 
 ## Consequences
 
+- Returns in the P&L are real as of 2026-08-17 (durable `rts_at`, linked
+  or allocated by MY order share — see ADR-0006 addendum), previously RM0
+  by defect.
 - Freshness for range P&L is now ≤15 min (badge on the page: "Orders as
   of …"). Today's live counts elsewhere (scorecard `live_scorecard`,
   `live_unit_economics`) still read `orders_read` directly.

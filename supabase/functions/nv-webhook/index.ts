@@ -93,8 +93,12 @@ async function ingestEvent(workspaceId: number, ev: NvEvent): Promise<boolean> {
   if (evErr) return false;
 
   // Advance the rollup only for events at or after the newest we have seen —
-  // webhook deliveries can arrive out of order.
-  if (!shipment.last_event_at || shipment.last_event_at <= eventAt) {
+  // webhook deliveries can arrive out of order. Compare instants, not
+  // strings: PostgREST returns "+00:00" and toISOString() ends in ".000Z",
+  // so a lexical compare let stale events overwrite terminal statuses.
+  // (Durable RTS facts — rts_at / rts_reason / on_rts_leg — are maintained
+  // by the nv_events_rts_trg trigger, independent of this rollup.)
+  if (!shipment.last_event_at || Date.parse(shipment.last_event_at) <= Date.parse(eventAt)) {
     await supabase
       .from("nv_shipments")
       .update({

@@ -1117,6 +1117,7 @@ export interface ContributionRow {
   revenue: number;
   base_units: number;
   unmapped_lines: number;
+  /** May be fractional: unlinked RTS parcels are allocated by order share. */
   rts_parcels: number;
   /** Cost lines are MYR (rules are MYR; the operator sheets convert SG the same way). */
   cogs_myr: number;
@@ -1130,6 +1131,46 @@ export interface LiveContribution {
   rows: ContributionRow[];
   /** Freshness of the commerce_daily spine the rows were summed from (null when empty). */
   refreshed_at?: string | null;
+  /** RTS parcels tied to an order → counted on their brand exactly. */
+  rts_linked_parcels?: number;
+  /** RTS parcels with no order link → allocated across MY brand rows by order share. */
+  rts_unlinked_parcels?: number;
+  rts_allocated?: boolean;
+}
+
+/* ---------- Ninja Van returns (RTS) ---------- */
+
+export interface NvReturnRow {
+  id: number;
+  tracking_id: string;
+  order_ref: string | null;
+  rts_at: string;
+  rts_reason: string | null;
+  on_rts_leg: boolean;
+  brand_id: number | null;
+  order_read_id: number | null;
+  order_number: string | null;
+}
+
+export interface NvReturns {
+  window_days: number;
+  summary: {
+    returned: number;
+    linked: number;
+    /** Parcels currently on the return leg that have not reached the sender yet. */
+    in_return_transit: number;
+    avg_days_to_rts: number | null;
+  };
+  by_reason: { reason: string; n: number }[];
+  by_day: { day: string; n: number }[];
+  rows: NvReturnRow[];
+}
+
+/** Returned-to-sender parcels from the NV webhook feed (durable rts_at, not the rollup status). */
+export async function fetchNvReturns(days = 14): Promise<NvReturns> {
+  const { data, error } = await getSupabase().rpc("live_nv_returns", { p_days: days });
+  if (error) throw new Error(error.message);
+  return data as NvReturns;
 }
 
 /** Revenue + full variable-cost lines per brand × market for an inclusive MYT range (max 400 days). */
