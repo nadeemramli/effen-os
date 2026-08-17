@@ -26,6 +26,8 @@ import {
   type GrowthAds,
   type LiveBrand,
   type LiveContribution,
+  whtFor,
+  whtSchedule,
 } from "@/lib/supabase/live";
 import { rangeBounds, rangeDays, rangeLabel } from "@/lib/store";
 import { formatMoney, formatPercent } from "@/lib/domain/money";
@@ -104,7 +106,7 @@ interface PnL {
   unmappedLines: number;
 }
 
-function pnl(rows: ContributionRow[], spend: number, whtRate: number): PnL {
+function pnl(rows: ContributionRow[], spend: number, wht: number): PnL {
   const sum = (f: (r: ContributionRow) => number) => rows.reduce((s, r) => s + f(r), 0);
   const revenue = sum((r) => toMYR(Number(r.revenue), r.currency_code));
   const cogs = sum((r) => Number(r.cogs_myr));
@@ -113,7 +115,6 @@ function pnl(rows: ContributionRow[], spend: number, whtRate: number): PnL {
   const cod = sum((r) => Number(r.cod_myr));
   const mappedUnits = sum((r) => Number(r.base_units));
   const unmappedLines = sum((r) => Number(r.unmapped_lines));
-  const wht = spend * whtRate;
   // CM2 = revenue − COGS − fulfilment (delivery, return legs, COD fees);
   // CM3 = CM2 − ads − WHT. NOT net profit — fixed costs are not modelled.
   const cm2 = revenue - cogs - delivery - returns - cod;
@@ -168,7 +169,9 @@ function ProfitInner() {
   const view = useMemo(() => {
     if (!data) return null;
     const { contribution, ads, brands } = data;
-    const whtRate = Number(contribution.rules?.wht_rate ?? 0.08);
+    // WHT: per spend day × platform from the dated Finance rules (Meta only).
+    const whtFallback = Number(contribution.rules?.wht_rate ?? 0.08);
+    const history = contribution.rule_history;
     const scopeSlug = liveBrandId === null ? null : (brands.find((b) => b.id === liveBrandId)?.slug ?? null);
     const scopeBrandIds = scopeSlug === null ? null : new Set(brands.filter((b) => b.slug === scopeSlug).map((b) => b.id));
     const rowOk = (r: ContributionRow) =>
@@ -179,21 +182,24 @@ function ProfitInner() {
 
     // Ad spend from the warehouse trend, windowed to the range and scope.
     const trend = (ads?.trend ?? []).filter((t) => adOk(t.brand_slug, t.market));
-    const spendIn = (from: string, to: string) =>
-      trend.filter((t) => t.date >= from && t.date <= to).reduce((s, t) => s + Number(t.spend), 0);
+    const inWindow = (from: string, to: string) => trend.filter((t) => t.date >= from && t.date <= to);
+    const spendIn = (from: string, to: string) => inWindow(from, to).reduce((s, t) => s + Number(t.spend), 0);
+    const whtIn = (from: string, to: string) => whtFor(inWindow(from, to), history, whtFallback);
 
     const rows = contribution.rows.filter(rowOk);
-    const total = pnl(rows, spendIn(bounds.from, bounds.to), whtRate);
+    const total = pnl(rows, spendIn(bounds.from, bounds.to), whtIn(bounds.from, bounds.to));
 
     // Brand × market table — every combination in the window, scope still applies.
     const bySlug = new Map<string, LiveBrand>();
     for (const b of brands) bySlug.set(b.slug, b);
     const spendByKey = new Map<string, number>();
+    const whtByKey = new Map<string, number>();
     for (const t of trend) {
       if (t.date < bounds.from || t.date > bounds.to) continue;
       const brand = t.brand_slug ? bySlug.get(t.brand_slug) : undefined;
       const k = `${brand?.id ?? "null"}|${t.market ?? "—"}`;
       spendByKey.set(k, (spendByKey.get(k) ?? 0) + Number(t.spend));
+      whtByKey.set(k, (whtByKey.get(k) ?? 0) + whtFor([t], history, whtFallback));
     }
     const groups = new Map<string, { brandId: number | null; market: string; rows: ContributionRow[] }>();
     for (const r of rows) {
@@ -204,7 +210,7 @@ function ProfitInner() {
     }
     const table = [...groups.entries()]
       .map(([k, g]) => {
-        const p = pnl(g.rows, spendByKey.get(k) ?? 0, whtRate);
+        const p = pnl(g.rows, spendByKey.get(k) ?? 0, whtByKey.get(k) ?? 0);
         const brand = g.brandId === null ? null : brands.find((b) => b.id === g.brandId);
         return { key: k, brand: brand?.name ?? (g.brandId === null ? "Unattributed" : `Brand ${g.brandId}`), market: g.market, ...p };
       })
@@ -212,10 +218,13 @@ function ProfitInner() {
     const unattributedSpend = [...spendByKey.entries()]
       .filter(([k]) => !groups.has(k))
       .reduce((s, [, v]) => s + v, 0);
+    const unattributedWht = [...whtByKey.entries()]
+      .filter(([k]) => !groups.has(k))
+      .reduce((s, [, v]) => s + v, 0);
 
     // Trend by bucket (scope applied per bucket).
     const trendData: MarginDatum[] = data.buckets.map(({ bucket, contribution: c }) => {
-      const p = pnl(c.rows.filter(rowOk), spendIn(bucket.from, bucket.to), Number(c.rules?.wht_rate ?? whtRate));
+      const p = pnl(c.rows.filter(rowOk), spendIn(bucket.from, bucket.to), whtIn(bucket.from, bucket.to));
       const gated = p.coverage >= COVERAGE_GATE && p.revenue > 0;
       return {
         label: bucket.label,
@@ -239,7 +248,8 @@ function ProfitInner() {
 
     const currencies = new Set(rows.map((r) => r.currency_code));
     return {
-      total, table, trendData, bridge, unattributedSpend, whtRate,
+      total, table, trendData, bridge, unattributedSpend, unattributedWht,
+      whtNote: whtSchedule(history, whtFallback),
       gated: total.coverage >= COVERAGE_GATE && total.revenue > 0,
       mixedCurrency: currencies.size > 1,
       adsMissing: ads === null,
@@ -343,11 +353,11 @@ function ProfitInner() {
               metricKey="ad_spend"
               label="Ad spend + WHT"
               value={rm(view.total.spend + view.total.wht)}
-              hint={`Spend ${rm(view.total.spend)} · WHT ${formatPercent(view.whtRate, 0)} = ${rm(view.total.wht)}`}
+              hint={`Spend ${rm(view.total.spend)} · WHT ${view.total.wht > 0 ? rm(view.total.wht) : "RM0"} (${view.whtNote})`}
               info={{
                 title: "Advertising cost",
-                formula: "Warehouse ad spend (all platforms) in the window and scope, plus withholding tax at the Finance rate on foreign-platform spend.",
-                source: "Warehouse pipeline (ADR-0003) + contribution_cost_rules",
+                formula: `Warehouse ad spend (all platforms) in the window and scope, plus withholding tax applied per spend day to Meta spend only, at the Finance rule effective that day: ${view.whtNote}. Ad billing moved to the Dubai entity in Feb 2026, so WHT stopped.`,
+                source: "Warehouse pipeline (ADR-0003) + contribution_cost_rules (dated)",
                 caveat: view.unattributedSpend > 0 ? `${rm(view.unattributedSpend)} of spend has no matching brand × market row and is counted only in the total.` : undefined,
               }}
             />
@@ -433,7 +443,7 @@ function ProfitInner() {
                     <tr className="border-t [&>td]:px-3 [&>td]:py-2 [&>td]:text-right [&>td:first-child]:text-left [&>td:nth-child(2)]:text-left tnum text-muted-foreground">
                       <td className="italic">Ads without a matching brand × market</td>
                       <td>—</td><td /><td /><td /><td /><td /><td /><td />
-                      <td>{rmFull(view.unattributedSpend * (1 + view.whtRate))}</td>
+                      <td>{rmFull(view.unattributedSpend + view.unattributedWht)}</td>
                       <td colSpan={3} className="text-left italic">counted in the total CM3 only</td>
                     </tr>
                   )}
@@ -447,7 +457,7 @@ function ProfitInner() {
             <CardContent className="grid gap-4 text-xs text-muted-foreground md:grid-cols-2">
               <div className="space-y-1.5">
                 <p className="font-medium text-foreground">Modelled (live)</p>
-                <p>Revenue and orders from the order mirror (recognized = processing + completed), MYT business days. COGS = pack-expanded units × RM {view.rules?.unit_cost_myr ?? 7}. Delivery: one parcel per order at west RM {view.rules?.delivery_my_west ?? 8.5} / east RM {view.rules?.delivery_my_east ?? 15} / SG RM {view.rules?.delivery_sg_myr ?? 35}. Returns: NinjaVan RTS parcels × blended zone rate. COD: RM {view.rules?.cod_fee ?? 5} per COD order. Ads: warehouse spend, all platforms, plus {formatPercent(view.whtRate, 0)} WHT. Rules effective {view.rules?.effective_from ?? "—"}{view.rules?.note ? ` — ${view.rules.note}` : ""}.</p>
+                <p>Revenue and orders from the order mirror (recognized = processing + completed), MYT business days. COGS = pack-expanded units × RM {view.rules?.unit_cost_myr ?? 7}. Delivery: one parcel per order at west RM {view.rules?.delivery_my_west ?? 8.5} / east RM {view.rules?.delivery_my_east ?? 15} / SG RM {view.rules?.delivery_sg_myr ?? 35}. Returns: NinjaVan RTS parcels × blended zone rate. COD: RM {view.rules?.cod_fee ?? 5} per COD order. Ads: warehouse spend, all platforms; WHT {view.whtNote}, applied per spend day. Cost rules are dated and applied per day; latest effective {view.rules?.effective_from ?? "—"}{view.rules?.note ? ` — ${view.rules.note}` : ""}.</p>
                 <p>Same arithmetic as the <Link href="/marketing" className="text-info underline-offset-2 hover:underline">Marketing</Link> CM cards and the Customer 360 contribution card, so the three never disagree.</p>
               </div>
               <div className="space-y-1.5">

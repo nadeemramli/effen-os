@@ -48,6 +48,12 @@ Reconciled: spine orders/revenue == recognized orders in `orders_read`.
 
 ## Consequences
 
+- Cost rules apply **per day** (2026-08-17): `live_contribution_range`
+  joins each spine day to the rule effective that day and returns
+  `rule_history`; the client applies WHT per spend day to **Meta spend
+  only**. WHT is 8% until 31 Jan 2026 and 0% from 1 Feb 2026 (ad billing
+  moved to the Dubai entity). Future rule changes: `save_contribution_rules`
+  with a new `effective_from` — no code change.
 - Returns in the P&L are real as of 2026-08-17 (durable `rts_at`, linked
   or allocated by MY order share — see ADR-0006 addendum), previously RM0
   by defect.

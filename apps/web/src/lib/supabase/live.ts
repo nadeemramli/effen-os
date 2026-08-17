@@ -1136,6 +1136,46 @@ export interface LiveContribution {
   /** RTS parcels with no order link → allocated across MY brand rows by order share. */
   rts_unlinked_parcels?: number;
   rts_allocated?: boolean;
+  /** Every cost rule with effective_from ≤ range end, ascending — apply per day. */
+  rule_history?: ContributionRules[];
+}
+
+/** WHT applies to Meta spend only (decided 2026-08-17): the Malaysian entity's
+ * withholding on foreign platform invoices; other platforms never carried it. */
+export const WHT_PLATFORMS = new Set(["meta"]);
+
+/** Rate of the rule effective on `dateIso` (YYYY-MM-DD); `fallback` when no rule covers it. */
+export function whtRateOn(history: ContributionRules[] | undefined, dateIso: string, fallback: number): number {
+  let rate: number | null = null;
+  for (const r of history ?? []) {
+    if (r.effective_from <= dateIso) rate = Number(r.wht_rate);
+    else break;
+  }
+  return rate ?? fallback;
+}
+
+/** WHT amount for a set of daily spend rows: Σ Meta spend × the rate effective that day. */
+export function whtFor(
+  rows: { date: string; platform: string; spend: number | string }[],
+  history: ContributionRules[] | undefined,
+  fallback: number,
+): number {
+  let wht = 0;
+  for (const r of rows) {
+    if (!WHT_PLATFORMS.has(r.platform)) continue;
+    wht += Number(r.spend) * whtRateOn(history, r.date, fallback);
+  }
+  return wht;
+}
+
+/** Human summary of the WHT schedule, e.g. "8% on Meta spend until 31 Jan 2026 · 0% from 1 Feb 2026". */
+export function whtSchedule(history: ContributionRules[] | undefined, fallback: number): string {
+  const rules = (history ?? []).filter((r, i, arr) => i === 0 || Number(r.wht_rate) !== Number(arr[i - 1].wht_rate));
+  if (rules.length === 0) return `${Math.round(fallback * 100)}% on Meta spend`;
+  const fmt = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return rules
+    .map((r, i) => `${Math.round(Number(r.wht_rate) * 100)}%${i === 0 ? " on Meta spend" : ""} ${i === rules.length - 1 ? `from ${fmt(r.effective_from)}` : `until ${fmt(rules[i + 1].effective_from)}`}`)
+    .join(" · ");
 }
 
 /* ---------- Ninja Van returns (RTS) ---------- */

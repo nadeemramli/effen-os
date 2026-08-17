@@ -24,6 +24,7 @@ import {
   type GrowthAds,
   type LiveBrand,
   type LiveContribution,
+  whtFor,
 } from "@/lib/supabase/live";
 import { rangeBounds, rangeDays as spanDays, rangeLabel } from "@/lib/store";
 import { formatMoney, formatPercent, formatRatio } from "@/lib/domain/money";
@@ -200,8 +201,9 @@ function MarketingInner() {
     const mappedUnits = scoped.reduce((s, r) => s + Number(r.base_units), 0);
     const unmappedLines = scoped.reduce((s, r) => s + Number(r.unmapped_lines), 0);
     const costedCoverage = mappedUnits + unmappedLines > 0 ? mappedUnits / (mappedUnits + unmappedLines) : 0;
-    const whtRate = Number(contribution.rules?.wht_rate ?? 0.08);
-    const wht = spend * whtRate;
+    // WHT per spend day on Meta spend only, at the dated Finance rule (8%
+    // until Jan 2026, 0% from Feb 2026 — ad billing moved to Dubai).
+    const wht = whtFor(windowed, contribution.rule_history, Number(contribution.rules?.wht_rate ?? 0.08));
     // CM2 = revenue − COGS − fulfilment (delivery, return legs, COD fees);
     // CM3 = CM2 − ads − WHT. NOT net profit — fixed costs (payroll, rent,
     // tools) are not modelled; launching email/SMS costs have no source yet.
@@ -238,20 +240,21 @@ function MarketingInner() {
     const { ads, liveBrands, contribution } = growth;
     const mktOk = (m: string | null) => liveMarkets.length === 0 || liveMarkets.includes(m ?? "");
 
-    const bySlug = new Map<string | null, { spend: number; purchases: number; value: number }>();
+    const whtFallback = Number(contribution.rules?.wht_rate ?? 0.08);
+    const bySlug = new Map<string | null, { spend: number; purchases: number; value: number; wht: number }>();
     for (const t of ads.trend) {
       if (!mktOk(t.market) || t.date < bounds.from || t.date > bounds.to) continue;
       if (platformFilter.length > 0 && !platformFilter.includes(t.platform)) continue;
-      const cur = bySlug.get(t.brand_slug) ?? { spend: 0, purchases: 0, value: 0 };
+      const cur = bySlug.get(t.brand_slug) ?? { spend: 0, purchases: 0, value: 0, wht: 0 };
       cur.spend += Number(t.spend);
       cur.purchases += Number(t.purchases ?? 0);
       cur.value += Number(t.purchase_value ?? 0);
+      cur.wht += whtFor([t], contribution.rule_history, whtFallback);
       bySlug.set(t.brand_slug, cur);
     }
 
     const revenueBySlug = new Map<string, number>();
     const econBySlug = new Map<string, { cogs: number; varCosts: number; units: number; unmapped: number }>();
-    const whtRate = Number(contribution.rules?.wht_rate ?? 0.08);
     for (const r of contribution.rows) {
       if (!mktOk(r.market) || r.brand_id === null) continue;
       const slug = liveBrands.find((b) => b.id === r.brand_id)?.slug;
@@ -267,12 +270,12 @@ function MarketingInner() {
 
     const slugs = new Set<string | null>([...bySlug.keys(), ...revenueBySlug.keys()]);
     const rows = [...slugs].map((slug) => {
-      const ad = bySlug.get(slug) ?? { spend: 0, purchases: 0, value: 0 };
+      const ad = bySlug.get(slug) ?? { spend: 0, purchases: 0, value: 0, wht: 0 };
       const revenue = slug === null ? 0 : (revenueBySlug.get(slug) ?? 0);
       const brand = slug === null ? undefined : liveBrands.find((b) => b.slug === slug);
       const econ = slug === null ? undefined : econBySlug.get(slug);
       const coverage = econ && econ.units + econ.unmapped > 0 ? econ.units / (econ.units + econ.unmapped) : 0;
-      const wht = ad.spend * whtRate;
+      const wht = ad.wht;
       // CM3 only renders on ≥90% SKU-mapping coverage — the house rule:
       // no margin math built on thin data.
       const cm3 = econ && coverage >= 0.9 && revenue > 0
@@ -489,7 +492,8 @@ function MarketingInner() {
             </div>
             <p className="mt-2 text-[11px] text-muted-foreground">
               *CM3 = revenue − COGS − fulfilment (zone delivery + return legs + COD fees) − ad spend − WHT on ad
-              spend, per the Finance cost rules (unit RM7 · west RM8.50 · east RM15 · SG RM35 · COD RM5 · WHT 8%).
+              spend, per the dated Finance cost rules (unit RM7 · west RM8.50 · east RM15 · SG RM35 · COD RM5 ·
+              WHT 8% on Meta spend until Jan 2026, none from Feb 2026 — ad billing moved to the Dubai entity).
               Returns: courier RTS legs costed per parcel; returned-order revenue nets out via order statuses.
               Launching email/SMS costs have no data source yet. Net profit would further remove fixed costs
               (payroll, rent, tools) — not modelled. A brand renders “—” below 90% SKU-mapping coverage.
