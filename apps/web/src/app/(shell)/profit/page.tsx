@@ -441,7 +441,7 @@ function ProfitInner() {
           </Card>
 
           <Card>
-            <CardHeader><CardTitle className="text-sm font-medium">How this is computed — and what it still lacks</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-sm font-medium">How this is computed</CardTitle></CardHeader>
             <CardContent className="grid gap-4 text-xs text-muted-foreground md:grid-cols-2">
               <div className="space-y-1.5">
                 <p className="font-medium text-foreground">Modelled (live)</p>
@@ -449,14 +449,13 @@ function ProfitInner() {
                 <p>Same arithmetic as the <Link href="/marketing" className="text-info underline-offset-2 hover:underline">Marketing</Link> CM cards and the Customer 360 contribution card, so the three never disagree.</p>
               </div>
               <div className="space-y-1.5">
-                <p className="font-medium text-foreground">Not yet modelled — needed to reach net profit</p>
+                <p className="font-medium text-foreground">Out of scope by design</p>
+                <p>This is contribution, not net profit. Fixed costs (payroll, rent, tools) live with Finance and are not modelled here. Payment-gateway fees and marketplace commissions will be added when a marketplace is connected and settlement data lands.</p>
                 <ul className="list-disc space-y-1 pl-4">
-                  <li>Fixed costs: payroll, rent, tools/subscriptions (needs a monthly opex input table).</li>
-                  <li>Payment-gateway fees and marketplace commissions (needs settlement files or fee rules).</li>
-                  <li>Email/SMS/retention marketing spend (no data source yet).</li>
-                  <li>SG returns (no SG courier feed); pack sizes default to 1 until set, understating COGS.</li>
-                  <li>FX: SGD is converted at a fixed display rate (×{FX_TO_MYR.SGD}); no governed rate table.</li>
-                  <li>Cost rules are editable only in SQL today (<code>save_contribution_rules</code>) — a Finance form is the next step.</li>
+                  <li>SG returns have no courier feed, so returns are MY only.</li>
+                  <li>Pack sizes default to 1 until set, which understates COGS.</li>
+                  <li>SGD is converted at a fixed display rate (×{FX_TO_MYR.SGD}); pick one market for a pure-currency P&L.</li>
+                  <li>Cost rules are edited in SQL today (<code>save_contribution_rules</code>).</li>
                 </ul>
               </div>
             </CardContent>
