@@ -21,7 +21,8 @@ hashed semi-join after statement timeouts on `orders_read` (121k rows).
 **7× WARN “Signed-in users can execute SECURITY DEFINER function”**
 (`live_customers`, `live_customer_detail`, `save_order_correction`,
 `map_wa_number`, `set_woo_connection`, `set_nv_connection`,
-`set_wa_connection`).
+`set_wa_connection`; since 2026-08-17 also `live_customers_export` and
+`live_customer_addresses`, same shape and gate as `live_customers`).
 
 The linter cannot see inside a function; these are intentional. Verified
 2026-08-02, and required for any future function of this shape:
@@ -37,9 +38,19 @@ The linter cannot see inside a function; these are intentional. Verified
   Vault secrets. INVOKER would break them, and direct table grants would
   be worse.
 
-Caveat recorded: `live_customers` / `live_customer_detail` gate on
+Caveat recorded: `live_customers` / `live_customers_export` / `live_customer_detail` gate on
 membership of the *first* workspace (`min(id)`). Correct while Fullkit is
 single-workspace; must be re-scoped if a second workspace is ever created.
+
+**1× WARN “Function Search Path Mutable” — `private.latest_address(text)`**
+(2026-08-17). Deliberate: Postgres will not inline a SQL function that
+carries a `SET` clause, and this helper must inline so each CSV export
+row is a plain probe on `orders_read_identity_expr_idx` (Function Scan
+≈2.9ms/row vs inlined ≈0.02ms/row warm). It is INVOKER, fully
+schema-qualified, lives in `private` (not API-exposed, EXECUTE revoked
+from `anon`/`authenticated`), and is only called from SECURITY DEFINER
+RPCs that pin `search_path = ''` themselves. Re-verify if it ever moves
+to `public` or gains a grant.
 
 ## Accepted — review by 2026-09-01
 

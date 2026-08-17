@@ -406,17 +406,48 @@ export async function deleteSegment(id: number): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-export interface CustomerAddressRow extends Omit<CustomerAddress, "corrected"> {
-  identity_key: string;
+/** One CSV export row: customer profile + latest delivery address (correction-overlaid). */
+export interface CustomerExportRow extends Omit<LiveCustomerRow, "total_count"> {
+  address_1: string | null;
+  address_2: string | null;
+  addr_city: string | null;
+  addr_state: string | null;
+  postcode: string | null;
+  addr_country: string | null;
+  address_order_number: string | null;
+  address_placed_at: string | null;
+  address_corrected: boolean | null;
 }
 
-/** Latest delivery address per identity (correction-overlaid), for CSV export. Max 20k keys. */
-export async function fetchCustomerAddresses(identityKeys: string[]): Promise<CustomerAddressRow[]> {
-  const { data, error } = await getSupabase().rpc("live_customer_addresses", {
-    p_identity_keys: identityKeys,
+/** Hard ceiling PostgREST applies to any set-returning response (project `max_rows`). */
+export const CUSTOMER_EXPORT_PAGE_SIZE = 1000;
+
+/**
+ * One page of the customer CSV export — same filter semantics as
+ * fetchLiveCustomers, address joined server-side (live_customers_export RPC).
+ * Pages are ≤1000 rows (PostgREST max_rows); order is deterministic
+ * (last_order_at desc, identity_key), so pages never overlap. Set
+ * withAddress=false when no address column is picked to skip the per-row probe.
+ */
+export async function fetchCustomerExportPage(q: {
+  page: number;
+  search: string;
+  brandId: number | null;
+  countries?: string[] | null;
+  conditions?: SegmentCondition[] | null;
+  withAddress: boolean;
+}): Promise<CustomerExportRow[]> {
+  const { data, error } = await getSupabase().rpc("live_customers_export", {
+    p_page: q.page,
+    p_page_size: CUSTOMER_EXPORT_PAGE_SIZE,
+    p_search: q.search,
+    p_brand_id: q.brandId,
+    p_countries: q.countries && q.countries.length > 0 ? q.countries : null,
+    p_conditions: q.conditions && q.conditions.length > 0 ? q.conditions : null,
+    p_with_address: q.withAddress,
   });
   if (error) throw new Error(error.message);
-  return (data ?? []) as CustomerAddressRow[];
+  return (data ?? []) as CustomerExportRow[];
 }
 
 export interface CustomerAddress {

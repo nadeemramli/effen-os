@@ -73,6 +73,22 @@ order page's Customer 360 link now asks the server for the key
 (`order_identity_key(order_id)`) — the resolution expression lives in
 exactly one place, `public.identity_key()`.
 
+**CSV export (2026-08-17):** the customers page exports through
+`live_customers_export` — customer row + latest delivery address in one
+RPC row, ≤1000 rows/page (PostgREST `max_rows`), ordered
+`last_order_at desc, identity_key`, with a function-level 30s
+`statement_timeout`. Addresses come from `private.latest_address(key)`
+(one probe on `orders_read_identity_expr_idx`), shared with
+`live_customer_addresses`. The earlier client-side pattern — page
+`live_customers`, then hydrate 5,000 keys per `live_customer_addresses`
+call — timed out cold (57014 under `authenticated`'s 8s) and, when warm,
+was silently truncated to 1,000 address rows. Measured after: 7.2k
+filtered rows or the 20k cap in ~10s (4 pages in flight). Remaining cost
+is cold heap I/O per identity on `orders_read`; if exports grow, add a
+`(identity_key(customer, raw), placed_at desc)` index or carry the latest
+address on `private.customers_read` (then export is a pure MV read, at the
+price of ≤15-min-stale corrections).
+
 ## Consequences
 
 - Old `/customers/<key>` bookmarks break where keys changed (detail RPC

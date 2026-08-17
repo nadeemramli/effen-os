@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { parseAsInteger, parseAsString, useQueryState } from "nuqs";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ChevronLeft, ChevronRight, Download, Loader2, Plus, SlidersHorizontal, Users, X } from "lucide-react";
 import { toast } from "sonner";
@@ -33,13 +33,14 @@ import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { LiveGuard } from "@/components/auth/live-guard";
 import { getSupabase } from "@/lib/supabase/client";
 import {
+  CUSTOMER_EXPORT_PAGE_SIZE,
   deleteSegment,
-  fetchCustomerAddresses,
+  fetchCustomerExportPage,
   fetchLiveBrands,
   fetchLiveCustomers,
   fetchSegments,
   saveSegment,
-  type CustomerAddressRow,
+  type CustomerExportRow,
   type CustomerSegment,
   type LiveBrand,
   type LiveCustomerRow,
@@ -629,17 +630,17 @@ const EXPORT_COLUMNS: {
   key: string;
   label: string;
   group: "contact" | "address" | "commerce";
-  value: (r: LiveCustomerRow, a: CustomerAddressRow | undefined) => string;
+  value: (r: CustomerExportRow) => string;
 }[] = [
   { key: "name", label: "Name", group: "contact", value: (r) => r.display_name ?? "" },
   { key: "phone", label: "Phone", group: "contact", value: (r) => r.phone ?? "" },
   { key: "email", label: "Email", group: "contact", value: (r) => r.email ?? "" },
-  { key: "address_1", label: "Address line 1", group: "address", value: (_r, a) => a?.address_1 ?? "" },
-  { key: "address_2", label: "Address line 2", group: "address", value: (_r, a) => a?.address_2 ?? "" },
-  { key: "city", label: "City", group: "address", value: (r, a) => a?.city ?? r.city ?? "" },
-  { key: "state", label: "State", group: "address", value: (_r, a) => a?.state ?? "" },
-  { key: "postcode", label: "Postcode", group: "address", value: (_r, a) => a?.postcode ?? "" },
-  { key: "country", label: "Country", group: "address", value: (r, a) => a?.country ?? r.country ?? "" },
+  { key: "address_1", label: "Address line 1", group: "address", value: (r) => r.address_1 ?? "" },
+  { key: "address_2", label: "Address line 2", group: "address", value: (r) => r.address_2 ?? "" },
+  { key: "city", label: "City", group: "address", value: (r) => r.addr_city ?? r.city ?? "" },
+  { key: "state", label: "State", group: "address", value: (r) => r.addr_state ?? "" },
+  { key: "postcode", label: "Postcode", group: "address", value: (r) => r.postcode ?? "" },
+  { key: "country", label: "Country", group: "address", value: (r) => r.addr_country ?? r.country ?? "" },
   { key: "total_orders", label: "Total orders", group: "commerce", value: (r) => String(r.total_orders) },
   { key: "recognized_orders", label: "Recognized orders", group: "commerce", value: (r) => String(r.recognized_orders) },
   { key: "cod_orders", label: "COD orders", group: "commerce", value: (r) => String(r.cod_orders) },
@@ -657,9 +658,20 @@ const EXPORT_DEFAULTS = new Set([
   "total_orders", "ltv", "first_order_at", "last_order_at",
 ]);
 
+/**
+ * Excel-safe cell: quote anything with a delimiter/quote/newline (incl. bare
+ * \r), and neutralise spreadsheet formula injection — customer-typed names and
+ * addresses can start with = + - @ and would otherwise execute on open.
+ */
 function csvCell(v: string): string {
-  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
+
+/** Export cap — a marketer's list, not a database dump. Stated in the dialog. */
+const EXPORT_CAP = 20000;
+/** Concurrent page fetches. Each page is its own ≤30s statement server-side. */
+const EXPORT_CONCURRENCY = 4;
 
 function ExportDialog({
   open, onClose, search, brandId, countries, conditions, total,
@@ -674,6 +686,8 @@ function ExportDialog({
 }) {
   const [picked, setPicked] = useState<Set<string>>(new Set(EXPORT_DEFAULTS));
   const [busy, setBusy] = useState(false);
+  const [fetched, setFetched] = useState(0);
+  const cancelled = useRef(false);
   if (!open) return null;
 
   const togglePick = (key: string) =>
@@ -685,54 +699,83 @@ function ExportDialog({
     });
 
   const needsAddress = [...picked].some((k) => EXPORT_COLUMNS.find((c) => c.key === k)?.group === "address");
-  const cap = 20000;
+  const target = Math.min(total, EXPORT_CAP);
+  const truncated = total > EXPORT_CAP;
+
+  const cancel = () => {
+    cancelled.current = true;
+    if (!busy) onClose();
+  };
 
   const run = async () => {
     setBusy(true);
+    setFetched(0);
+    cancelled.current = false;
     try {
-      // Page through the SAME filter the table shows — segment conditions,
-      // search, brand and market scope all apply to the export.
-      const all: LiveCustomerRow[] = [];
-      let page = 1;
-      for (;;) {
-        const { rows: batch, total: t } = await fetchLiveCustomers({
-          page, pageSize: 1000, search, brandId,
-          countries: countries.length > 0 ? countries : null,
-          conditions: conditions.length > 0 ? conditions : null,
-        });
-        all.push(...batch);
-        if (all.length >= Math.min(t, cap) || batch.length === 0) break;
-        page += 1;
+      // Same filter the table shows — segment conditions, search, brand and
+      // market scope. Pages are fetched with bounded concurrency; each page is
+      // an independent ≤1000-row RPC (PostgREST max_rows), deterministic order.
+      const pageCount = Math.max(1, Math.ceil(target / CUSTOMER_EXPORT_PAGE_SIZE));
+      const pages: CustomerExportRow[][] = new Array(pageCount);
+      let next = 0;
+      let done = 0;
+      const worker = async () => {
+        for (;;) {
+          if (cancelled.current) return;
+          const i = next++;
+          if (i >= pageCount) return;
+          try {
+            pages[i] = await fetchCustomerExportPage({
+              page: i + 1, search, brandId,
+              countries: countries.length > 0 ? countries : null,
+              conditions: conditions.length > 0 ? conditions : null,
+              withAddress: needsAddress,
+            });
+          } catch (e) {
+            console.error(`[customers export] page ${i + 1}/${pageCount} failed`, e);
+            throw e;
+          }
+          done += pages[i].length;
+          setFetched(done);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(EXPORT_CONCURRENCY, pageCount) }, worker));
+      if (cancelled.current) {
+        toast.message("Export cancelled");
+        return;
       }
-      const truncated = all.length >= cap;
 
-      const addrByKey = new Map<string, CustomerAddressRow>();
-      if (needsAddress && all.length > 0) {
-        for (let i = 0; i < all.length; i += 5000) {
-          const chunk = all.slice(i, i + 5000).map((r) => r.identity_key);
-          const addrs = await fetchCustomerAddresses(chunk);
-          for (const a of addrs) addrByKey.set(a.identity_key, a);
+      // Pages never overlap server-side; the dedupe is belt-and-braces against
+      // an MV refresh landing mid-export.
+      const seen = new Set<string>();
+      const all: CustomerExportRow[] = [];
+      for (const page of pages) {
+        for (const r of page ?? []) {
+          if (seen.has(r.identity_key)) continue;
+          seen.add(r.identity_key);
+          all.push(r);
         }
       }
+      const rows = all.slice(0, EXPORT_CAP);
 
       const cols = EXPORT_COLUMNS.filter((c) => picked.has(c.key));
       const lines = [
         cols.map((c) => csvCell(c.label)).join(","),
-        ...all.map((r) => cols.map((c) => csvCell(c.value(r, addrByKey.get(r.identity_key)))).join(",")),
+        ...rows.map((r) => cols.map((c) => csvCell(c.value(r))).join(",")),
       ];
-      const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+      const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = `customers-${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success(`Exported ${all.length.toLocaleString()} customers`, {
-        description: truncated ? `Capped at ${cap.toLocaleString()} rows — narrow the filter for the rest.` : undefined,
+      toast.success(`Exported ${rows.length.toLocaleString()} customers`, {
+        description: truncated ? `Capped at ${EXPORT_CAP.toLocaleString()} rows — narrow the filter for the rest.` : undefined,
       });
       onClose();
     } catch (e) {
-      toast.error("Export failed", { description: (e as Error).message });
+      if (!cancelled.current) toast.error("Export failed", { description: (e as Error).message });
     } finally {
       setBusy(false);
     }
@@ -764,13 +807,15 @@ function ExportDialog({
           ))}
         </div>
         <p className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1.5 text-[11px] text-warning">
-          Contains personal data — handle per your customer-data policy. The export is capped at 20,000 rows.
+          Contains personal data — handle per your customer-data policy. The export is capped at {EXPORT_CAP.toLocaleString()} rows.
         </p>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" onClick={cancel}>Cancel</Button>
           <Button disabled={busy || picked.size === 0} onClick={run}>
             {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Download className="size-4" aria-hidden />}
-            {busy ? "Exporting…" : "Export"}
+            {busy
+              ? `Exporting… ${fetched.toLocaleString()} / ${target.toLocaleString()}`
+              : `Export ${target.toLocaleString()}`}
           </Button>
         </DialogFooter>
       </DialogContent>
