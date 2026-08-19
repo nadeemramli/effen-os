@@ -1,36 +1,71 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Fullkit web application
 
-## Getting Started
+Next.js frontend for Fullkit, EFFEN’s internal commerce operating system.
 
-First, run the development server:
+## Run locally
+
+From the repository root:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+corepack enable
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Or from this directory:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The application opens at `http://localhost:3000` and redirects to `/command-center`.
 
-## Learn More
+## Demo and live behavior
 
-To learn more about Next.js, take a look at the following resources:
+The application deliberately supports both modes:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- **No environment variables:** deterministic demo state remains available for the shell and prototype modules. Live-only routes render a clear setup guard.
+- **Supabase configured and authenticated:** live routes read the operational mirrors and governed RPCs behind RLS. Set the variables in `.env.example`, then sign in with an invited workspace account.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+cp .env.example .env.local
+```
 
-## Deploy on Vercel
+Required public variables:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_FULLKIT_AUTH=required`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Only the Supabase publishable/anon key belongs in the browser. Never add a service-role key to a `NEXT_PUBLIC_*` variable.
+
+Live pages use `src/lib/supabase/live.ts` directly. The generic `src/lib/repo/supabase.ts` adapter is still a prepared boundary, not the complete production backend; do not set `NEXT_PUBLIC_FULLKIT_REPO=supabase` expecting all older demo workflows to become live.
+
+## Application areas
+
+- Live or hybrid: Orders, Customers, Fulfilment, Automations, Marketing, Profit, Catalog, Inventory, Production, and live Setup.
+- Seeded prototype: parts of Command Centre, Creative, Finance, Reports, Integrations, and Data Health.
+- Placeholder: Audit and Settings.
+
+The exact boundary and known gaps are maintained in [docs/CURRENT_STATE.md](../../docs/CURRENT_STATE.md).
+
+## Checks
+
+```bash
+pnpm lint
+pnpm build
+pnpm check:seed
+```
+
+`check:seed` verifies deterministic demo invariants. `build` is the relevant end-to-end frontend compilation check.
+
+## Key implementation paths
+
+```text
+src/app/(shell)/            Route surfaces
+src/lib/supabase/live.ts    Live read/write client functions
+src/lib/store/              Deterministic demo state
+src/lib/rbac/               Role and permission matrix
+src/lib/nav/routes.ts       Shared route registry
+src/components/auth/        Authentication and live-route guards
+```

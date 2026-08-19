@@ -2,12 +2,15 @@
 title: Fullkit Technical Architecture
 description: Target technical architecture, stack, data contracts, service boundaries and build-versus-buy decisions for the Fullkit product portfolio.
 created: 2026-07-16
-updated: 2026-07-16
-status: proposed
+updated: 2026-08-19
+status: target-architecture
 tags: [fullkit, architecture, tech-stack, postgres, bigquery, rudderstack, ai, events]
 ---
 
 # Fullkit Technical Architecture
+
+> [!important] Current implementation note — 19 Aug 2026
+> This remains the target architecture. The deployed system currently uses Vercel/Next.js plus Supabase for authentication, operational mirrors, RLS/RPCs, read models and edge functions; Airbyte → BigQuery → dbt provides the growth warehouse. Cloud SQL, RudderStack, and several proposed service boundaries below have not replaced that deployed shape. See [[CURRENT_STATE|Fullkit current development state]].
 
 Product requirements: [[Fullkit Product Portfolio PRD]]. Canonical starting schema: [[Fullkit Schema Blueprint]]. Infrastructure details: [[S1 - Customer and Order Hub]], [[S2 - Creative Loop]], [[S3 - Inventory]], and [[S4 - Money]].
 
