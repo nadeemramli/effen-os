@@ -2,12 +2,15 @@
 title: Fullkit Growth Engine
 description: Product concept for the decision, planning, activation, and learning layer built on top of Fullkit's governed commerce data marts and operational services.
 created: 2026-07-16
-updated: 2026-07-16
+updated: 2026-08-19
 tags: [fullkit, growth-engine, data-mart, decision-intelligence, growth-operations, applied-ai]
-status: concept-development
+status: target-with-live-slices
 ---
 
 # Fullkit Growth Engine
+
+> [!important] Delivery status — 19 Aug 2026
+> Live slices now include the plan baseline, commercial scorecard inputs, warehouse-backed Marketing, contribution Profit, and governed ad marts. The larger Growth Engine loop—diagnosis, recommendations, approvals, activation, experiments, and measured learning—remains demo or unimplemented. See [[CURRENT_STATE|Fullkit current development state]].
 
 > This is a living concept note. Additional YouTube videos, articles, frameworks, and operating examples will be broken down here as research inputs arrive.
 

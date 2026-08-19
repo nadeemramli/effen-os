@@ -65,6 +65,7 @@ Warehouse changes under `warehouse/**` are compiled on pull requests and built/t
 
 ## Documentation
 
+- [Documentation map](docs/README.md) — how current state, ADRs, target plans, operating registers, and research fit together.
 - [Current development state](docs/CURRENT_STATE.md) — shipped, shadow, demo, and planned scope.
 - [Architecture decision records](docs/decisions/) — accepted implementation boundaries.
 - [Product PRD](docs/PRD.md) — target product scope, not a release tracker.
