@@ -16,12 +16,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getSupabase } from "@/lib/supabase/client";
 
+/**
+ * Voluntary by default (top bar). In `forced` mode it is the whole screen:
+ * no cancel, no escape, no outside dismiss — used when a member is still on
+ * an HQ-issued password and must replace it before reaching the app.
+ */
 export function ChangePasswordDialog({
   open,
   onOpenChange,
+  forced = false,
+  onChanged,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  forced?: boolean;
+  onChanged?: () => void | Promise<void>;
 }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -31,14 +40,29 @@ export function ChangePasswordDialog({
   const mismatch = confirm.length > 0 && confirm !== password;
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) { setPassword(""); setConfirm(""); } }}>
-      <DialogContent className="max-w-sm">
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (forced && !o) return;
+        onOpenChange(o);
+        if (!o) { setPassword(""); setConfirm(""); }
+      }}
+    >
+      <DialogContent
+        className="max-w-sm"
+        showCloseButton={!forced}
+        onEscapeKeyDown={forced ? (e) => e.preventDefault() : undefined}
+        onInteractOutside={forced ? (e) => e.preventDefault() : undefined}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <KeyRound className="size-4" aria-hidden /> Change password
+            <KeyRound className="size-4" aria-hidden />
+            {forced ? "Set your password" : "Change password"}
           </DialogTitle>
           <DialogDescription>
-            At least 10 characters. The change applies immediately to your account only.
+            {forced
+              ? "This account still uses the password HQ issued it. Choose your own to continue — at least 10 characters."
+              : "At least 10 characters. The change applies immediately to your account only."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -54,19 +78,26 @@ export function ChangePasswordDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          {!forced && (
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          )}
           <Button
             disabled={busy || password.length < 10 || confirm !== password}
             onClick={async () => {
               setBusy(true);
               const { error } = await getSupabase().auth.updateUser({ password });
-              setBusy(false);
               if (error) {
+                setBusy(false);
                 toast.error("Password change failed", { description: error.message });
-              } else {
-                toast.success("Password updated");
-                onOpenChange(false);
+                return;
               }
+              try {
+                await onChanged?.();
+              } finally {
+                setBusy(false);
+              }
+              toast.success("Password updated");
+              if (!forced) onOpenChange(false);
             }}
           >
             {busy && <Loader2 className="size-4 animate-spin" aria-hidden />}

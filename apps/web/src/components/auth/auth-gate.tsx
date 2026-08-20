@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Loader2, ShieldOff } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import type { RoleKey } from "@/lib/domain/enums";
 import { ROLE_KEYS } from "@/lib/domain/enums";
@@ -11,10 +12,17 @@ import {
   isAuthRequired,
   type MembershipRow,
   type PreferencesRow,
+  type ProfileRow,
 } from "@/lib/supabase/client";
+import { ChangePasswordDialog } from "./change-password-dialog";
 import { LoginScreen } from "./login-screen";
 
-type GateState = "loading" | "signed_out" | "no_membership" | "ready";
+type GateState =
+  | "loading"
+  | "signed_out"
+  | "no_membership"
+  | "must_change_password"
+  | "ready";
 
 /**
  * Slice-1 auth gate. Inactive (renders children directly) unless
@@ -40,6 +48,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const workspaceIdRef = useRef<number | null>(null);
   const userIdRef = useRef<string | null>(null);
   const hydratedRef = useRef(false);
+  /* Lets the forced-password screen re-run resolution once the gate clears. */
+  const resolveRef = useRef<((userId: string, email: string | null) => Promise<void>) | null>(null);
 
   useEffect(() => {
     if (!active) return;
@@ -66,6 +76,18 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         : "analyst";
       setAuthSession({ email, role, roleLocked: role !== "hq_admin" });
 
+      /* Accounts provisioned with an HQ-issued password reach nothing until
+         they set their own (public.profiles.password_change_required). */
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("password_change_required")
+        .eq("id", userId)
+        .maybeSingle<ProfileRow>();
+      if (profile?.password_change_required) {
+        setState("must_change_password");
+        return;
+      }
+
       const { data: prefs } = await supabase
         .from("user_preferences")
         .select("*")
@@ -82,6 +104,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       hydratedRef.current = true;
       setState("ready");
     }
+
+    resolveRef.current = resolve;
 
     supabase.auth.getSession().then(({ data }) => {
       const session = data.session;
@@ -156,6 +180,36 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         >
           Sign out
         </Button>
+      </div>
+    );
+  }
+
+  if (state === "must_change_password") {
+    return (
+      <div className="min-h-dvh bg-background">
+        <ChangePasswordDialog
+          open
+          forced
+          onOpenChange={() => {}}
+          onChanged={async () => {
+            const userId = userIdRef.current;
+            if (!userId) return;
+            const { error } = await getSupabase()
+              .from("profiles")
+              .update({ password_change_required: false })
+              .eq("id", userId);
+            /* Leave the gate up if the flag did not clear — otherwise the
+               member would be let through and prompted again next sign-in. */
+            if (error) {
+              toast.error("Could not clear the first-login gate", {
+                description: error.message,
+              });
+              return;
+            }
+            setState("loading");
+            void resolveRef.current?.(userId, userEmail);
+          }}
+        />
       </div>
     );
   }

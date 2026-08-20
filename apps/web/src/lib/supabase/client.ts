@@ -47,3 +47,7 @@ export interface PreferencesRow {
   default_brand_slug: string | null;
   default_date_range: "today" | "7d" | "30d" | "90d" | "1y";
 }
+
+export interface ProfileRow {
+  password_change_required: boolean;
+}
