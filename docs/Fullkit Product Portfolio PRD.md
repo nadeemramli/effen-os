@@ -2,12 +2,15 @@
 title: Fullkit Product Portfolio PRD
 description: Umbrella product requirements for the Fullkit commerce operating portfolio, its shared data spines, and the complete idea-to-retention loop.
 created: 2026-07-16
-updated: 2026-07-16
-status: proposed
+updated: 2026-08-19
+status: target-portfolio
 tags: [fullkit, portfolio, prd, commerce, growth-engine, cdp, ai]
 ---
 
 # Fullkit Product Portfolio PRD
+
+> [!important] Portfolio delivery status — 19 Aug 2026
+> This document describes the full target portfolio. Implemented maturity varies sharply by product: live customer/order, merchandise, production-slice, growth, and contribution capabilities coexist with demo or unbuilt execution, finance, creative, lifecycle, and AI-closer workflows. See [[CURRENT_STATE|Fullkit current development state]] for the code-backed product and spine maturity matrices.
 
 > [!summary] Portfolio decision
 > Fullkit is one shared commerce infrastructure with several bounded products on top. We should **not** build one giant application. We should give each product its own workflow, permissions, state and success metric, then stitch products together through canonical APIs and events.

@@ -2,11 +2,14 @@
 title: Fullkit PRD
 description: Product requirements for Fullkit — EFFEN's owned commerce backend infrastructure, built by unbundling Fighter + Luxana into composable services on the four data spines, wired into the Applied AI strategy from day one.
 created: 2026-07-10
-updated: 2026-07-16
+updated: 2026-08-19
 tags: [prd, fullkit, effen, commerce-infrastructure, oms, cdp, applied-ai]
 ---
 
 # Fullkit PRD
+
+> [!important] Implementation status — 19 Aug 2026
+> This document preserves target product scope and historical decisions; it is not the release tracker. See [[CURRENT_STATE|Fullkit current development state]] for the code-backed live, shadow, demo, and planned boundaries. Applied migrations, edge functions, and live application code remain authoritative.
 
 > Working name — see [[#Naming]] for alternatives. Research inputs: [[Luxana Teardown]] and [[Fighter Teardown]]. Strategy substrate: the EFFEN Applied AI family in `career-path/1. Vault/EFFEN/` — **the `Presentation/` folder (00–04) is the approved infrastructure plan currently being built; Fullkit extends it, it does not compete with it.** Working detail: Context & Operating Model, Roadmap, Tooling Roadmap, Build Playbook, `04 consolidated context and gaps`.
 

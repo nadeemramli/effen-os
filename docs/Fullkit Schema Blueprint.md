@@ -2,8 +2,8 @@
 title: Fullkit Schema Blueprint
 description: Evidence-led canonical operational schema for Fullkit across customer/order, inventory, money, integrations, notifications, automation, and audit.
 created: 2026-07-15
-updated: 2026-07-16
-status: proposed
+updated: 2026-08-19
+status: reference-blueprint
 source: Fighter first-party walkthroughs, Luxana teardown, Fullkit PRD, and current Cloud SQL/Postgres, BigQuery, and RudderStack guidance
 confidence: mixed
 review_date: 2026-07-22
@@ -11,6 +11,9 @@ tags: [fullkit, schema, postgres, cloud-sql, bigquery, rudderstack, oms, cdp, in
 ---
 
 # Fullkit Schema Blueprint
+
+> [!important] Implementation status — 19 Aug 2026
+> This is now a reference logical blueprint, not the deployed schema contract. Applied files in `supabase/migrations/`, edge functions, and the live TypeScript read/write layer are authoritative. The implementation has added operational read models, production, fulfilment, contribution, customer-export, return, and automation-health structures beyond this July proposal. See [[CURRENT_STATE|Fullkit current development state]].
 
 This is the first canonical schema proposal requested in [[PRD]]. It translates the observed Fighter workflows into an owned operational model for Fullkit without copying Fighter's UI structure or agent-network assumptions.
 

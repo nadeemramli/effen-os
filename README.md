@@ -1,61 +1,59 @@
 # effen-os
 
-Internal operating system for **EFFEN International Sdn Bhd**. First deliverable: **Fullkit**, the commerce operations command centre.
+Internal operating system for **EFFEN International Sdn Bhd**. Its first application is **Fullkit**, a commerce operations command centre that is progressively replacing spreadsheet and SaaS workflows around the existing Fighter estate.
 
-```
-apps/web    Fullkit — Next.js frontend prototype (synthetic data, no env vars needed)
-docs/       Product plans and reference material (PRD, Schema Blueprint, Technical
-            Architecture, Growth Engine, Spines, Products, research inputs)
+> **Current state — 19 Aug 2026:** Fullkit is a hybrid internal application. Several modules use live Supabase, WooCommerce, Ninja Van, and warehouse data; some workflows remain in shadow mode; older strategy and control surfaces still use deterministic demo data. See [Fullkit current development state](docs/CURRENT_STATE.md) for the code-backed status of every area.
+
+## What is running today
+
+- **Live commerce read side:** invite-only Supabase authentication, workspace roles, WooCommerce order mirrors, customer identity resolution, Customer 360, catalog and inventory views, market/brand scopes, and Ninja Van tracking.
+- **Live controlled operations:** store/catalog setup, SKU mappings and governed costs, reusable customer segments and CSV export, shipping corrections and fulfilment holds, and a production ledger with inbound-material tracking. Sensitive actions are RLS- or RPC-guarded.
+- **Live growth and contribution:** Meta data flows through Airbyte → BigQuery → dbt → Supabase; Marketing and Profit combine warehouse spend with Fullkit order truth, effective-dated cost rules, courier returns, CM2, and CM3.
+- **Shadow fulfilment:** Fullkit grades ship readiness, drafts AI-assisted address corrections, and records the exact Ninja Van payload it would send. Real consignment creation remains off until the accepted shadow exit gate is met.
+- **Demo or planned areas:** portions of Command Centre, Creative, Finance, Reports, Integrations, and Data Health still use seeded prototype state. Audit and Settings are placeholders. The UI labels and current-state document identify these boundaries.
+
+## Repository map
+
+```text
+apps/web/                 Next.js 16 / React 19 Fullkit application
+supabase/migrations/      Operational schema, RLS, RPCs, read models, and cron jobs
+supabase/functions/       Woo, WhatsApp, Ninja Van, mart-sync, and AI edge functions
+warehouse/                BigQuery dbt project for governed growth facts
+infra/                    Terraform for the GCP growth-data platform
+docs/                     Product plans, ADRs, operating notes, and current state
 ```
 
-## Quick start
+## Local development
+
+Requirements: Node.js 20+, pnpm 11, and Corepack.
 
 ```bash
+corepack enable
 pnpm install
-pnpm dev          # http://localhost:3000 → redirects to /command-center
+pnpm dev
 ```
 
-No environment variables are required — the prototype runs entirely on a seeded,
-deterministic synthetic dataset (`apps/web/src/lib/seed`). The demo clock is fixed
-at **23 Jul 2026, 09:00 MYT** so every relative timestamp and the Command Centre
-briefing stay true.
+Open `http://localhost:3000`; the root route redirects to `/command-center`.
 
-## What Fullkit is
+With no environment variables, the shell and remaining prototype surfaces run on the deterministic seed in `apps/web/src/lib/seed`. Live-only pages show a configuration guard instead of inventing data.
 
-Not a generic analytics dashboard and not a Fighter clone. Every screen answers:
-*what needs attention now, why, who owns it, and what should happen next.*
+To use live Supabase-backed surfaces:
 
-- **Command Centre** — morning briefing composed from live state, attention strip,
-  commercial scorecard, plan-vs-actual, work queue, Prophit recommendations, data trust.
-- **Orders** — dense operational table with saved views; six order states
-  (order / payment / fulfilment / shipment / notification / return) always kept
-  separate; order detail with a full evidence timeline; three-step order wizard with
-  an "AI extraction — review required" paste-chat panel.
-- **Customers** — privacy-masked Customer 360 with resolved identity, consent,
-  value metrics, and provenance.
-- **Marketing** — consolidated Meta/Google/TikTok view with an explicit
-  attribution-is-not-incrementality caveat, campaign explorer, and a simulated
-  OAuth connect-account wizard (write scopes gated behind separate approval).
-- **Prophit** — a decision chain (target → expectation → actual → variance →
-  diagnosis → recommendation → approval → action → outcome), imported read-side
-  from the Growth Engine. Approving a recommendation ripples through the app.
-- **Catalog, Reports, Integrations, Data Health** — governed metric definitions,
-  source lineage, freshness SLAs, reason-coded sync history, and an owned issue queue.
-- A labeled **demo role switcher** (HQ Admin, Sales/CS, Marketing/Growth,
-  Operations, Finance, Analyst) demonstrates least-privilege navigation, fields,
-  and actions.
+```bash
+cp apps/web/.env.example apps/web/.env.local
+```
 
-## Architecture
+Fill in the Supabase project URL and publishable/anon key, keep `NEXT_PUBLIC_FULLKIT_AUTH=required`, and sign in with an invited workspace account. Browser code must never receive a service-role key.
 
-- Next.js App Router + TypeScript + Tailwind v4 + shadcn/ui + Recharts + Zustand.
-- Typed domain models (`lib/domain`) mirror the Schema Blueprint in `docs/`.
-- All reads/writes go through a **Repository** interface (`lib/repo`):
-  `MockRepository` (default, in-memory store) and a prepared `SupabaseRepository`
-  adapter that activates only when `NEXT_PUBLIC_FULLKIT_REPO=supabase` **and**
-  Supabase env vars exist — absence of configuration can never break the app.
-  No service-role key ever ships to the browser.
-- Seed invariants are asserted at store creation (4 pending decisions, 2 stale
-  sources, yesterday below plan): `cd apps/web && pnpm check:seed`.
+Useful checks:
+
+```bash
+pnpm lint
+pnpm build
+pnpm --filter web check:seed
+```
+
+Warehouse changes under `warehouse/**` are compiled on pull requests and built/tested by the scheduled or manually dispatched dbt workflow.
 
 ## Enabling live auth
 
@@ -92,9 +90,18 @@ Access is invite-only: authenticating is not the same as being let in. A
 membership exists only if `membership_invites` holds the email, so new
 teammates need an invite row before their first sign-in.
 
-## State disciplines
+## Operating boundaries
 
-Demo / Shadow / Live operating mode, brand, market, store, channel, currency,
-source, owner, and data freshness are exposed on every relevant surface. The
-prototype is Demo-only: actions mutate prototype state and are audited, but no
-live system is connected and the UI never claims otherwise.
+- The demo mode pill is still a presentation control for seeded surfaces; it does not authorize external writes.
+- Live pages call the explicit Supabase client/read-model functions in `apps/web/src/lib/supabase/live.ts`. The older generic `Repository` adapter remains incomplete and should not be enabled as a blanket live backend.
+- Fighter remains active for today’s pick/pack/handover workflow. Fullkit’s Ninja Van submission path is shadow-only for the current pilot.
+- BigQuery/dbt is analytical truth; operational commands remain in Supabase/Postgres RPCs and edge functions.
+- Business-day windows are evaluated in Asia/Kuala_Lumpur time.
+
+## Documentation
+
+- [Documentation map](docs/README.md) — how current state, ADRs, target plans, operating registers, and research fit together.
+- [Current development state](docs/CURRENT_STATE.md) — shipped, shadow, demo, and planned scope.
+- [Architecture decision records](docs/decisions/) — accepted implementation boundaries.
+- [Product PRD](docs/PRD.md) — target product scope, not a release tracker.
+- [Technical architecture](docs/Fullkit%20Technical%20Architecture.md) and [schema blueprint](docs/Fullkit%20Schema%20Blueprint.md) — target/reference designs; migrations and code are authoritative for the deployed system.

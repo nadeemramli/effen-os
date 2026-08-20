@@ -2,12 +2,15 @@
 title: Fullkit Frontend UI UX Plan and Fable Prompt
 description: Frontend-first product plan, information architecture, phased Supabase and Vercel delivery, and a one-shot prompt for building the first Fullkit interface in Fable.
 created: 2026-07-23
-updated: 2026-07-23
-status: proposed
+updated: 2026-08-19
+status: historical-plan
 tags: [fullkit, frontend, ui, ux, fable, supabase, vercel]
 ---
 
 # Fullkit Frontend UI/UX Plan and Fable Prompt
+
+> [!important] Delivery status — 19 Aug 2026
+> This is the original frontend-first plan and Fable prompt. Slice 0 and much of the live read-side foundation have shipped; production, contribution, fulfilment shadowing, and growth-data work have also moved beyond the sequence described here. Use [[CURRENT_STATE|Fullkit current development state]] for today’s surface-by-surface status.
 
 Related product decisions: [[Fullkit Product Portfolio PRD]], [[Fullkit Technical Architecture]], [[Fullkit Schema Blueprint]], [[Growth Engine]], [[P1 - Customer Revenue Engine]], [[P3 - Marketing Execution and Commerce Experience]], [[P4 - Commerce Operations and WMS]], and [[P6 - Finance Control]].
 
