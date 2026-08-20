@@ -80,9 +80,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
          they set their own (public.profiles.password_change_required). */
       const { data: profile } = await supabase
         .from("profiles")
-        .select("password_change_required")
+        .select("display_name, password_change_required")
         .eq("id", userId)
         .maybeSingle<ProfileRow>();
+      if (profile?.display_name) {
+        setAuthSession({ email, name: profile.display_name });
+      }
       if (profile?.password_change_required) {
         setState("must_change_password");
         return;
@@ -119,7 +122,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       }
       if (event === "SIGNED_OUT") {
         hydratedRef.current = false;
-        setAuthSession({ email: null, roleLocked: false });
+        setAuthSession({ email: null, name: null, roleLocked: false });
         setState("signed_out");
       }
     });

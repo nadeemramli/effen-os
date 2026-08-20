@@ -60,5 +60,6 @@ export interface PreferencesRow {
 }
 
 export interface ProfileRow {
+  display_name: string;
   password_change_required: boolean;
 }

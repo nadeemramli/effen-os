@@ -77,6 +77,10 @@ export interface SessionState {
   customRange: CustomDateRange | null;
   /** Signed-in Supabase user email (null in open demo mode). */
   authEmail: string | null;
+  /** Signed-in member's profiles.display_name. Overlays the seed persona's
+   *  name so the shell, greeting, and audit trail name the real person
+   *  rather than whichever demo persona matches their role. */
+  authName: string | null;
   /** True when the role comes from a real membership and must not be switched
    *  (non-admins); hq_admin keeps the switcher as an impersonation tool. */
   roleLocked: boolean;
@@ -94,7 +98,12 @@ export interface AppState extends SeedSnapshot {
   seq: number;
 
   setRole: (role: RoleKey) => void;
-  setAuthSession: (auth: { email: string | null; role?: RoleKey; roleLocked?: boolean }) => void;
+  setAuthSession: (auth: {
+    email: string | null;
+    name?: string | null;
+    role?: RoleKey;
+    roleLocked?: boolean;
+  }) => void;
   setMode: (mode: OperatingMode) => void;
   setBrand: (brandId: string | "all") => void;
   setLiveBrand: (brandId: number | null) => void;
@@ -231,6 +240,7 @@ export function createAppStore() {
         dateRange: "7d",
         customRange: null,
         authEmail: null,
+        authName: null,
         roleLocked: false,
         liveBrandId: null,
         liveMarkets: [],
@@ -238,11 +248,12 @@ export function createAppStore() {
       seq: 1,
 
       setRole: (role) => set((s) => ({ session: { ...s.session, role } })),
-      setAuthSession: ({ email, role, roleLocked }) =>
+      setAuthSession: ({ email, name, role, roleLocked }) =>
         set((s) => ({
           session: {
             ...s.session,
             authEmail: email,
+            authName: name === undefined ? s.session.authName : name,
             role: role ?? s.session.role,
             roleLocked: roleLocked ?? s.session.roleLocked,
           },

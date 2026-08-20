@@ -18,7 +18,12 @@ export class MockRepository implements Repository {
   private actor() {
     const s = this.store.getState();
     const persona = s.personas.find((p) => p.role === s.session.role);
-    return { id: persona?.id ?? "USR-nadeem", name: persona?.name ?? "Nadeem" };
+    /* A real session names the real member; the persona id is kept so
+       ownership keeps resolving against seeded assignees. */
+    return {
+      id: persona?.id ?? "USR-nadeem",
+      name: s.session.authName ?? persona?.name ?? "Nadeem",
+    };
   }
 
   async getOrder(id: string) {
