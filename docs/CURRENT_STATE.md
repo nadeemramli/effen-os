@@ -18,7 +18,7 @@ This classification comes from a repository-wide audit of routes, client calls, 
 | Area inspected | Inventory at the source commit |
 |---|---|
 | Application | 18 registered navigation entries and 28 App Router page files |
-| Operational backend | 63 Supabase migrations and 7 edge functions |
+| Operational backend | 65 migration files covering 68 recorded migrations, and 7 edge functions |
 | Automation registry | 27 definitions: 23 live, 1 on hold, 3 planned |
 | Architecture decisions | 8 ADRs; ADR-0002 remains draft, while ADR-0006 activates only its shadow pilot |
 | Growth data platform | 18 warehouse files, 11 infrastructure files, and 1 GitHub Actions workflow |
