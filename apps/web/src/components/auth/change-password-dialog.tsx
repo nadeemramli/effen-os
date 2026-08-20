@@ -20,6 +20,10 @@ import { getSupabase } from "@/lib/supabase/client";
  * Voluntary by default (top bar). In `forced` mode it is the whole screen:
  * no cancel, no escape, no outside dismiss — used when a member is still on
  * an HQ-issued password and must replace it before reaching the app.
+ *
+ * The current password is always collected and sent: the project runs with
+ * Secure password change on, so GoTrue rejects a bare password update with
+ * current_password_required. Sending it is harmless where the setting is off.
  */
 export function ChangePasswordDialog({
   open,
@@ -32,12 +36,22 @@ export function ChangePasswordDialog({
   forced?: boolean;
   onChanged?: () => void | Promise<void>;
 }) {
+  const [current, setCurrent] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const tooShort = password.length > 0 && password.length < 10;
   const mismatch = confirm.length > 0 && confirm !== password;
+  const ready = current.length > 0 && password.length >= 10 && confirm === password;
+
+  function reset() {
+    setCurrent("");
+    setPassword("");
+    setConfirm("");
+    setError(null);
+  }
 
   return (
     <Dialog
@@ -45,7 +59,7 @@ export function ChangePasswordDialog({
       onOpenChange={(o) => {
         if (forced && !o) return;
         onOpenChange(o);
-        if (!o) { setPassword(""); setConfirm(""); }
+        if (!o) reset();
       }}
     >
       <DialogContent
@@ -61,11 +75,23 @@ export function ChangePasswordDialog({
           </DialogTitle>
           <DialogDescription>
             {forced
-              ? "This account still uses the password HQ issued it. Choose your own to continue — at least 10 characters."
-              : "At least 10 characters. The change applies immediately to your account only."}
+              ? "This account still uses the password HQ issued it. Choose your own to continue — at least 10 characters, and not one that has appeared in a known breach."
+              : "At least 10 characters, and not one that has appeared in a known breach. The change applies immediately to your account only."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="current-pw">
+              {forced ? "Password HQ gave you" : "Current password"}
+            </Label>
+            <Input
+              id="current-pw"
+              type="password"
+              autoComplete="current-password"
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+            />
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="new-pw">New password</Label>
             <Input id="new-pw" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
@@ -76,19 +102,32 @@ export function ChangePasswordDialog({
             <Input id="confirm-pw" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
             {mismatch && <p className="text-[11px] text-destructive">Passwords don&apos;t match.</p>}
           </div>
+          {/* Inline as well as a toast: the actionable rejections (breached
+              password, wrong current password) arrive here, and in forced mode
+              a toast is the only feedback on an otherwise blocking screen. */}
+          {error && (
+            <p className="rounded-md border border-destructive/25 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+              {error}
+            </p>
+          )}
         </div>
         <DialogFooter>
           {!forced && (
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           )}
           <Button
-            disabled={busy || password.length < 10 || confirm !== password}
+            disabled={busy || !ready}
             onClick={async () => {
               setBusy(true);
-              const { error } = await getSupabase().auth.updateUser({ password });
-              if (error) {
+              setError(null);
+              const { error: err } = await getSupabase().auth.updateUser({
+                current_password: current,
+                password,
+              });
+              if (err) {
                 setBusy(false);
-                toast.error("Password change failed", { description: error.message });
+                setError(err.message);
+                toast.error("Password change failed", { description: err.message });
                 return;
               }
               try {
@@ -97,7 +136,10 @@ export function ChangePasswordDialog({
                 setBusy(false);
               }
               toast.success("Password updated");
-              if (!forced) onOpenChange(false);
+              if (!forced) {
+                reset();
+                onOpenChange(false);
+              }
             }}
           >
             {busy && <Loader2 className="size-4 animate-spin" aria-hidden />}

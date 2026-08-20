@@ -80,6 +80,14 @@ disallowed (no captcha_token found)"* before it ever checks the password, so
 the failure looks like a bad credential rather than missing config. The
 paired secret is configured in Supabase, never here.
 
+Two Auth policies shape the password screens, both read from the server and
+neither visible to the client — if they are toggled, the UI must follow:
+
+- **Secure password change** — `updateUser` must carry `current_password`, so
+  the change-password dialog always collects it.
+- **Leaked password protection** — a new password that appears in a known
+  breach is rejected with a 422; the dialog surfaces that inline.
+
 Access is invite-only: authenticating is not the same as being let in. A
 membership exists only if `membership_invites` holds the email, so new
 teammates need an invite row before their first sign-in.
