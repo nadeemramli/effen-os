@@ -57,6 +57,33 @@ Not a generic analytics dashboard and not a Fighter clone. Every screen answers:
 - Seed invariants are asserted at store creation (4 pending decisions, 2 stale
   sources, yesterday below plan): `cd apps/web && pnpm check:seed`.
 
+## Enabling live auth
+
+The prototype is open by default. Auth activates only when all of these are
+set — absence of configuration can never break the app:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...        # publishable key; every table is behind RLS
+NEXT_PUBLIC_FULLKIT_AUTH=required
+```
+
+If the Supabase project has **CAPTCHA protection** enabled (Auth > Bot and
+Abuse Protection), one more is mandatory:
+
+```bash
+NEXT_PUBLIC_SUPABASE_CAPTCHA_SITEKEY=... # hCaptcha sitekey (public)
+```
+
+Without it GoTrue rejects every sign-in with *"captcha protection: request
+disallowed (no captcha_token found)"* before it ever checks the password, so
+the failure looks like a bad credential rather than missing config. The
+paired secret is configured in Supabase, never here.
+
+Access is invite-only: authenticating is not the same as being let in. A
+membership exists only if `membership_invites` holds the email, so new
+teammates need an invite row before their first sign-in.
+
 ## State disciplines
 
 Demo / Shadow / Live operating mode, brand, market, store, channel, currency,

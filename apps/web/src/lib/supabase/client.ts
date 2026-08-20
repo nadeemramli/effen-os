@@ -22,6 +22,17 @@ export function isAuthRequired(): boolean {
   return isSupabaseConfigured() && process.env.NEXT_PUBLIC_FULLKIT_AUTH === "required";
 }
 
+/**
+ * hCaptcha sitekey. Set this whenever the project has CAPTCHA protection
+ * enabled (Auth > Bot and Abuse Protection) — GoTrue then rejects every
+ * sign-in that arrives without a captcha token, before it looks at the
+ * password. The sitekey is public by design; the paired secret lives only in
+ * Supabase's auth config.
+ */
+export function getCaptchaSitekey(): string | null {
+  return process.env.NEXT_PUBLIC_SUPABASE_CAPTCHA_SITEKEY || null;
+}
+
 let client: SupabaseClient | null = null;
 
 export function getSupabase(): SupabaseClient {

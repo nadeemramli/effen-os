@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
+import HCaptcha from "@hcaptcha/react-hcaptcha";
 import { Loader2, LogIn, MailCheck } from "lucide-react";
+import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { getSupabase } from "@/lib/supabase/client";
+import { getCaptchaSitekey, getSupabase } from "@/lib/supabase/client";
 
 export function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -15,12 +17,32 @@ export function LoginScreen() {
   const [magicSent, setMagicSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const sitekey = getCaptchaSitekey();
+  const { resolvedTheme } = useTheme();
+  const captchaRef = useRef<HCaptcha>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const captchaPending = sitekey !== null && captchaToken === null;
+
+  /* hCaptcha tokens are single-use and short-lived: burn ours after every
+     attempt so a retry solves a fresh challenge rather than replaying a
+     spent token (which GoTrue rejects just like a missing one). */
+  function resetCaptcha() {
+    if (!sitekey) return;
+    captchaRef.current?.resetCaptcha();
+    setCaptchaToken(null);
+  }
+
   async function signInWithPassword(e: React.FormEvent) {
     e.preventDefault();
     setBusy("password");
     setError(null);
-    const { error: err } = await getSupabase().auth.signInWithPassword({ email, password });
+    const { error: err } = await getSupabase().auth.signInWithPassword({
+      email,
+      password,
+      options: { captchaToken: captchaToken ?? undefined },
+    });
     if (err) setError(err.message);
+    resetCaptcha();
     setBusy(null);
   }
 
@@ -29,10 +51,14 @@ export function LoginScreen() {
     setError(null);
     const { error: err } = await getSupabase().auth.signInWithOtp({
       email,
-      options: { shouldCreateUser: true },
+      options: {
+        shouldCreateUser: true,
+        captchaToken: captchaToken ?? undefined,
+      },
     });
     if (err) setError(err.message);
     else setMagicSent(true);
+    resetCaptcha();
     setBusy(null);
   }
 
@@ -83,12 +109,32 @@ export function LoginScreen() {
                     onChange={(e) => setPassword(e.target.value)}
                   />
                 </div>
+                {sitekey && (
+                  <div className="flex justify-center">
+                    <HCaptcha
+                      ref={captchaRef}
+                      sitekey={sitekey}
+                      theme={resolvedTheme === "dark" ? "dark" : "light"}
+                      onVerify={setCaptchaToken}
+                      onExpire={() => setCaptchaToken(null)}
+                      onError={() => setCaptchaToken(null)}
+                    />
+                  </div>
+                )}
                 {error && (
                   <p className="rounded-md border border-destructive/25 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
                     {error}
+                    {!sitekey && error.toLowerCase().includes("captcha") && (
+                      <>
+                        {" "}
+                        This project has CAPTCHA protection enabled but no
+                        sitekey is configured — set
+                        NEXT_PUBLIC_SUPABASE_CAPTCHA_SITEKEY.
+                      </>
+                    )}
                   </p>
                 )}
-                <Button type="submit" className="w-full gap-1.5" disabled={busy !== null || !email || !password}>
+                <Button type="submit" className="w-full gap-1.5" disabled={busy !== null || !email || !password || captchaPending}>
                   {busy === "password" ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <LogIn className="size-4" aria-hidden />}
                   Sign in
                 </Button>
@@ -96,7 +142,7 @@ export function LoginScreen() {
                   type="button"
                   variant="outline"
                   className="w-full"
-                  disabled={busy !== null || !email}
+                  disabled={busy !== null || !email || captchaPending}
                   onClick={sendMagicLink}
                 >
                   {busy === "magic" && <Loader2 className="size-4 animate-spin" aria-hidden />}

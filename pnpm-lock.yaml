@@ -10,6 +10,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@hcaptcha/react-hcaptcha':
+        specifier: ^2.1.0
+        version: 2.1.0
       '@supabase/supabase-js':
         specifier: ^2.110.8
         version: 2.110.8
@@ -302,6 +305,9 @@ packages:
 
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
+
+  '@hcaptcha/react-hcaptcha@2.1.0':
+    resolution: {integrity: sha512-ztc4s7Pr8+MUYamgmgGAY7eLOThYAP4QIwKqAzj4fpymMPDlm66yo1516e68JR9VN0kmwAAJ0XrNS3NOh0BNLg==}
 
   '@hono/node-server@1.19.14':
     resolution: {integrity: sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw==}
@@ -4215,6 +4221,8 @@ snapshots:
       react-dom: 19.2.4(react@19.2.4)
 
   '@floating-ui/utils@0.2.12': {}
+
+  '@hcaptcha/react-hcaptcha@2.1.0': {}
 
   '@hono/node-server@1.19.14(hono@4.12.31)':
     dependencies:
