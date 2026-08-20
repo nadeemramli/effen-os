@@ -17,3 +17,6 @@ pnpm-debug.log*
 
 # Supabase CLI local cache
 supabase/.temp/
+
+# Claude Code local (personal) settings
+.claude/settings.local.json
