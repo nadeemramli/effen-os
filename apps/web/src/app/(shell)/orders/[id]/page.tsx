@@ -485,7 +485,7 @@ function OrderDetailInner() {
                 <div className="flex justify-between"><span className="text-muted-foreground">Source ID</span><span className="tnum">{order.source_order_id}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Store</span><span>{storeLabel}</span></div>
                 <div className="flex items-center justify-between gap-2">
-                  <Link href="/setup/connections" className="text-muted-foreground underline-offset-2 hover:underline">
+                  <Link href="/settings/setup/connections" className="text-muted-foreground underline-offset-2 hover:underline">
                     {conn?.name ?? "connection"}
                   </Link>
                   {conn && tonePill(freshnessMeta(conn.last_success_at))}

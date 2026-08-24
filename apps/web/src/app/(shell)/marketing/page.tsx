@@ -968,7 +968,7 @@ function CampaignRows({
                     const integrationId = c.platform === "meta" ? "INT-meta" : c.platform === "google" ? "INT-google" : c.platform === "tiktok" ? "INT-tiktok" : "INT-shopee";
                     const i = integrations.find((x: any) => x.id === integrationId);
                     return i ? (
-                      <Link href={`/integrations/${i.id}`} className="inline-flex items-center gap-1.5 text-info underline-offset-2 hover:underline">
+                      <Link href={`/settings/integrations/${i.id}`} className="inline-flex items-center gap-1.5 text-info underline-offset-2 hover:underline">
                         {i.name}
                       </Link>
                     ) : null;

@@ -79,7 +79,7 @@ function LiveOrdersInner() {
               ))}
             </SelectContent>
           </Select>
-          <Link href="/setup/connections" className="inline-flex items-center gap-1 text-sm text-info underline-offset-2 hover:underline">
+          <Link href="/settings/setup/connections" className="inline-flex items-center gap-1 text-sm text-info underline-offset-2 hover:underline">
             <ArrowLeft className="size-3.5" aria-hidden /> Connections
           </Link>
         </div>
@@ -92,7 +92,7 @@ function LiveOrdersInner() {
           icon={Database}
           title="No mirrored orders yet"
           description="Connect a store in Setup → Store connections and run a sync — the first run backfills the store's full order history and rows appear here within seconds."
-          action={{ label: "Store connections", href: "/setup/connections" }}
+          action={{ label: "Store connections", href: "/settings/setup/connections" }}
         />
       ) : (
         <div className="overflow-x-auto rounded-lg border">

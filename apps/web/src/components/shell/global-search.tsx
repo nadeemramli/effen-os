@@ -122,7 +122,7 @@ export function GlobalSearch({ open, onOpenChange }: Props) {
             <CommandItem
               key={i.id}
               value={`${i.id} ${i.name} ${i.provider}`}
-              onSelect={() => go(`/integrations/${i.id}`)}
+              onSelect={() => go(`/settings/integrations/${i.id}`)}
             >
               <Cable className="size-4" aria-hidden />
               <span>{i.name}</span>

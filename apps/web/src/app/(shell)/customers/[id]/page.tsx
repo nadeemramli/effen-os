@@ -489,7 +489,7 @@ function CustomerDetailInner() {
                 Identity, value, and order history come straight from the connected store mirrors and refresh
                 every 15 minutes. Conversation and consent sources are not yet connected.
               </p>
-              <Link href="/setup/connections" className="text-info underline-offset-2 hover:underline">
+              <Link href="/settings/setup/connections" className="text-info underline-offset-2 hover:underline">
                 View connections
               </Link>
             </CardContent>

@@ -5,14 +5,15 @@ import { ArrowRight, Cable, ListChecks } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
-import { ROUTES } from "@/lib/nav/routes";
+import { ROUTES, SETTINGS_ROUTES } from "@/lib/nav/routes";
 
 /**
  * "Next module" pages explain the future workflow and what unlocks it —
  * never a blank page.
  */
 export function NextModulePage({ routeKey }: { routeKey: string }) {
-  const route = ROUTES.find((r) => r.key === routeKey);
+  const route =
+    ROUTES.find((r) => r.key === routeKey) ?? SETTINGS_ROUTES.find((r) => r.key === routeKey);
   if (!route?.nextModule) return null;
   const { summary, workflow, unlocks } = route.nextModule;
 
@@ -63,7 +64,7 @@ export function NextModulePage({ routeKey }: { routeKey: string }) {
           </ul>
           <p className="mt-4 text-xs text-muted-foreground">
             Connection status for existing sources lives in{" "}
-            <Link href="/integrations" className="text-info underline-offset-2 hover:underline">
+            <Link href="/settings/integrations" className="text-info underline-offset-2 hover:underline">
               Integrations
             </Link>
             .

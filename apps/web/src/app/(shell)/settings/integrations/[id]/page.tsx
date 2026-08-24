@@ -55,7 +55,7 @@ function IntegrationDetailInner() {
         <EmptyState
           title="Connection not found"
           description="No integration with this ID exists in the prototype."
-          action={{ label: "All integrations", href: "/integrations" }}
+          action={{ label: "All integrations", href: "/settings/integrations" }}
         />
       </PageBody>
     );
@@ -69,7 +69,7 @@ function IntegrationDetailInner() {
         <div>
           <div className="flex items-center gap-2">
             <Button asChild variant="ghost" size="icon" className="size-7" aria-label="Back to integrations">
-              <Link href="/integrations"><ArrowLeft className="size-4" /></Link>
+              <Link href="/settings/integrations"><ArrowLeft className="size-4" /></Link>
             </Button>
             <h1 className="text-lg font-semibold tracking-tight">{integration.name}</h1>
             <Badge
@@ -192,7 +192,7 @@ function IntegrationDetailInner() {
               <div className="space-y-1 border-t pt-2">
                 <div className="text-xs font-medium text-muted-foreground">Open data-quality issues</div>
                 {dqIssues.map((i) => (
-                  <Link key={i.id} href="/data-health" className="flex items-start gap-1.5 text-xs text-warning underline-offset-2 hover:underline">
+                  <Link key={i.id} href="/settings/data-health" className="flex items-start gap-1.5 text-xs text-warning underline-offset-2 hover:underline">
                     <ShieldAlert className="mt-0.5 size-3 shrink-0" aria-hidden /> {i.id}: {i.title}
                   </Link>
                 ))}

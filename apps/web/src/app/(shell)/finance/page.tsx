@@ -194,7 +194,7 @@ function FinanceInner() {
                         )}
                         {s.status === "released" && <CheckCircle2 className="ml-auto size-4 text-success" aria-label="Released" />}
                         {s.status === "processing" && (
-                          <Link href="/integrations/INT-shopee" className="text-[11px] text-info underline-offset-2 hover:underline" onClick={(e) => e.stopPropagation()}>
+                          <Link href="/settings/integrations/INT-shopee" className="text-[11px] text-info underline-offset-2 hover:underline" onClick={(e) => e.stopPropagation()}>
                             unblock source
                           </Link>
                         )}

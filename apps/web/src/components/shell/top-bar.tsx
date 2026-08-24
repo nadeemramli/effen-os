@@ -14,6 +14,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  Settings,
   Sun,
 } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -54,7 +55,7 @@ import { fetchLiveBrands, fetchWooConnections, type LiveBrand } from "@/lib/supa
 import { ModePill } from "./mode-pill";
 import { GlobalSearch } from "./global-search";
 import { ChangePasswordDialog } from "@/components/auth/change-password-dialog";
-import { visibleRoutes } from "@/lib/nav/routes";
+import { canSeeSettings, visibleRoutes } from "@/lib/nav/routes";
 
 export function TopBar() {
   const router = useRouter();
@@ -247,7 +248,7 @@ export function TopBar() {
       <div className="ml-auto flex shrink-0 items-center gap-2">
         {/* freshness */}
         <Link
-          href={isLive ? "/setup/connections" : "/data-health"}
+          href={isLive ? "/settings/setup/connections" : "/settings/data-health"}
           className={cn(
             "inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring",
             typeof staleCount !== "number"
@@ -442,6 +443,12 @@ export function TopBar() {
               </p>
             )}
             <DropdownMenuSeparator />
+            {canSeeSettings(session.role) && (
+              <DropdownMenuItem onSelect={() => router.push("/settings")}>
+                <Settings className="size-4" />
+                Settings
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem onSelect={() => setTheme(theme === "dark" ? "light" : "dark")}>
               {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
               {theme === "dark" ? "Light mode" : "Dark mode"}

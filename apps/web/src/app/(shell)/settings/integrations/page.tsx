@@ -61,7 +61,7 @@ function IntegrationsInner() {
               return (
                 <Link
                   key={i.id}
-                  href={`/integrations/${i.id}`}
+                  href={`/settings/integrations/${i.id}`}
                   className={cn(
                     "rounded-lg border bg-card p-3.5 outline-none transition-colors hover:border-ring/60 focus-visible:ring-2 focus-visible:ring-ring",
                     i.status === "stale" && "border-destructive/40",

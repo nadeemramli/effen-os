@@ -142,7 +142,7 @@ const REGISTRY: AutomationEntry[] = [
     guardrail: "suggest-only",
     source: "edge function · address-suggest",
     status: "live",
-    link: { href: "/setup/connections", label: "Configure key" },
+    link: { href: "/settings/setup/connections", label: "Configure key" },
     health: (h) =>
       `${n(h.address_ai?.suggested_24h)} suggested 24h · ${n(h.address_ai?.open)} open · ${n(h.address_ai?.accepted_total)} accepted · $${Number(h.address_ai?.cost_24h ?? 0).toFixed(3)} 24h`,
   },
@@ -189,7 +189,7 @@ const REGISTRY: AutomationEntry[] = [
     guardrail: "runs itself",
     source: "edge function · woo-sync",
     status: "live",
-    link: { href: "/setup", label: "Connections" },
+    link: { href: "/settings/setup", label: "Connections" },
     health: (h) =>
       `last ${rel(h.woo_orders?.last_success_at)} · ${n(h.woo_orders?.runs_24h).toLocaleString()} runs 24h · ${n(h.woo_orders?.failed_24h)} failed`,
   },

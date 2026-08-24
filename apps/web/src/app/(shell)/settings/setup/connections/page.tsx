@@ -140,10 +140,10 @@ function ConnectionsInner() {
       >
         <div className="flex items-center gap-2">
           {refreshing && <RefreshChip />}
-          <Link href="/setup/brands" className="text-sm text-info underline-offset-2 hover:underline">
+          <Link href="/settings/setup/brands" className="text-sm text-info underline-offset-2 hover:underline">
             Brands & catalog
           </Link>
-          <Link href="/setup/orders" className="text-sm text-info underline-offset-2 hover:underline">
+          <Link href="/settings/setup/orders" className="text-sm text-info underline-offset-2 hover:underline">
             Mirrored orders
           </Link>
           <Button size="sm" variant="outline" className="gap-1.5" disabled={syncing !== null} onClick={() => handleSync()}>

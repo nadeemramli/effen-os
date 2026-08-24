@@ -115,7 +115,7 @@ function DataHealthInner() {
               })
               .map((i) => (
                 <div key={i.id} className="flex items-center justify-between gap-3 text-sm">
-                  <Link href={`/integrations/${i.id}`} className="min-w-0 flex-1 truncate underline-offset-2 hover:underline">
+                  <Link href={`/settings/integrations/${i.id}`} className="min-w-0 flex-1 truncate underline-offset-2 hover:underline">
                     {i.name}
                   </Link>
                   <span className="tnum text-xs text-muted-foreground">
@@ -198,7 +198,7 @@ function DataHealthInner() {
                   <span>{issue.id}</span>
                   <span>owner: {personas.find((p) => p.id === issue.ownerId)?.name ?? "unassigned"}</span>
                   {issue.integrationId && (
-                    <Link href={`/integrations/${issue.integrationId}`} className="text-info underline-offset-2 hover:underline">
+                    <Link href={`/settings/integrations/${issue.integrationId}`} className="text-info underline-offset-2 hover:underline">
                       {issue.integrationId}
                     </Link>
                   )}

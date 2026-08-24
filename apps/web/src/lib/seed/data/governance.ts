@@ -317,11 +317,11 @@ export const AUDIT_EVENTS: AuditEvent[] = [
 /* ---------- notifications ---------- */
 
 export const NOTIFICATIONS: AppNotification[] = [
-  { id: "NTF-0001", at: hoursAgo(1), title: "Shopee sync still failing", detail: "14 consecutive failures — token expired 26h ago.", severity: "critical", href: "/integrations/INT-shopee", read: false },
+  { id: "NTF-0001", at: hoursAgo(1), title: "Shopee sync still failing", detail: "14 consecutive failures — token expired 26h ago.", severity: "critical", href: "/settings/integrations/INT-shopee", read: false },
   { id: "NTF-0002", at: hoursAgo(3.8), title: "6 shipments stalled >48h", detail: "SLA watchdog raised exceptions after the Ninja Van webhook gap.", severity: "high", href: "/orders?view=fulfilment-exception", read: false },
   { id: "NTF-0003", at: hoursAgo(5), title: "New Prophit recommendation", detail: "REC-0032: shift Meta budget — expires in 36h.", severity: "medium", href: "/prophit", read: false },
   { id: "NTF-0004", at: hoursAgo(8), title: "Return requested on ORD-1063", detail: "Customer reports 'serum texture changed'.", severity: "low", href: "/orders/ORD-1063", read: true },
-  { id: "NTF-0005", at: daysAgo(1, 18), title: "Chip settlement variance", detail: "Batch 2026-07-21 has RM240.80 unmatched.", severity: "medium", href: "/data-health", read: true },
+  { id: "NTF-0005", at: daysAgo(1, 18), title: "Chip settlement variance", detail: "Batch 2026-07-21 has RM240.80 unmatched.", severity: "medium", href: "/settings/data-health", read: true },
 ];
 
 /* ---------- report library ---------- */

@@ -12,8 +12,8 @@ import {
   Package,
   Palette,
   PlugZap,
-  Settings,
   ShieldCheck,
+  SlidersHorizontal,
   Tags,
   TrendingUp,
   Truck,
@@ -27,6 +27,12 @@ import { ROLE_PERMISSIONS } from "@/lib/rbac/matrix";
 /**
  * Single route registry — sidebar, breadcrumbs, global search targets,
  * RBAC nav filtering, and next-module pages all derive from this.
+ *
+ * Two registries, deliberately separate. ROUTES is the daily work: the
+ * sidebar shows it, and every entry answers "what needs attention now".
+ * SETTINGS_ROUTES is configuration and evidence — reached through the
+ * profile menu, not the sidebar, because you go there when something needs
+ * changing rather than as part of the day.
  */
 
 export interface RouteDef {
@@ -34,7 +40,7 @@ export interface RouteDef {
   label: string;
   path: string;
   icon: LucideIcon;
-  group: "Command Centre" | "Commerce" | "Growth" | "Merchandise" | "Control" | "Platform";
+  group: "Command Centre" | "Commerce" | "Growth" | "Merchandise" | "Control";
   status: "live" | "next-module";
   /** Permission that gates seeing this item; undefined = everyone. */
   permission?: PermissionKey;
@@ -77,15 +83,6 @@ export const ROUTES: RouteDef[] = [
     label: "Fulfilment",
     path: "/fulfilment",
     icon: Truck,
-    group: "Commerce",
-    status: "live",
-    permission: "orders.view",
-  },
-  {
-    key: "automations",
-    label: "Automations",
-    path: "/automations",
-    icon: Zap,
     group: "Commerce",
     status: "live",
     permission: "orders.view",
@@ -162,60 +159,34 @@ export const ROUTES: RouteDef[] = [
     status: "live",
     permission: "reports.view",
   },
+];
+
+export const ROUTE_GROUPS = [
+  "Command Centre",
+  "Commerce",
+  "Growth",
+  "Merchandise",
+  "Control",
+] as const;
+
+/* ---------------------------------------------------------------- settings */
+
+export interface SettingsRouteDef extends Omit<RouteDef, "group"> {
+  group: "Workspace" | "Platform";
+  /** One line under the label in the settings nav. */
+  blurb: string;
+}
+
+export const SETTINGS_ROUTES: SettingsRouteDef[] = [
   {
-    key: "integrations",
-    label: "Integrations",
-    path: "/integrations",
-    icon: Cable,
-    group: "Platform",
-    status: "live",
-    permission: "integrations.view",
-  },
-  {
-    key: "data-health",
-    label: "Data Health",
-    path: "/data-health",
-    icon: AudioWaveform,
-    group: "Platform",
-    status: "live",
-    permission: "dq.view",
-  },
-  {
-    key: "setup",
-    label: "Setup (Live)",
-    path: "/setup/connections",
-    icon: PlugZap,
-    group: "Platform",
-    status: "live",
-    permission: "settings.manage",
-  },
-  {
-    key: "audit",
-    label: "Audit",
-    path: "/audit",
-    icon: ShieldCheck,
-    group: "Platform",
-    status: "next-module",
-    permission: "audit.view",
-    nextModule: {
-      summary:
-        "The full audit trail: who did what, when, from where — across user actions, rule executions, connector writes, and exports. Read-only and immutable.",
-      workflow: [
-        "Every material action already lands an audit event (see actions in this demo)",
-        "Filter by actor, entity, action type, and time",
-        "Export evidence packs for finance or compliance review",
-      ],
-      unlocks: ["Long-term audit storage & retention policy", "SIEM forwarding (optional)"],
-    },
-  },
-  {
-    key: "settings",
-    label: "Settings",
-    path: "/settings",
-    icon: Settings,
-    group: "Platform",
+    key: "settings-general",
+    label: "General",
+    path: "/settings/general",
+    icon: SlidersHorizontal,
+    group: "Workspace",
     status: "next-module",
     permission: "settings.manage",
+    blurb: "Members, roles, brand scopes, and environment controls",
     nextModule: {
       summary:
         "Workspace administration: members and roles, brand scopes, saved-view defaults, notification templates, feature flags, and environment controls (Demo / Shadow / Live).",
@@ -228,26 +199,100 @@ export const ROUTES: RouteDef[] = [
       unlocks: ["Supabase auth (invite-only)", "Memberships + RLS policies", "Feature-flag service"],
     },
   },
+  {
+    key: "integrations",
+    label: "Integrations",
+    path: "/settings/integrations",
+    icon: Cable,
+    group: "Platform",
+    status: "live",
+    permission: "integrations.view",
+    blurb: "Connected sources, scopes, and sync health",
+  },
+  {
+    key: "automations",
+    label: "Automations",
+    path: "/settings/automations",
+    icon: Zap,
+    group: "Platform",
+    status: "live",
+    permission: "orders.view",
+    blurb: "Every rule that runs without a human",
+  },
+  {
+    key: "data-health",
+    label: "Data Health",
+    path: "/settings/data-health",
+    icon: AudioWaveform,
+    group: "Platform",
+    status: "live",
+    permission: "dq.view",
+    blurb: "Freshness SLAs and the owned issue queue",
+  },
+  {
+    key: "setup",
+    label: "Setup (Live)",
+    path: "/settings/setup/connections",
+    icon: PlugZap,
+    group: "Platform",
+    status: "live",
+    permission: "settings.manage",
+    blurb: "Real store credentials and the live catalog",
+  },
+  {
+    key: "audit",
+    label: "Audit",
+    path: "/settings/audit",
+    icon: ShieldCheck,
+    group: "Platform",
+    status: "next-module",
+    permission: "audit.view",
+    blurb: "Who did what, when, from where",
+    nextModule: {
+      summary:
+        "The full audit trail: who did what, when, from where — across user actions, rule executions, connector writes, and exports. Read-only and immutable.",
+      workflow: [
+        "Every material action already lands an audit event (see actions in this demo)",
+        "Filter by actor, entity, action type, and time",
+        "Export evidence packs for finance or compliance review",
+      ],
+      unlocks: ["Long-term audit storage & retention policy", "SIEM forwarding (optional)"],
+    },
+  },
 ];
 
-export const ROUTE_GROUPS = [
-  "Command Centre",
-  "Commerce",
-  "Growth",
-  "Merchandise",
-  "Control",
-  "Platform",
-] as const;
+export const SETTINGS_GROUPS = ["Workspace", "Platform"] as const;
 
 export function visibleRoutes(role: RoleKey): RouteDef[] {
   const perms = ROLE_PERMISSIONS[role];
   return ROUTES.filter((r) => !r.permission || perms.includes(r.permission));
 }
 
-export function routeForPath(pathname: string): RouteDef | undefined {
-  return ROUTES.find(
-    (r) => pathname === r.path || (r.key === "catalog" && pathname.startsWith("/catalog")),
-  ) ?? ROUTES.find((r) => pathname.startsWith(r.path) && r.path !== "/");
+export function visibleSettingsRoutes(role: RoleKey): SettingsRouteDef[] {
+  const perms = ROLE_PERMISSIONS[role];
+  return SETTINGS_ROUTES.filter((r) => !r.permission || perms.includes(r.permission));
+}
+
+/**
+ * True when the role can reach any settings surface at all. Roles with no
+ * settings permissions should not see the menu entry — an entry that leads
+ * only to a permission-denied page is worse than no entry.
+ */
+export function canSeeSettings(role: RoleKey): boolean {
+  return visibleSettingsRoutes(role).length > 0;
+}
+
+export function routeForPath(pathname: string): RouteDef | SettingsRouteDef | undefined {
+  const all: Array<RouteDef | SettingsRouteDef> = [...ROUTES, ...SETTINGS_ROUTES];
+  return (
+    all.find(
+      (r) => pathname === r.path || (r.key === "catalog" && pathname.startsWith("/catalog")),
+    ) ??
+    // Longest path first so /settings/integrations wins over a shorter prefix.
+    [...all]
+      .sort((a, b) => b.path.length - a.path.length)
+      .find((r) => pathname.startsWith(`${r.path}/`))
+  );
 }
 
 export { Package as FallbackIcon };

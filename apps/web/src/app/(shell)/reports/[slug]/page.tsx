@@ -176,7 +176,7 @@ function ReportDetailInner() {
           <p className="text-[11px] text-muted-foreground">
             The 6 stalled Ninja Van parcels trace to the 21 Jul webhook gap — drill through:{" "}
             <Link href="/orders?view=sla-risk" className="text-info underline-offset-2 hover:underline">SLA-risk orders</Link> ·{" "}
-            <Link href="/integrations/INT-ninja-van" className="text-info underline-offset-2 hover:underline">Ninja Van connection</Link>
+            <Link href="/settings/integrations/INT-ninja-van" className="text-info underline-offset-2 hover:underline">Ninja Van connection</Link>
           </p>
         </CardContent>
       </Card>
@@ -392,7 +392,7 @@ function ReportDetailInner() {
             <ul className="space-y-1">
               {sources.map((s) => (
                 <li key={s!.id} className="flex items-center justify-between gap-2 text-xs">
-                  <Link href={`/integrations/${s!.id}`} className="underline-offset-2 hover:underline">{s!.name}</Link>
+                  <Link href={`/settings/integrations/${s!.id}`} className="underline-offset-2 hover:underline">{s!.name}</Link>
                   <FreshnessBadge lastSuccessAt={s!.lastSuccessAt} slaMinutes={s!.freshnessSlaMinutes} />
                 </li>
               ))}

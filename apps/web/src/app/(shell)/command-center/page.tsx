@@ -115,7 +115,7 @@ export default function CommandCenterPage() {
       label: "Failed syncs",
       count: staleSources.length,
       detail: staleSources.map((s) => s.provider).join(" · ") || "All sources healthy",
-      href: "/integrations",
+      href: "/settings/integrations",
       tone: "warning" as const,
     },
     {
@@ -187,7 +187,7 @@ export default function CommandCenterPage() {
             {word(pending.length)} item{pending.length === 1 ? "" : "s"} need{pending.length === 1 ? "s" : ""} a decision
           </Link>
           ,{" "}
-          <Link href="/data-health" className="rounded text-warning underline decoration-warning/40 underline-offset-4 outline-none hover:decoration-warning focus-visible:ring-2 focus-visible:ring-ring">
+          <Link href="/settings/data-health" className="rounded text-warning underline decoration-warning/40 underline-offset-4 outline-none hover:decoration-warning focus-visible:ring-2 focus-visible:ring-ring">
             {word(staleSources.length).toLowerCase()} source{staleSources.length === 1 ? " is" : "s are"} stale
           </Link>
           , and yesterday&apos;s contribution is{" "}
@@ -332,7 +332,7 @@ export default function CommandCenterPage() {
                         : w.entityRef.startsWith("recommendation:")
                           ? "/profit"
                           : w.entityRef.startsWith("integration:")
-                            ? `/integrations/${w.entityRef.split(":")[1]}`
+                            ? `/settings/integrations/${w.entityRef.split(":")[1]}`
                             : "/command-center"
                     }
                   >
@@ -396,7 +396,7 @@ export default function CommandCenterPage() {
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-sm font-medium">Data trust</CardTitle>
             <Button asChild variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs">
-              <Link href="/data-health">
+              <Link href="/settings/data-health">
                 Data health <ArrowRight className="size-3" aria-hidden />
               </Link>
             </Button>
@@ -426,7 +426,7 @@ export default function CommandCenterPage() {
                 .slice(0, 5)
                 .map((i) => (
                   <div key={i.id} className="flex items-center justify-between gap-2 text-xs">
-                    <Link href={`/integrations/${i.id}`} className="truncate text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+                    <Link href={`/settings/integrations/${i.id}`} className="truncate text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
                       {i.name}
                     </Link>
                     <FreshnessBadge lastSuccessAt={i.lastSuccessAt} slaMinutes={i.freshnessSlaMinutes} />

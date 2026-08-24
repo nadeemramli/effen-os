@@ -188,7 +188,7 @@ function BrandsInner() {
         description="The real workspace catalog — brands, products, SKUs, prices, and stock. Demo brands are labeled; archive them once real brands are in."
       >
         <div className="flex items-center gap-2">
-          <Link href="/setup/connections" className="text-sm text-info underline-offset-2 hover:underline">
+          <Link href="/settings/setup/connections" className="text-sm text-info underline-offset-2 hover:underline">
             Store connections
           </Link>
           <Button size="sm" className="gap-1.5" onClick={() => setBrandDialog(true)}>
