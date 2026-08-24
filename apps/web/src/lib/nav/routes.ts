@@ -6,6 +6,7 @@ import {
   Ban,
   Boxes,
   Cable,
+  ChartNoAxesCombined,
   CircleCheck,
   ClipboardCheck,
   ClipboardList,
@@ -246,6 +247,14 @@ const CUSTOMER_CHILDREN: ChildRouteDef[] = [
     isDefault: true,
     icon: Users,
     status: "live",
+  },
+  {
+    key: "customers-base",
+    label: "Customer base",
+    path: "/customers/base",
+    icon: ChartNoAxesCombined,
+    status: "live",
+    blurb: "Active base: new, reactivated, lapsed, net movement",
   },
   ...CUSTOMER_STARTERS.filter((s) => s.nav).map<ChildRouteDef>((s) => ({
     key: `customers-seg-${s.key}`,

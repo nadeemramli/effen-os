@@ -1,4 +1,4 @@
-import type { CustomerBaseMovement, MovementGrain, MovementMeasure, TransitionPopulation } from "@/lib/domain/lifecycle";
+import type { CustomerBaseMovement, CustomerLifecycleStates, MovementGrain, MovementMeasure, TransitionPopulation } from "@/lib/domain/lifecycle";
 import type { OrderQueueCounts } from "@/lib/domain/order-views";
 import { getSupabase } from "./client";
 
@@ -1539,4 +1539,14 @@ export async function fetchCustomerTransitionPopulation(q: {
   });
   if (error) throw new Error(error.message);
   return data as TransitionPopulation;
+}
+
+/** Governed point-in-time lifecycle state for up to 500 identities (policy-versioned). */
+export async function fetchCustomerLifecycleStates(identityKeys: string[]): Promise<CustomerLifecycleStates> {
+  if (identityKeys.length === 0) return { status: "ok", states: {} };
+  const { data, error } = await getSupabase().rpc("live_customer_lifecycle_states", {
+    p_identity_keys: identityKeys.slice(0, 500),
+  });
+  if (error) throw new Error(error.message);
+  return data as CustomerLifecycleStates;
 }

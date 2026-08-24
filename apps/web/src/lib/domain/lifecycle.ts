@@ -126,3 +126,35 @@ export interface TransitionPopulation {
 export function movementReconciles(p: MovementPeriod): boolean {
   return p.closing_active === p.opening_active + p.new_customers + p.reactivated - p.lapsed + p.corrections;
 }
+
+export interface CustomerLifecycleStateRow {
+  /** Null when the identity has no qualifying purchase under this policy. */
+  state: LifecycleState | null;
+  since: string | null;
+  last_qualifying_at: string | null;
+  lifecycle_orders: number | null;
+  first_accepted_at: string | null;
+}
+
+export type CustomerLifecycleStates =
+  | {
+      status: "ok";
+      policy?: Pick<LifecyclePolicy, "version" | "status" | "threshold_days" | "at_risk_days">;
+      computed_at?: string;
+      states: Record<string, CustomerLifecycleStateRow>;
+    }
+  | { status: "unavailable"; reason: "no_policy" | "not_computed" };
+
+/** Tone class for a governed lifecycle state pill. */
+export function lifecycleTone(state: LifecycleState | null | undefined): string {
+  switch (state) {
+    case "active":
+      return "";
+    case "at_risk":
+      return "text-warning";
+    case "lapsed":
+      return "text-muted-foreground";
+    default:
+      return "text-muted-foreground";
+  }
+}

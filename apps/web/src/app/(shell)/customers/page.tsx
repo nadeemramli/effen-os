@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DataTable } from "@/components/tables/data-table";
+import { Skeleton } from "@/components/ui/skeleton";
 import { InlineCount, RefreshChip } from "@/components/states";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { LiveGuard } from "@/components/auth/live-guard";
@@ -36,6 +37,7 @@ import {
   CUSTOMER_EXPORT_PAGE_SIZE,
   deleteSegment,
   fetchCustomerExportPage,
+  fetchCustomerLifecycleStates,
   fetchLiveBrands,
   fetchLiveCustomers,
   fetchSegments,
@@ -48,6 +50,7 @@ import {
 } from "@/lib/supabase/live";
 import { maskPhone } from "@/lib/utils/mask";
 import { CUSTOMER_STARTERS } from "@/lib/domain/customer-starters";
+import { LIFECYCLE_STATE_LABELS, lifecycleTone, type CustomerLifecycleStates } from "@/lib/domain/lifecycle";
 import { useAppStore } from "@/lib/store/provider";
 import { cn } from "@/lib/utils";
 
@@ -126,12 +129,32 @@ function relative(iso: string | null): string {
   return `${(days / 365).toFixed(1)}y ago`;
 }
 
-function lifecycleOf(row: LiveCustomerRow): { label: string; cls?: string } {
-  if (!row.last_order_at) return { label: "provisional", cls: "text-muted-foreground" };
-  const days = (Date.now() - new Date(row.last_order_at).getTime()) / 86_400_000;
-  if (days <= 30) return { label: "active" };
-  if (days <= 90) return { label: "at risk", cls: "text-warning" };
-  return { label: "dormant", cls: "text-muted-foreground" };
+/** Served lifecycle lookup for the current page of rows; `null` while it loads. */
+type LifecycleLookup = CustomerLifecycleStates | { status: "error" } | null;
+
+/**
+ * Governed lifecycle state from live_customer_lifecycle_states — the browser
+ * never derives active/at-risk/lapsed from dates. Skeleton while loading,
+ * an honest dash when the contract cannot answer.
+ */
+function LifecycleCell({ lookup, identityKey }: { lookup: LifecycleLookup; identityKey: string }) {
+  if (lookup === null) return <Skeleton className="h-3.5 w-12" aria-label="Loading lifecycle" />;
+  if (lookup.status !== "ok") {
+    return (
+      <span className="text-muted-foreground" title={lookup.status === "error" ? "Lifecycle lookup failed" : `Lifecycle ${lookup.reason === "no_policy" ? "policy not set" : "not computed yet"}`}>
+        —
+      </span>
+    );
+  }
+  const s = lookup.states[identityKey];
+  if (!s || s.state === null) {
+    return <span className="text-muted-foreground" title="No qualifying purchase under the lifecycle policy">no purchase</span>;
+  }
+  return (
+    <span className={lifecycleTone(s.state)} title={s.since ? `Since ${new Date(s.since).toLocaleDateString("en-MY", { timeZone: "Asia/Kuala_Lumpur" })}` : undefined}>
+      {LIFECYCLE_STATE_LABELS[s.state]}
+    </span>
+  );
 }
 
 function CustomersInner() {
@@ -151,6 +174,7 @@ function CustomersInner() {
   const [saveOpen, setSaveOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [rows, setRows] = useState<LiveCustomerRow[]>([]);
+  const [lifecycle, setLifecycle] = useState<LifecycleLookup>(null);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -196,6 +220,13 @@ function CustomersInner() {
       });
       setRows(result.rows);
       setTotal(result.total);
+      // Lifecycle is served, not derived: one lookup per page of rows.
+      setLifecycle(null);
+      try {
+        setLifecycle(await fetchCustomerLifecycleStates(result.rows.map((r) => r.identity_key)));
+      } catch {
+        setLifecycle({ status: "error" });
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -263,10 +294,7 @@ function CustomersInner() {
         id: "lifecycle",
         header: "Lifecycle",
         enableSorting: false,
-        cell: ({ row }) => {
-          const lc = lifecycleOf(row.original);
-          return <span className={cn("capitalize", lc.cls)}>{lc.label}</span>;
-        },
+        cell: ({ row }) => <LifecycleCell lookup={lifecycle} identityKey={row.original.identity_key} />,
       },
       {
         id: "orders",
@@ -343,7 +371,7 @@ function CustomersInner() {
         ),
       },
     ],
-    [brandById],
+    [brandById, lifecycle],
   );
 
   return (

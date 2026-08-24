@@ -13,11 +13,13 @@ import { tonePill } from "@/components/status/status-pill";
 import { EmptyState, ErrorState } from "@/components/states";
 import { LiveGuard } from "@/components/auth/live-guard";
 import {
+  fetchCustomerLifecycleStates,
   fetchLiveBrands,
   fetchLiveCustomerDetail,
   type LiveBrand,
   type LiveCustomerDetail,
 } from "@/lib/supabase/live";
+import { LIFECYCLE_STATE_LABELS, type CustomerLifecycleStates } from "@/lib/domain/lifecycle";
 import { FX_TO_MYR } from "@/lib/domain/metrics";
 import { maskEmail, maskPhone } from "@/lib/utils/mask";
 import { cn } from "@/lib/utils";
@@ -39,12 +41,24 @@ function fmtDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString("en-MY", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kuala_Lumpur" });
 }
 
-function lifecycle(last: string | null): string {
-  if (!last) return "provisional";
-  const days = (Date.now() - new Date(last).getTime()) / 86_400_000;
-  if (days <= 30) return "active";
-  if (days <= 90) return "at risk";
-  return "dormant";
+/**
+ * Governed lifecycle badge from live_customer_lifecycle_states; the browser
+ * never derives the state from dates. Says so when the contract cannot answer.
+ */
+function lifecycleBadge(lookup: CustomerLifecycleStates | "error" | null, identityKey: string): { label: string; title?: string; muted: boolean } {
+  if (lookup === null) return { label: "…", title: "Loading lifecycle", muted: true };
+  if (lookup === "error") return { label: "lifecycle —", title: "Lifecycle lookup failed", muted: true };
+  if (lookup.status !== "ok") {
+    return { label: "lifecycle —", title: lookup.reason === "no_policy" ? "Lifecycle policy not set" : "Lifecycle not computed yet", muted: true };
+  }
+  const s = lookup.states[identityKey];
+  if (!s || s.state === null) return { label: "no qualifying purchase", title: "No delivered or completed order under the lifecycle policy", muted: true };
+  const policy = lookup.policy ? ` · policy v${lookup.policy.version} (${lookup.policy.status}, ${lookup.policy.threshold_days}d)` : "";
+  return {
+    label: LIFECYCLE_STATE_LABELS[s.state],
+    title: `${s.since ? `Since ${fmtDate(s.since)}` : "Provisional"}${policy}`,
+    muted: s.state !== "active",
+  };
 }
 
 function tierOf(revenue: Record<string, number> | null): string {
@@ -102,6 +116,7 @@ function CustomerDetailInner() {
 
   const [detail, setDetail] = useState<LiveCustomerDetail | null | "loading">("loading");
   const [brands, setBrands] = useState<LiveBrand[]>([]);
+  const [lifecycleLookup, setLifecycleLookup] = useState<CustomerLifecycleStates | "error" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -109,9 +124,15 @@ function CustomerDetailInner() {
     // Fetch-on-mount; every setState happens after an await.
     void (async () => {
       try {
-        const [d, b] = await Promise.all([fetchLiveCustomerDetail(identityKey), fetchLiveBrands()]);
+        const [d, b, lc] = await Promise.all([
+          fetchLiveCustomerDetail(identityKey),
+          fetchLiveBrands(),
+          // Lifecycle is served by the contract; a failure here must not hide the profile.
+          fetchCustomerLifecycleStates([identityKey]).catch(() => "error" as const),
+        ]);
         setDetail(d);
         setBrands(b);
+        setLifecycleLookup(lc);
       } catch (e) {
         // Without this the page would sit on the skeleton forever.
         setError((e as Error).message);
@@ -207,7 +228,7 @@ function CustomerDetailInner() {
   const p = detail.profile;
   const brandName = (id: number) => brands.find((b) => b.id === id)?.name ?? String(id);
   const tier = tierOf(p.revenue_by_currency);
-  const lc = lifecycle(p.last_order_at);
+  const lc = lifecycleBadge(lifecycleLookup, identityKey);
   const repeat = Number(p.total_orders) >= 5 ? "loyal" : Number(p.total_orders) > 1 ? "repeat" : "first-time";
   const ltv = contributionLtv(detail.contribution);
 
@@ -220,7 +241,7 @@ function CustomerDetailInner() {
               <Link href="/customers"><ArrowLeft className="size-4" /></Link>
             </Button>
             <h1 className="text-lg font-semibold tracking-tight">{p.display_name ?? "Unknown customer"}</h1>
-            <Badge variant="outline" className="capitalize">{lc}</Badge>
+            <Badge variant="outline" className={cn("capitalize", lc.muted && "text-muted-foreground")} title={lc.title}>{lc.label}</Badge>
             <Badge variant="outline" className="uppercase">{tier}</Badge>
             {Number(p.shared_address_count ?? 0) >= 2 && (
               <Badge variant="outline" className="tnum text-muted-foreground">×{p.shared_address_count} at address</Badge>
@@ -468,7 +489,7 @@ function CustomerDetailInner() {
             <CardContent className="space-y-3">
               <div className="flex flex-wrap gap-1.5">
                 <Badge variant="secondary" className="text-xs capitalize">{repeat}</Badge>
-                <Badge variant="secondary" className="text-xs capitalize">{lc}</Badge>
+                <Badge variant="secondary" className="text-xs capitalize" title={lc.title}>{lc.label}</Badge>
                 {(p.brand_ids ?? []).length > 1 && <Badge variant="secondary" className="text-xs">cross-brand</Badge>}
               </div>
               <p className="text-[11px] text-muted-foreground">
