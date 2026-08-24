@@ -5,15 +5,14 @@ import { ArrowRight, Cable, ListChecks } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
-import { ROUTES, SETTINGS_ROUTES } from "@/lib/nav/routes";
+import { routeByKey } from "@/lib/nav/routes";
 
 /**
  * "Next module" pages explain the future workflow and what unlocks it —
  * never a blank page.
  */
 export function NextModulePage({ routeKey }: { routeKey: string }) {
-  const route =
-    ROUTES.find((r) => r.key === routeKey) ?? SETTINGS_ROUTES.find((r) => r.key === routeKey);
+  const route = routeByKey(routeKey);
   if (!route?.nextModule) return null;
   const { summary, workflow, unlocks } = route.nextModule;
 

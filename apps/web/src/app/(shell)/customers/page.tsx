@@ -47,6 +47,7 @@ import {
   type SegmentCondition,
 } from "@/lib/supabase/live";
 import { maskPhone } from "@/lib/utils/mask";
+import { CUSTOMER_STARTERS } from "@/lib/domain/customer-starters";
 import { useAppStore } from "@/lib/store/provider";
 import { cn } from "@/lib/utils";
 
@@ -96,24 +97,6 @@ const OPS: { value: SegmentCondition["op"]; label: string }[] = [
 ];
 
 /** Built-in starter segments — same condition language, not deletable. */
-const STARTERS: { key: string; name: string; conditions: SegmentCondition[] }[] = [
-  { key: "vip", name: "VIP", conditions: [{ field: "tier", op: "eq", value: "vip" }] },
-  { key: "loyal", name: "Loyal", conditions: [{ field: "repeat", op: "eq", value: "loyal" }] },
-  { key: "at_risk", name: "At risk", conditions: [{ field: "activity", op: "eq", value: "at_risk" }] },
-  { key: "resellers", name: "Resellers", conditions: [{ field: "classification", op: "eq", value: "reseller" }] },
-  // Multiple identities converging on one normalized delivery address —
-  // reseller / drop-point candidates that phone-first identity can't merge.
-  { key: "shared_address", name: "Shared address", conditions: [{ field: "shared_address_count", op: "gte", value: 2 }] },
-  { key: "joy_buyers", name: "Joy buyers", conditions: [{ field: "classification", op: "eq", value: "joy_buyer" }] },
-  { key: "cod_heavy", name: "COD-heavy", conditions: [
-    { field: "cod_share", op: "gte", value: 80 }, { field: "total_orders", op: "gte", value: 2 },
-  ] },
-  // The remarketing cut: frequent buyers whose last order is recent enough
-  // to still be reachable (4+ orders, active within 6 months).
-  { key: "repeat_6mo", name: "Repeat 4+ · 6 mo", conditions: [
-    { field: "total_orders", op: "gte", value: 4 }, { field: "last_order_days", op: "lte", value: 180 },
-  ] },
-];
 
 function describeCondition(c: SegmentCondition): string {
   const def = FIELD_DEFS.find((f) => f.field === c.field);
@@ -187,7 +170,7 @@ function CustomersInner() {
   // The active segment (starter or saved) supplies conditions on load / URL nav.
   useEffect(() => {
     if (!segmentKey) return;
-    const starter = STARTERS.find((s) => s.key === segmentKey);
+    const starter = CUSTOMER_STARTERS.find((s) => s.key === segmentKey);
     if (starter) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setConditions(starter.conditions);
@@ -387,7 +370,7 @@ function CustomersInner() {
         >
           All customers
         </button>
-        {STARTERS.map((s) => (
+        {CUSTOMER_STARTERS.map((s) => (
           <button
             key={s.key}
             type="button"

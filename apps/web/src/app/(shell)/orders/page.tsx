@@ -29,6 +29,7 @@ import {
   type LiveWooConnection,
 } from "@/lib/supabase/live";
 import type { StatusMeta } from "@/lib/domain/status-maps";
+import { ORDER_VIEWS } from "@/lib/domain/order-views";
 import { useAppStore } from "@/lib/store/provider";
 import { cn } from "@/lib/utils";
 
@@ -72,15 +73,6 @@ function statePills(sourceStatus: string) {
   );
 }
 
-/* ---------- saved views = honest status slices over the live mirror ---------- */
-const SAVED_VIEWS: { key: string; label: string; statusIn: string[] | null; sinceHours: number | null }[] = [
-  { key: "all", label: "All", statusIn: null, sinceHours: null },
-  { key: "new", label: "New (24h)", statusIn: null, sinceHours: 24 },
-  { key: "needs-payment", label: "Needs payment", statusIn: ["pending", "on-hold", "failed"], sinceHours: null },
-  { key: "to-fulfil", label: "To fulfil", statusIn: ["processing"], sinceHours: null },
-  { key: "completed", label: "Completed", statusIn: ["completed"], sinceHours: null },
-  { key: "cancelled-refunded", label: "Cancelled / refunded", statusIn: ["cancelled", "refunded"], sinceHours: null },
-];
 
 const AGE_OPTIONS = [
   { key: "any", label: "Any age", hours: null },
@@ -90,7 +82,7 @@ const AGE_OPTIONS = [
   { key: "30d", label: "< 30 days", hours: 720 },
 ] as const;
 
-const SOURCE_STATUSES = ["pending", "on-hold", "processing", "completed", "cancelled", "refunded", "failed"];
+const SOURCE_STATUSES = ["pending", "on-hold", "processing", "completed", "cancelled", "refunded", "failed", "checkout-draft"];
 
 function fmtRelativeNow(iso: string | null): string {
   if (!iso) return "—";
@@ -134,7 +126,7 @@ function OrdersInner() {
   const [error, setError] = useState<string | null>(null);
   const [searchDraft, setSearchDraft] = useState(q);
 
-  const activeView = SAVED_VIEWS.find((v) => v.key === view) ?? SAVED_VIEWS[0]!;
+  const activeView = ORDER_VIEWS.find((v) => v.key === view) ?? ORDER_VIEWS[0]!;
   const brandById = useMemo(() => new Map(brands.map((b) => [b.id, b])), [brands]);
   const connById = useMemo(() => new Map((connections ?? []).map((c) => [c.id, c])), [connections]);
 
@@ -322,7 +314,7 @@ function OrdersInner() {
 
       {/* saved views */}
       <div className="flex flex-wrap gap-1" role="tablist" aria-label="Saved views">
-        {SAVED_VIEWS.map((v) => (
+        {ORDER_VIEWS.map((v) => (
           <button
             key={v.key}
             type="button"

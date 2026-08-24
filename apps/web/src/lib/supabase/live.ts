@@ -1,3 +1,4 @@
+import type { OrderQueueCounts } from "@/lib/domain/order-views";
 import { getSupabase } from "./client";
 
 /**
@@ -1462,4 +1463,26 @@ export async function fetchAutomationHealth(): Promise<AutomationHealth> {
   const { data, error } = await getSupabase().rpc("live_automation_health");
   if (error) throw new Error(error.message);
   return (data ?? {}) as AutomationHealth;
+}
+
+/* ---------- Orders section nav: per-queue counts ---------- */
+
+/**
+ * One grouped RPC for the queue badges (see supabase/migrations/*_order_queue_counts*.sql).
+ * Returns null when the function is not deployed, so the nav simply shows no
+ * badges rather than failing the shell.
+ */
+export async function fetchOrderQueueCounts(q: {
+  brandId: number | null;
+  integrationIn: number[] | null;
+}): Promise<OrderQueueCounts | null> {
+  const { data, error } = await getSupabase().rpc("live_order_queue_counts", {
+    p_brand_id: q.brandId,
+    p_integration_ids: q.integrationIn,
+  });
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") return null;
+    throw new Error(error.message);
+  }
+  return data as OrderQueueCounts;
 }
