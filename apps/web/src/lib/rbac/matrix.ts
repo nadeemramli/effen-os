@@ -15,6 +15,8 @@ export type PermissionKey =
   | "orders.notify"
   | "customers.view"
   | "customers.pii.view"
+  /** Create/close internal follow-up work items; mirrors the DB role check in create_customer_work_item. */
+  | "customers.followup"
   | "marketing.view"
   | "recommendations.view"
   | "recommendations.decide"
@@ -33,7 +35,7 @@ export type PermissionKey =
 
 const ALL: PermissionKey[] = [
   "orders.view", "orders.create", "orders.assign", "orders.approve", "orders.cancel", "orders.notify",
-  "customers.view", "customers.pii.view",
+  "customers.view", "customers.pii.view", "customers.followup",
   "marketing.view",
   "recommendations.view", "recommendations.decide", "recommendations.assign",
   "catalog.view",
@@ -48,13 +50,13 @@ export const ROLE_PERMISSIONS: Record<RoleKey, PermissionKey[]> = {
   hq_admin: ALL,
   sales_cs: [
     "orders.view", "orders.create", "orders.assign", "orders.notify",
-    "customers.view", "customers.pii.view",
+    "customers.view", "customers.pii.view", "customers.followup",
     "recommendations.view",
   ],
   marketing_growth: [
     "marketing.view",
     "recommendations.view", "recommendations.decide", "recommendations.assign",
-    "customers.view",
+    "customers.view", "customers.followup",
     "catalog.view",
     "reports.view", "reports.export",
     "integrations.view", "integrations.connect",
@@ -62,7 +64,7 @@ export const ROLE_PERMISSIONS: Record<RoleKey, PermissionKey[]> = {
   ],
   operations: [
     "orders.view", "orders.assign", "orders.approve", "orders.cancel", "orders.notify",
-    "customers.view",
+    "customers.view", "customers.followup",
     "recommendations.view", "recommendations.decide",
     "catalog.view",
     "reports.view",

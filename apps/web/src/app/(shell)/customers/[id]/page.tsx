@@ -12,6 +12,7 @@ import { PageBody } from "@/components/shell/page-header";
 import { tonePill } from "@/components/status/status-pill";
 import { EmptyState, ErrorState } from "@/components/states";
 import { LiveGuard } from "@/components/auth/live-guard";
+import { FollowUpsCard } from "@/components/customers/follow-ups-card";
 import {
   fetchCustomerLifecycleStates,
   fetchLiveBrands,
@@ -482,6 +483,9 @@ function CustomerDetailInner() {
               </p>
             </CardContent>
           </Card>
+
+          {/* follow-ups: internal, audited work items; no send path */}
+          <FollowUpsCard identityKey={identityKey} displayName={p.display_name} />
 
           {/* segments / journeys */}
           <Card>

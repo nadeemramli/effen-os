@@ -28,7 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DataTable } from "@/components/tables/data-table";
-import { Skeleton } from "@/components/ui/skeleton";
+import { LifecycleCell, type LifecycleLookup } from "@/components/customers/lifecycle-cell";
 import { InlineCount, RefreshChip } from "@/components/states";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { LiveGuard } from "@/components/auth/live-guard";
@@ -50,7 +50,6 @@ import {
 } from "@/lib/supabase/live";
 import { maskPhone } from "@/lib/utils/mask";
 import { CUSTOMER_STARTERS } from "@/lib/domain/customer-starters";
-import { LIFECYCLE_STATE_LABELS, lifecycleTone, type CustomerLifecycleStates } from "@/lib/domain/lifecycle";
 import { useAppStore } from "@/lib/store/provider";
 import { cn } from "@/lib/utils";
 
@@ -66,10 +65,12 @@ interface FieldDef {
 }
 
 const FIELD_DEFS: FieldDef[] = [
+  // Governed lifecycle contract (policy-versioned); the server still accepts
+  // the legacy `dormant` value from older saved segments as an alias of lapsed.
   { field: "activity", label: "Lifecycle", type: "enum", options: [
     { value: "new", label: "New" }, { value: "active", label: "Active" },
-    { value: "at_risk", label: "At risk" }, { value: "dormant", label: "Dormant" },
-    { value: "provisional", label: "Provisional" },
+    { value: "at_risk", label: "At risk" }, { value: "lapsed", label: "Lapsed" },
+    { value: "provisional", label: "Provisional (no qualifying purchase)" },
   ] },
   { field: "repeat", label: "Repeat state", type: "enum", options: [
     { value: "first_time", label: "First-time" }, { value: "repeat", label: "Repeat" }, { value: "loyal", label: "Loyal" },
@@ -127,34 +128,6 @@ function relative(iso: string | null): string {
   if (days < 30) return `${days}d ago`;
   if (days < 365) return `${Math.round(days / 30)}mo ago`;
   return `${(days / 365).toFixed(1)}y ago`;
-}
-
-/** Served lifecycle lookup for the current page of rows; `null` while it loads. */
-type LifecycleLookup = CustomerLifecycleStates | { status: "error" } | null;
-
-/**
- * Governed lifecycle state from live_customer_lifecycle_states — the browser
- * never derives active/at-risk/lapsed from dates. Skeleton while loading,
- * an honest dash when the contract cannot answer.
- */
-function LifecycleCell({ lookup, identityKey }: { lookup: LifecycleLookup; identityKey: string }) {
-  if (lookup === null) return <Skeleton className="h-3.5 w-12" aria-label="Loading lifecycle" />;
-  if (lookup.status !== "ok") {
-    return (
-      <span className="text-muted-foreground" title={lookup.status === "error" ? "Lifecycle lookup failed" : `Lifecycle ${lookup.reason === "no_policy" ? "policy not set" : "not computed yet"}`}>
-        —
-      </span>
-    );
-  }
-  const s = lookup.states[identityKey];
-  if (!s || s.state === null) {
-    return <span className="text-muted-foreground" title="No qualifying purchase under the lifecycle policy">no purchase</span>;
-  }
-  return (
-    <span className={lifecycleTone(s.state)} title={s.since ? `Since ${new Date(s.since).toLocaleDateString("en-MY", { timeZone: "Asia/Kuala_Lumpur" })}` : undefined}>
-      {LIFECYCLE_STATE_LABELS[s.state]}
-    </span>
-  );
 }
 
 function CustomersInner() {

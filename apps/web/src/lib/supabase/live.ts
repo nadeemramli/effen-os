@@ -1,3 +1,4 @@
+import type { CohortKey, CohortSummary, WorkItem, WorkItemAction, WorkItemSeverity, WorkItemSource } from "@/lib/domain/cohorts";
 import type { CustomerBaseMovement, CustomerLifecycleStates, MovementGrain, MovementMeasure, TransitionPopulation } from "@/lib/domain/lifecycle";
 import type { OrderQueueCounts } from "@/lib/domain/order-views";
 import { getSupabase } from "./client";
@@ -1549,4 +1550,68 @@ export async function fetchCustomerLifecycleStates(identityKeys: string[]): Prom
   });
   if (error) throw new Error(error.message);
   return data as CustomerLifecycleStates;
+}
+
+/* ---------- cohort workspaces (Phase 3) ---------- */
+
+/** Header numbers for one cohort under the top-bar scope; rule + version come from the server. */
+export async function fetchCustomerSegmentSummary(q: {
+  cohort: CohortKey;
+  brandId: number | null;
+  countries?: string[] | null;
+}): Promise<CohortSummary> {
+  const { data, error } = await getSupabase().rpc("live_customer_segment_summary", {
+    p_cohort: q.cohort,
+    p_brand_id: q.brandId,
+    p_countries: q.countries && q.countries.length > 0 ? q.countries : null,
+  });
+  if (error) throw new Error(error.message);
+  return data as CohortSummary;
+}
+
+/** Work items attached to these customers (RLS: workspace members). Open first. */
+export async function fetchCustomerWorkItems(identityKeys: string[]): Promise<WorkItem[]> {
+  if (identityKeys.length === 0) return [];
+  const { data, error } = await getSupabase()
+    .from("work_items")
+    .select("id, workspace_id, title, entity_ref, owner_membership_id, severity, next_action, due_at, status, created_at")
+    .in("entity_ref", identityKeys.map((k) => `customer:${k}`))
+    .order("status", { ascending: true })
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as WorkItem[];
+}
+
+/**
+ * Audited, idempotent follow-up: one open item per customer × action. The
+ * server returns the existing item (created: false) on a repeat.
+ */
+export async function createCustomerWorkItem(q: {
+  identityKey: string;
+  nextAction: WorkItemAction;
+  severity: WorkItemSeverity;
+  dueAt: string | null;
+  note: string | null;
+  source: WorkItemSource;
+}): Promise<{ created: boolean; work_item: WorkItem }> {
+  const { data, error } = await getSupabase().rpc("create_customer_work_item", {
+    p_identity_key: q.identityKey,
+    p_next_action: q.nextAction,
+    p_severity: q.severity,
+    p_due_at: q.dueAt,
+    p_note: q.note,
+    p_source: q.source,
+  });
+  if (error) throw new Error(error.message);
+  return data as { created: boolean; work_item: WorkItem };
+}
+
+export async function closeWorkItem(q: { id: number; outcome: "done" | "dropped"; note?: string | null }): Promise<{ changed: boolean; work_item: WorkItem }> {
+  const { data, error } = await getSupabase().rpc("close_work_item", {
+    p_work_item_id: q.id,
+    p_outcome: q.outcome,
+    p_note: q.note ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as { changed: boolean; work_item: WorkItem };
 }

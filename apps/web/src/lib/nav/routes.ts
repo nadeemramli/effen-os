@@ -12,7 +12,6 @@ import {
   ClipboardList,
   CopyX,
   CreditCard,
-  Crown,
   Factory,
   FilePen,
   FileSpreadsheet,
@@ -24,7 +23,6 @@ import {
   List,
   ListChecks,
   MapPin,
-  MapPinned,
   Megaphone,
   Package,
   PackageCheck,
@@ -38,7 +36,6 @@ import {
   SlidersHorizontal,
   Tags,
   TrendingUp,
-  TriangleAlert,
   Truck,
   Undo2,
   Users,
@@ -49,7 +46,7 @@ import type { RoleKey } from "@/lib/domain/enums";
 import type { PermissionKey } from "@/lib/rbac/matrix";
 import { ROLE_PERMISSIONS } from "@/lib/rbac/matrix";
 import { ORDER_VIEWS, orderView } from "@/lib/domain/order-views";
-import { CUSTOMER_STARTERS } from "@/lib/domain/customer-starters";
+import { COHORTS } from "@/lib/domain/cohorts";
 
 /**
  * Single route registry — sidebar, breadcrumbs, global search targets,
@@ -233,11 +230,6 @@ for (const v of ORDER_VIEWS) {
   }
 }
 
-const CUSTOMER_SEGMENT_ICONS: Record<string, LucideIcon> = {
-  at_risk: TriangleAlert,
-  vip: Crown,
-  shared_address: MapPinned,
-};
 
 const CUSTOMER_CHILDREN: ChildRouteDef[] = [
   {
@@ -256,14 +248,17 @@ const CUSTOMER_CHILDREN: ChildRouteDef[] = [
     status: "live",
     blurb: "Active base: new, reactivated, lapsed, net movement",
   },
-  ...CUSTOMER_STARTERS.filter((s) => s.nav).map<ChildRouteDef>((s) => ({
-    key: `customers-seg-${s.key}`,
-    label: s.name,
-    path: "/customers",
-    query: { segment: s.key },
-    icon: CUSTOMER_SEGMENT_ICONS[s.key],
-    group: "Segments",
+  // Cohort workspaces: real routes with their own header numbers and
+  // follow-up actions. The same populations remain reachable as starter
+  // segments on All customers (`?segment=`).
+  ...Object.values(COHORTS).map<ChildRouteDef>((c) => ({
+    key: `customers-cohort-${c.key}`,
+    label: c.label,
+    path: c.path,
+    icon: c.icon,
+    group: "Cohorts",
     status: "live",
+    blurb: c.blurb,
   })),
 ];
 
@@ -442,7 +437,7 @@ export const ROUTES: RouteDef[] = [
     status: "live",
     permission: "customers.view",
     children: CUSTOMER_CHILDREN,
-    childGroups: ["Segments"],
+    childGroups: ["Cohorts"],
   },
   {
     key: "fulfilment",
