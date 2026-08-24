@@ -2,7 +2,7 @@
 title: P3 - Marketing Execution and Commerce Experience
 description: Product requirements for Fullkit media execution, cross-account control, owned-site experience, launch governance and conversion measurement.
 created: 2026-07-16
-updated: 2026-07-16
+updated: 2026-08-25
 status: proposed
 tags: [fullkit, p3, marketing, media, website, commerce]
 ---
@@ -12,7 +12,7 @@ tags: [fullkit, p3, marketing, media, website, commerce]
 > [!summary] Product decision
 > P3 owns two connected modules: **Media Operations** and **Owned Commerce Experience**. It turns approved plans and P2 launch packages into governed media and website execution. Initially it stitches Novomira and WooCommerce instead of building a page builder. Canonical orders remain in S1; canonical spend and performance facts remain in governed BigQuery models.
 
-Portfolio context: [[Fullkit Product Portfolio PRD]]. Infrastructure context: [[PRD]], [[Fullkit Technical Architecture]], [[Fullkit Schema Blueprint]], [[S1 - Customer and Order Hub]], [[S2 - Creative Loop]], [[S4 - Money]] and [[Growth Engine]].
+Portfolio context: [[Fullkit Product Portfolio PRD]]. Infrastructure context: [[PRD]], [[Fullkit Technical Architecture]], [[Fullkit Schema Blueprint]], [[S1 - Customer and Order Hub]], [[S2 - Creative Loop]], [[S4 - Money]], [[Growth Engine]], and [[Operational Workspaces, Customer Base and Profit Metrics Plan]].
 
 ## 1. Thesis and users
 
@@ -38,6 +38,7 @@ P3 is a focused operating product using shared S1, S2 and S4 contracts.
 | Creative use | Selection and platform binding of an approved P2 launch package | P2/S2 owns asset, rights, approval and creative lineage |
 | Website experience | Site/page specifications, versions, generation/publish jobs, experiments and campaign-page bindings | Novomira executes generation initially; WooCommerce remains storefront/checkout runtime |
 | Conversion | Tracking contract and source lineage | S1 owns accepted customers and orders |
+| Customer Base | Deep links, audience use and campaign outcome context | Customers/S1/BigQuery own lifecycle state, movement and exact cohort membership |
 | Money | Budget intent, spend evidence references and pacing controls | S4 owns reconciled spend/invoice/card/cost truth; P6 owns its review and close workflow |
 | Diagnosis | Execution alerts and proposed actions | Growth Engine owns governed variance, diagnosis, recommendation and approval methodology |
 
@@ -73,6 +74,7 @@ P3 does not create a second copy of an ad platform, website checkout or data war
 - Owning marketplace storefront UX; Shopee, Lazada and TikTok Shop stay external conversion locations
 - Owning WhatsApp/DM sales conversations; that belongs to [[AI Sales Closer]] and P1
 - Declaring an ad a winner from platform ROAS or spend alone
+- Recalculating net active customers, lifecycle state, nCAC, LTV:nCAC or first-order profitability inside the Marketing UI
 - Using P3 operational tables as the canonical performance mart
 - Letting AI or n8n directly mutate live campaigns without policy, approval, idempotency and receipts
 - Replacing S1 order state, S4 money truth or the Growth Engine decision record

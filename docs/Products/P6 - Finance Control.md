@@ -2,7 +2,7 @@
 title: P6 - Finance Control
 description: Product requirements for Fullkit commerce reconciliation, commission calculation, spend and card analysis, cost allocation, contribution control and SQL Accounting export.
 created: 2026-07-16
-updated: 2026-07-16
+updated: 2026-08-25
 status: proposed
 tags: [fullkit, p6, finance, reconciliation, commission, contribution]
 ---
@@ -12,7 +12,7 @@ tags: [fullkit, p6, finance, reconciliation, commission, contribution]
 > [!summary] Product decision
 > P6 is a finance **control and reconciliation** product, not a general ledger. It explains how orders, payments, settlements, fees, refunds, advertising, cards, costs and commissions connect; routes exceptions; and exports approved entries. **SQL Accounting remains the authoritative accounting ledger.**
 
-Portfolio context: [[Fullkit Product Portfolio PRD]]. Infrastructure context: [[PRD]], [[Fullkit Technical Architecture]], [[Fullkit Schema Blueprint]], [[S4 - Money]] and [[Growth Engine]].
+Portfolio context: [[Fullkit Product Portfolio PRD]]. Infrastructure context: [[PRD]], [[Fullkit Technical Architecture]], [[Fullkit Schema Blueprint]], [[S4 - Money]], [[Growth Engine]], and [[Operational Workspaces, Customer Base and Profit Metrics Plan]].
 
 ## 1. Thesis and users
 
@@ -122,6 +122,18 @@ There is no Fullkit wallet or stored-value account. Approved commissions become 
 5. A close period tracks source coverage, reconciliation pass, cost coverage, open cases, approved adjustments, exports and receipts.
 6. Close completion freezes the control version while later changes enter a new adjustment period/version.
 
+### 5.7 Profit customer economics
+
+The live Profit route already provides a contribution overview. Its next workspaces should add customer economics without creating a second cost or revenue definition.
+
+1. Match acquisition cohorts to the same effective-dated contribution costs, brand, market, currency and new-customer definition.
+2. Publish blended and paid new-customer acquisition cost (`nCAC`) as currency per new customer with explicit spend numerator and accepted/delivered denominator.
+3. Publish observed contribution LTV at named horizons and show `LTV:nCAC` only when numerator and denominator use the same cohort/scope/version.
+4. Calculate first-order contribution before acquisition, then first-order profitability (`FOP`) after matched acquisition cost; exclude fixed expenses from this metric.
+5. Publish payback as the earliest observed cohort day when cumulative contribution after acquisition cost becomes non-negative.
+6. Keep provider CPA/ROAS/CPC as channel evidence. They do not replace Fullkit nCAC, contribution or incrementality.
+7. Suppress or qualify metrics when identity, product-cost, spend-allocation, currency or order-state coverage fails its governed threshold.
+
 ## 6. Operational schema proposal
 
 P6 operates the canonical S4 records described in [[Fullkit Schema Blueprint]] and [[S4 - Money]]. Shared money evidence, cost versions, commission records and accounting-export records stay under the S4 `app` contract. Only P6-specific review, allocation-rule, close and exception workflow state belongs under the logical `finance` namespace; per [[Fullkit Technical Architecture]], the MVP may physically prefix it under `app`.
@@ -187,6 +199,9 @@ All money uses exact numeric types and ISO currency. Corrections use adjustment/
 | `fct_card_expense_classification` | Card transaction/expense line | Allocation, confidence, review and export state |
 | `fct_cost_coverage` | Date x brand/product/channel | Percentage of orders/revenue with complete cost components |
 | `fct_finance_close_exception` | Close period x case | Open amount, age, materiality, owner and resolution |
+| `fct_customer_acquisition_cohort` | Acquired customer/cohort | First accepted/delivered order, acquisition dimensions and cohort maturity |
+| `fct_acquisition_spend_allocation` | Spend unit x acquisition scope/method | Allocated/unallocated acquisition cost with attribution policy |
+| `fct_brand_customer_economics_period` | Brand/market/cohort/period/horizon | Observed contribution LTV, blended/paid nCAC, FOP, repeat and payback |
 
 Governed metrics preserve distinct `gross_ltv`, `net_ltv` and `contribution_ltv` definitions from [[Fullkit Schema Blueprint]]. P6 must not expose one ambiguous “profit” or “LTV” field.
 
@@ -268,6 +283,10 @@ Deterministic rules calculate money. AI assists matching and explanation. Materi
 - Fee leakage and unexpected provider/courier/marketplace cost
 - Order-to-cash and settlement delay
 - Marketing spend invoice/card/GL reconciliation variance
+- Observed contribution LTV and repeat rate by acquisition cohort/horizon
+- Blended and paid nCAC with accepted-versus-delivered customer quality
+- Matched LTV:nCAC, first-order profitability and payback period by brand/market
+- Percentage of customer-economics rows passing identity, cost, spend and currency coverage gates
 
 ## 11. Dependencies and risks
 
@@ -322,6 +341,7 @@ Deterministic rules calculate money. AI assists matching and explanation. Materi
 - Meta daily spend, provider invoice, card charge and SQL Accounting posting remain distinct and reconcilable.
 - Commission entries reproduce exactly from an effective rule version and immutable input snapshot.
 - Historical contribution does not change when a new product cost version is published.
+- Profit shows contribution LTV, nCAC, LTV:nCAC and FOP only under matched cohort/scope/currency/definition versions, with coverage and maturity visible.
 - P6 can show every unresolved material variance, its owner, evidence and age.
 - SQL Accounting remains the official ledger; Fullkit records only the approved export and resulting receipt.
 - No Fullkit wallet or unrestricted AI financial mutation exists.

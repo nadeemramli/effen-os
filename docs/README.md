@@ -13,6 +13,8 @@ Start with [Current development state](CURRENT_STATE.md). It is the code-backed 
 ## Current and operational
 
 - [Current development state](CURRENT_STATE.md)
+- [Program plan — operational workspaces, Customer Base and Profit](plans/operational-workspaces-customer-profit.md) — code-backed gap matrix, phase map, definitions and open decisions
+- [Obsidian source manifest](plans/obsidian-source-manifest.md) — which vault documents were synchronized, their checksums and requirement owners
 - [Growth data platform plan](ops/growth-data-platform-plan.md)
 - [Marketplace onboarding plan](ops/marketplace-onboarding-plan.md)
 - [SKU mapping register](ops/sku-mapping-register.md)
@@ -20,7 +22,7 @@ Start with [Current development state](CURRENT_STATE.md). It is the code-backed 
 
 ## Architecture decisions
 
-| ADR | Status on 19 Aug 2026 |
+| ADR | Status on 25 Aug 2026 |
 |---|---|
 | [0001 — WhatsApp and conversational AI](decisions/0001-whatsapp-and-conversational-ai.md) | Accepted; official Cloud API, one receiver, agent runtime in Meta |
 | [0002 — Slice 3 write pilot plan](decisions/0002-slice3-write-pilot-plan.md) | Draft; its full external-write plan is not active |
@@ -45,7 +47,7 @@ ADR-0006 activates a narrow shadow phase from ADR-0002; it does not approve ADR-
 - [Products](Products/) — Iteratus, P1–P6, and AI Sales Closer
 - [Spines](Spines/) — S1 Customer/Order, S2 Creative, S3 Inventory, S4 Money
 
-The product and spine documents preserve full target scope. See the product/spine maturity tables in `CURRENT_STATE.md` before treating any workflow as shipped.
+The product and spine documents preserve full target scope and are mirrored from the Obsidian vault (25 Aug 2026 addenda synced; see the source manifest). Three vault plans are deliberately not copied — `plans/` holds link stubs that point at the program plan. The Frontend/UI plan's one-shot Fable prompt is historical and must not be rerun. See the product/spine maturity tables in `CURRENT_STATE.md` before treating any workflow as shipped.
 
 ## Maintenance rule
 

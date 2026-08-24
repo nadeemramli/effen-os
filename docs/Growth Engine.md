@@ -2,19 +2,16 @@
 title: Fullkit Growth Engine
 description: Product concept for the decision, planning, activation, and learning layer built on top of Fullkit's governed commerce data marts and operational services.
 created: 2026-07-16
-updated: 2026-08-19
+updated: 2026-08-25
 tags: [fullkit, growth-engine, data-mart, decision-intelligence, growth-operations, applied-ai]
-status: target-with-live-slices
+status: concept-development
 ---
 
 # Fullkit Growth Engine
 
-> [!important] Delivery status — 19 Aug 2026
-> Live slices now include the plan baseline, commercial scorecard inputs, warehouse-backed Marketing, contribution Profit, and governed ad marts. The larger Growth Engine loop—diagnosis, recommendations, approvals, activation, experiments, and measured learning—remains demo or unimplemented. See [[CURRENT_STATE|Fullkit current development state]].
-
 > This is a living concept note. Additional YouTube videos, articles, frameworks, and operating examples will be broken down here as research inputs arrive.
 
-Portfolio context: [[Fullkit Product Portfolio PRD]]. Technical execution boundary: [[Fullkit Technical Architecture]]. The Growth Engine is horizontal across P1–P6; it does not absorb their specialist workflow or the S1–S4 source-of-truth roles.
+Portfolio context: [[Fullkit Product Portfolio PRD]]. Technical execution boundary: [[Fullkit Technical Architecture]]. Current customer/profit workspace contract: [[Operational Workspaces, Customer Base and Profit Metrics Plan]]. The Growth Engine is horizontal across P1–P6; it does not absorb their specialist workflow or the S1–S4 source-of-truth roles.
 
 ## Product Thesis
 
@@ -216,8 +213,10 @@ The engine needs a versioned **Hierarchy of Metrics** so it does not optimize a 
 The canonical hierarchy has three levels:
 
 1. **Business outcomes:** contribution margin, revenue, total ad spend, MER, and cash implications. This level identifies whether the business is on target.
-2. **Customer economics:** new versus returning revenue, paid versus organic acquisition, new orders, CAC, AOV, retention, and cohort value. This level identifies which economic engine contains the gap.
-3. **Channel and campaign controls:** channel iROAS/iCM, spend versus plan, campaign performance, bids, budgets, audiences, offers, landing pages, and creative. This is where corresponding actions occur.
+2. **Customer economics:** new versus returning revenue, active-customer additions/lapses, blended and paid nCAC, AOV, first-order profitability, repeat behavior, payback and observed contribution LTV. This level identifies which economic engine contains the gap.
+3. **Channel and campaign controls:** channel iROAS/iCM, platform ROAS/CPA/CPC, spend versus plan, campaign performance, bids, budgets, audiences, offers, landing pages, and creative. This is where corresponding actions occur.
+
+The hierarchy must preserve metric types. `nCAC` is currency per new customer; `LTV:nCAC` is a ratio. Platform CPA and ROAS are attribution evidence, not substitutes for Fullkit customer economics or measured incrementality.
 
 Product, inventory, creative supply, and execution blockers act as cross-cutting constraints and diagnostic sublevels. The hierarchy must be configurable by brand and business model; its ordering and definitions are versioned methodology, not universal truth.
 
@@ -502,7 +501,12 @@ The first version should be narrow. Candidate marts:
 
 - `fct_customer_cohort`
 - `dim_customer_growth_state`
-- Acquisition source, first-order contribution, repeat behavior, LTV, retention state, risk, and lifecycle eligibility
+- `fct_customer_lifecycle_transition`
+- `fct_customer_base_movement_period`
+- `fct_customer_acquisition_cohort`
+- `fct_acquisition_spend_allocation`
+- `fct_brand_customer_economics_period`
+- Acquisition source, accepted/delivered new-customer quality, first-order contribution/profitability, blended/paid nCAC, repeat behavior, observed contribution LTV, payback, retention movement, risk, and lifecycle eligibility
 
 ### Product and inventory constraints
 
@@ -626,6 +630,7 @@ All marts require governed metric definitions, freshness tests, reconciliation, 
 - Approval inbox
 - Experiment timeline
 - Decision and execution history
+- Deep links to the governed Customer Base and Profit customer-economics workspaces; the Growth Engine diagnoses and recommends but does not recalculate their source metrics
 
 ### 10. Readiness and responsibility service
 

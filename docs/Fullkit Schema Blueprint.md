@@ -2,7 +2,7 @@
 title: Fullkit Schema Blueprint
 description: Evidence-led canonical operational schema for Fullkit across customer/order, inventory, money, integrations, notifications, automation, and audit.
 created: 2026-07-15
-updated: 2026-08-19
+updated: 2026-08-25
 status: reference-blueprint
 source: Fighter first-party walkthroughs, Luxana teardown, Fullkit PRD, and current Cloud SQL/Postgres, BigQuery, and RudderStack guidance
 confidence: mixed
@@ -12,8 +12,8 @@ tags: [fullkit, schema, postgres, cloud-sql, bigquery, rudderstack, oms, cdp, in
 
 # Fullkit Schema Blueprint
 
-> [!important] Implementation status — 19 Aug 2026
-> This is now a reference logical blueprint, not the deployed schema contract. Applied files in `supabase/migrations/`, edge functions, and the live TypeScript read/write layer are authoritative. The implementation has added operational read models, production, fulfilment, contribution, customer-export, return, and automation-health structures beyond this July proposal. See [[CURRENT_STATE|Fullkit current development state]].
+> [!important] Current operating addenda — 25 Aug 2026
+> This remains a proposed logical blueprint. The latest operational walkthroughs refine it with two factory output paths, versioned bottle/sachet pack configurations, marketplace and manual-order intake, order QC, Ninja Van submission/AWB/fulfilment states, Strive-backed order/product/campaign CRM automation, customer-base movement and Profit customer economics. See [[Production, Inventory and Marketplace Integration Plan]], [[Order Intake, Fulfilment and CRM Automation Plan]], and [[Operational Workspaces, Customer Base and Profit Metrics Plan]]; applied migrations remain authoritative for what is actually live.
 
 This is the first canonical schema proposal requested in [[PRD]]. It translates the observed Fighter workflows into an owned operational model for Fullkit without copying Fighter's UI structure or agent-network assumptions.
 
@@ -325,6 +325,9 @@ Use a unique idempotency constraint so the same order event/rule/recipient/chann
 | --- | --- |
 | `reporting.order_queue` | Order/customer/source/payment/shipment summary for operations |
 | `reporting.customer_360_snapshot` | Operational customer identity and the last synchronized BigQuery/RudderStack traits needed for live service workflows |
+| `reporting.customer_base_movement_read` | Aggregated opening/closing active base, additions, lapses, corrections and policy/freshness by period/scope |
+| `reporting.customer_segment_summary_read` | Current VIP/at-risk/shared-address population, movement, rule version and coverage without direct PII |
+| `reporting.brand_customer_economics_read` | Brand/market/cohort/horizon contribution LTV, nCAC, FOP, repeat and payback serving contract |
 | `reporting.inventory_available` | On-hand, reserved and available-to-promise by variant/location |
 | `reporting.integration_health` | Freshness, last success/error, lag and backlog |
 | `reporting.notification_exceptions` | Failed, undelivered and retry-exhausted messages |
@@ -341,7 +344,7 @@ The normalized PostgreSQL tables above remain the operational contract. BigQuery
 | `raw` | Immutable source-shaped landings with ingestion metadata | Woo orders, Fighter exports, marketplace orders, gateway settlements, courier events, RudderStack events, PostgreSQL outbox |
 | `staging` | Typed, deduplicated, normalized source models | `stg_woo_orders`, `stg_tiktok_orders`, `stg_gateway_settlements`, `stg_rudder_events` |
 | `core` | Conformed dimensions and facts across brands/channels | `dim_customer_identity`, `dim_product`, `dim_channel`, `fct_orders`, `fct_order_items`, `fct_payments`, `fct_refunds`, `fct_shipments` |
-| `marts` | Governed business metrics and operational analytics | `customer_ltv`, `customer_cohorts`, `order_funnel`, `channel_economics`, `inventory_velocity`, `delivery_performance` |
+| `marts` | Governed business metrics and operational analytics | `customer_ltv`, `customer_cohorts`, `customer_lifecycle_state_daily`, `customer_lifecycle_transition`, `customer_base_movement_period`, `brand_customer_economics_period`, `order_funnel`, `channel_economics`, `inventory_velocity`, `delivery_performance` |
 | `cdp` | RudderStack Profiles outputs and activation-ready traits | identity graph, Customer 360, audience memberships, profile snapshots |
 | `quality` | Freshness, volume, uniqueness, reconciliation and source-coverage checks | missing orders, duplicate source IDs, outbox lag, payout mismatch |
 
@@ -352,6 +355,24 @@ Start with a small governed vocabulary: `customer_identified`, `product_viewed`,
 Every event requires `event_id`, `event_name`, `occurred_at`, `received_at`, `anonymous_id` or known identity, `workspace_id`, `brand_id`, `store_id`, `source_channel`, and the relevant aggregate IDs. Revenue events also carry currency and exact monetary amounts. Event IDs are globally unique so warehouse replay cannot double-count revenue or lifecycle transitions.
 
 RudderStack transformations standardize and enrich events; they do not silently redefine canonical order status, revenue or customer identity. The source mapping and transformation version must remain queryable.
+
+### Customer lifecycle movement contract
+
+Customer Base reporting requires historical state, not one mutable tag on `customers`.
+
+| Model | Minimum grain and fields |
+|---|---|
+| `dim_customer_lifecycle_policy` | Policy version × scope/effective dates; qualifying order event, exclusions, lapse percentile/fallback days, lookback, minimum sample and approver |
+| `fct_customer_lifecycle_state_daily` | Customer × date × policy version; active/at-risk/lapsed snapshot, last qualifying purchase and evidence |
+| `fct_customer_lifecycle_transition` | Customer × transition; new/reactivated/at-risk/lapsed, occurred date, triggering order/policy and prior/new state |
+| `fct_customer_base_movement_period` | Period × scope × policy; opening active, new, reactivated, lapsed, corrections and closing active |
+| `fct_customer_acquisition_cohort` | Customer × acquisition cohort; first accepted and first delivered order, brand/market/channel/offer/first product and maturity |
+| `fct_acquisition_spend_allocation` | Spend unit × attribution/allocation version; allocated and unallocated acquisition spend |
+| `fct_brand_customer_economics_period` | Brand/market/cohort/horizon; first-order contribution, FOP, observed contribution LTV, nCAC, repeat and payback |
+
+Lifecycle snapshot, period movement, value tier, repeat state, risk signal and activation eligibility are separate dimensions. `Reactivated` is a transition back to active, not a permanent state. `Shared address` is a reviewable signal and never authorizes an identity merge or campaign send.
+
+The movement reconciliation is `closing active = opening active + new + reactivated − lapsed ± approved identity/data corrections`. A 60-day lapse policy may be configured, but the contract must retain its policy version and should support a behavior-derived repurchase threshold when the sample is sufficient.
 
 ### Customer 360 and LTV contract
 
@@ -365,6 +386,8 @@ LTV must be published as separate governed metrics:
 - `predicted_ltv`: deferred until observed history, identity resolution and cost coverage pass quality thresholds.
 
 Do not show one unlabeled “LTV” number. Every Fullkit surface must state the definition, currency, observation window and warehouse freshness timestamp.
+
+Customer economics follow the same rule. `nCAC` is currency per new customer; `LTV:nCAC` is the ratio. First-order profitability (`FOP`) is first-order contribution after matched acquisition cost and excludes fixed costs. Any ratio requires matched cohort, brand, market, currency, new-customer definition, attribution/allocation version and observation horizon.
 
 ## UI-to-schema traceability
 

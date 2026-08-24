@@ -2,7 +2,7 @@
 title: S3 - Inventory
 description: Canonical catalog, inventory, reservation, warehouse-movement, fulfilment, and stock-quality spine for Fullkit.
 created: 2026-07-16
-updated: 2026-07-16
+updated: 2026-08-25
 status: proposed
 parent: "[[Fullkit Schema Blueprint]]"
 tags: [fullkit, spine, s3, inventory, wms, fulfilment, cloud-sql, bigquery]
@@ -13,7 +13,7 @@ tags: [fullkit, spine, s3, inventory, wms, fulfilment, cloud-sql, bigquery]
 > [!important] Product relationship
 > S3 is stock truth, not the P4 WMS user interface and not P5 production planning. P4 orchestrates order and warehouse work through S1/S3 APIs. P5 decides what, how much, and when to manufacture; S3 records which raw materials, packaging, WIP, and finished goods physically exist and move.
 
-Portfolio and platform context: [[Fullkit Product Portfolio PRD]], [[Fullkit Technical Architecture]], and [[Fullkit Schema Blueprint]].
+Portfolio and platform context: [[Fullkit Product Portfolio PRD]], [[Fullkit Technical Architecture]], and [[Fullkit Schema Blueprint]]. Current operating detail: [[Production, Inventory and Marketplace Integration Plan]].
 
 ## Purpose
 
@@ -25,6 +25,19 @@ S3 answers, by item and location:
 - Does system stock reconcile with physical count and the external WMS, if one exists?
 
 The MVP replaces Excel with a canonical SKU registry, levels, reservations, and an append-only movement ledger. A full WMS adds receiving, putaway, pick/pack, transfers, counts, and return disposition. These are stages, not separate stock authorities.
+
+## Confirmed EFFEN item and location flow
+
+The initial S3 design must support two real factory paths:
+
+- Factory 1 transfers released **finished bottles** into the warehouse.
+- Factory 2 transfers released **loose sachets/WIP** into the warehouse.
+- The warehouse consumes loose sachets plus boxes, labels and other packaging to receive the sellable boxed SKU.
+- Marketplace and Woo orders reserve and fulfil only the configured sellable bottle/box variant.
+
+Pack configuration is versioned because products may contain 24 or 30 capsules per bottle, or 7 or 14 sachets per box. These conversions affect production requirements, warehouse output, available-to-promise stock and later CRM replenishment timing.
+
+Factory dispatch does not prove warehouse inventory. A transfer must preserve separate dispatch, in-transit, counted-receipt, variance, quarantine and release states. For sachet products, the later warehouse packaging/assembly creates component-consumption and finished-output movements; it is not an editable arithmetic change to an inventory level.
 
 ## Source-of-truth rule: one authority per location
 
@@ -71,6 +84,7 @@ Cached `inventory_levels` accelerate reads. The movement ledger, accepted reserv
 | `app.products` | Workspace/brand product, description/category, lifecycle state |
 | `app.product_variants` | Canonical sellable SKU, product, attributes, weight/dimensions, barcode, status |
 | `app.channel_listing_mappings` | Integration/store listing and source SKU to canonical product/variant |
+| `app.product_pack_configurations` | Versioned presentation type, sellable UOM, contained unit type/count, approved usage/coverage assumption and packaging-BOM reference |
 | `app.price_lists` | Currency, country, channel, validity window, status |
 | `app.variant_prices` | Variant amount and validity window inside a price list |
 | `app.inventory_items` | Future generalized item master: `raw_material`, `packaging`, `wip`, `finished_good`, `consumable`; finished goods reference a product variant |
@@ -152,6 +166,8 @@ Commands validate workspace/location authority, item state, quantity, version, r
 - `pick_started`, `pick_completed`, `pack_completed`, `fulfilment_handed_over`
 - `stocktake_started`, `stocktake_variance_detected`, `stocktake_posted`
 - `return_received`, `return_restocked`, `return_quarantined`, `return_scrapped`
+- `factory_output_released`, `inventory_transfer_dispatched`, `inventory_transfer_received`
+- `warehouse_assembly_started`, `warehouse_components_consumed`, `warehouse_finished_good_received`
 
 Each event includes item/variant, location and optional bin/lot, exact quantity/UOM, source type/ID, order/work-order/return correlation, authority system, occurred/received timestamps, and schema version.
 

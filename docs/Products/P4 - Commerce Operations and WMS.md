@@ -2,7 +2,7 @@
 title: P4 - Commerce Operations and WMS
 description: Product requirements for Fullkit's role-based order command centre, fulfilment orchestration and optional owned warehouse-management workflows.
 created: 2026-07-16
-updated: 2026-07-16
+updated: 2026-08-25
 status: proposed
 tags: [fullkit, p4, operations, oms, wms, inventory, fulfilment]
 ---
@@ -12,7 +12,10 @@ tags: [fullkit, p4, operations, oms, wms, inventory, fulfilment]
 > [!summary] Product decision
 > P4 is the light, role-based order-management surface used by sellers, customer service, operations and warehouse teams over the shared S1, S3 and S4 infrastructure. It does not create a duplicate order database. WMS capability may be owned or externally provided, but **exactly one system is the physical stock authority for each location**.
 
-Portfolio context: [[Fullkit Product Portfolio PRD]]. Infrastructure context: [[PRD]], [[Fullkit Technical Architecture]], [[Fullkit Schema Blueprint]], [[S1 - Customer and Order Hub]], [[S3 - Inventory]] and [[S4 - Money]].
+Portfolio context: [[Fullkit Product Portfolio PRD]]. Infrastructure context: [[PRD]], [[Fullkit Technical Architecture]], [[Fullkit Schema Blueprint]], [[S1 - Customer and Order Hub]], [[S3 - Inventory]] and [[S4 - Money]]. Current operating inputs: [[Production, Inventory and Marketplace Integration Plan]], [[Order Intake, Fulfilment and CRM Automation Plan]], and [[Operational Workspaces, Customer Base and Profit Metrics Plan]].
+
+> [!important] Current fulfilment input — 25 Aug 2026
+> Woo, marketplace and manual orders should converge on one QC queue. Approved orders move to a dedicated AWB Manager: Fullkit submits the Ninja Van delivery order, waits for processed/Pending Pickup evidence, retrieves and caches the waybill, distributes it to the fulfilment center, and then tracks pick/pack/handover. Shipment `in_transit` begins only when Ninja Van has picked up the parcel—not when the order is approved, submitted, or printed.
 
 ## 1. Thesis and users
 
@@ -39,7 +42,7 @@ P4 is a standalone workflow/UI product composed over authoritative services.
 | Available stock and reservation | S3 or contracted WMS | Request allocation/reservation and show confirmed result |
 | Pick, pack, bin and stock movement | Owned P4 WMS or external WMS per location | Execute owned workflow or mirror/command through adapter |
 | Shipment/tracking | S1 fulfilment/shipment contract plus courier adapter | Create labels, hand over parcels and manage delivery exceptions |
-| Production requirement | P5 | Receive finished goods; never plan manufacturing inside WMS |
+| Production requirement | P5 | Receive finished bottles or loose sachets; execute a P5-governed sachet-to-box assembly task when the warehouse performs the final packaging step |
 | Analytics | BigQuery governed marts | Operational dashboards and daily reconciliation |
 
 If an external WMS is selected, Fullkit keeps canonical item/location mappings, commands it idempotently and mirrors its events. It must not maintain an independently editable “shadow on-hand” balance for the same location.
@@ -56,6 +59,8 @@ If an external WMS is selected, Fullkit keeps canonical item/location mappings, 
 - Payment/COD/inventory/fraud/duplicate holds
 - Daily order tally against Fighter, marketplaces and WMS during migration
 
+The section rail and secondary sidebar are already implemented. Queue maturity now means each destination has an explicit inclusion rule, reason, owner/SLA, primary action, exit condition and audit receipt. In particular, `New / QC` must use Fullkit QC state rather than treating every order placed in the last 24 hours as equivalent work.
+
 ### WMS capability
 
 - Warehouse, zone and bin structure
@@ -66,6 +71,10 @@ If an external WMS is selected, Fullkit keeps canonical item/location mappings, 
 - Return receipt, inspection and disposition
 - Lot/batch and expiry tracking where products require it
 - Courier label/tracking integration and delivery exception workflow
+- Controlled warehouse packaging/assembly that consumes loose sachets and packaging materials and receives the sellable box SKU
+
+> [!warning] Keep two pack workflows separate
+> A warehouse manufacturing/assembly task turns loose sachets into a sellable box. A fulfilment pack job turns sellable bottles/boxes into a customer parcel. They must not share status, quantity, movement or completion semantics.
 
 ## 4. Non-goals
 
@@ -119,6 +128,21 @@ If an external WMS is selected, Fullkit keeps canonical item/location mappings, 
 4. Pack verifies order contents, packaging, weight and shipping service.
 5. Courier adapter creates one idempotent AWB/label; package and tracking references attach to S1 shipment records.
 6. Handover records courier, manifest, scan, time and custody evidence.
+
+### 5.5A Confirmed QC, AWB and pickup workflow
+
+1. Woo, marketplace and manual orders enter one `new` QC queue with visible source provenance.
+2. Operations validates recipient, phone, email where present, address/postcode, product mapping, quantity, stock, payment/COD, duplicate/risk and courier support.
+3. Missing information creates `needs_customer_info` and one governed Strive/email request; it does not create a courier order.
+4. Approval freezes the courier snapshot, confirms the S3 reservation and releases the order to AWB Manager.
+5. `Push to Ninja Van` creates delivery orders idempotently with per-order receipts.
+6. Ninja Van `Pending Pickup` means processing completed and the waybill can be retrieved.
+7. Fullkit fetches each waybill once, caches the private PDF and records generation/distribution/print evidence.
+8. The fulfilment center picks, packs, attaches the label and records handover readiness/custody.
+9. Ninja Van pickup changes the carrier shipment to `in_transit`; AWB creation or printing does not.
+10. Delivered, failed-attempt, rejected and RTS webhooks create separate outcomes and P1 CRM triggers.
+
+Keep six state dimensions independent: order QC, inventory reservation, Ninja Van submission/AWB, warehouse fulfilment, carrier shipment and customer notification. See [[Order Intake, Fulfilment and CRM Automation Plan]] for the proposed vocabulary and morning batch flow.
 
 ### 5.6 Delivery, rejection and return-to-sender
 
@@ -230,7 +254,7 @@ The target WMS model uses the generalized S3 `inventory_item_id` described in [[
 
 ### Domain events
 
-`order_routed_to_operations`, `order_hold_placed`, `order_released_to_fulfillment`, `inventory_reserved`, `inventory_reservation_failed`, `receipt_accepted`, `putaway_completed`, `fulfillment_wave_released`, `pick_completed`, `short_pick_detected`, `pack_completed`, `shipment_label_created`, `shipment_handed_over`, `delivery_exception_detected`, `return_received`, `return_disposition_approved`, `stocktake_variance_detected`, `inventory_adjustment_approved`, and `order_wms_mismatch_detected`.
+`order_routed_to_operations`, `order_qc_started`, `order_information_requested`, `order_qc_approved`, `order_hold_placed`, `order_released_to_fulfillment`, `inventory_reserved`, `inventory_reservation_failed`, `ninjavan_order_submitted`, `ninjavan_order_processed`, `shipment_waybill_cached`, `shipment_waybill_printed`, `receipt_accepted`, `putaway_completed`, `fulfillment_wave_released`, `pick_completed`, `short_pick_detected`, `pack_completed`, `shipment_handed_over`, `shipment_picked_up`, `delivery_exception_detected`, `shipment_delivered`, `shipment_rejected`, `shipment_rts_started`, `return_received`, `return_disposition_approved`, `stocktake_variance_detected`, `inventory_adjustment_approved`, and `order_wms_mismatch_detected`.
 
 ## 9. AI boundary
 
@@ -332,5 +356,7 @@ AI uses allow-listed read and command APIs. Physical scans, payment/provider ver
 - Every location has one declared physical stock authority.
 - Every stock change traces to an append-only movement, actor/system, reason and source object.
 - Label creation, reservation and external commands remain idempotent under retry.
+- Ninja Van submission, waybill availability/cache/print, warehouse handover and carrier pickup remain separate and auditable.
+- AWB generation/printing cannot mark a shipment `in_transit`; carrier pickup evidence does.
 - Daily S1/order/WMS/courier reconciliation exposes every mismatch with an owner.
 - P4 can be used by seller, operations and warehouse roles without exposing actions outside their permissions.

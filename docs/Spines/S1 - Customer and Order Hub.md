@@ -2,7 +2,7 @@
 title: S1 - Customer and Order Hub
 description: Canonical customer, identity, conversation, order, fulfilment, and lifecycle-event spine for Fullkit.
 created: 2026-07-16
-updated: 2026-07-16
+updated: 2026-08-25
 status: proposed
 parent: "[[Fullkit Schema Blueprint]]"
 tags: [fullkit, spine, s1, customer, orders, cdp, conversations, cloud-sql, bigquery, rudderstack]
@@ -13,7 +13,7 @@ tags: [fullkit, spine, s1, customer, orders, cdp, conversations, cloud-sql, bigq
 > [!important] Product relationship
 > S1 is shared infrastructure, not the Customer Revenue Engine or the P4 operations UI. It owns the canonical customer, identity, conversation, and order records those products use. P1 owns lifecycle and service workflows; the AI Sales Closer owns opportunity/session state; P4 owns the seller and operations experience. None of them gets a second customer or order table.
 
-Canonical logical schema: [[Fullkit Schema Blueprint]]. Portfolio and workflow context: [[PRD]], [[Fullkit Product Portfolio PRD]], and [[Fullkit Technical Architecture]].
+Canonical logical schema: [[Fullkit Schema Blueprint]]. Portfolio and workflow context: [[PRD]], [[Fullkit Product Portfolio PRD]], and [[Fullkit Technical Architecture]]. Current operating inputs: [[Production, Inventory and Marketplace Integration Plan]], [[Order Intake, Fulfilment and CRM Automation Plan]], and [[Operational Workspaces, Customer Base and Profit Metrics Plan]].
 
 ## Purpose
 
@@ -26,13 +26,14 @@ S1 gives EFFEN one operational answer to four questions:
 
 S1 is the operational face of the CDP. Cloud SQL stores live customer and order state. BigQuery/dbt calculates governed history, cohorts, and LTV. RudderStack collects behavioral events, builds the derived identity graph and profile traits, and activates audiences. RudderStack does not accept order commands or silently redefine customer identity.
 
-## Three conversion paths, one confirmed-order contract
+## Four intake paths, one confirmed-order contract
 
 ```mermaid
 flowchart LR
     T["Traffic"] --> C["WhatsApp / conversation"]
     T --> W["Website / Woo"]
     T --> M["Marketplaces"]
+    X["Internal/manual order"] --> D
     C --> D["Draft cart or order"]
     W --> I["Channel order intake"]
     M --> I
@@ -45,6 +46,12 @@ flowchart LR
 ```
 
 `order_confirmed` means Fullkit accepted a normalized, idempotent order with a valid store, customer identity, currency, product snapshot, totals, and payment/COD state. A conversational promise, checkout attempt, payment link, or marketplace webhook is not automatically a confirmed order.
+
+> [!important] Marketplace intake boundary — 25 Aug 2026
+> Marketplace connectors are still in discovery/in progress. Read-only order mirroring, listing/variation-to-canonical-SKU mapping, independent state normalization and daily reconciliation come before inventory writes. An eligible accepted order creates one atomic S3 reservation; the agreed physical handover milestone posts the stock-out movement. Duplicate webhooks, cancellation and returns must never cause a second deduction.
+
+> [!important] Manual intake and fulfilment boundary — 25 Aug 2026
+> Manual orders require a production Fullkit draft/validate/confirm workflow and enter the same QC queue as Woo and marketplaces. QC approval reserves inventory and releases the order to AWB Manager; it does not make the shipment `in_transit`. Ninja Van submission, processed/Pending Pickup, waybill cache/print, warehouse handover and carrier pickup remain distinct events. See [[Order Intake, Fulfilment and CRM Automation Plan]].
 
 During the read-first strangler phase, the originating system remains authoritative for the fields it still controls. Fullkit records that authority per integration/object and rejects competing writes. After a channel or brand cuts over, S1 becomes the write authority for the accepted fields. There must never be two writers for the same order state.
 
@@ -113,6 +120,7 @@ For integrated orders, `(integration_id, source_order_id)` is unique. Manual, im
 | `app.fulfillments` | Order-facing fulfilment record, selected S3 location, state, assignee, packed/handed-over timestamps |
 | `app.fulfillment_items` | Split-fulfilment quantity by order item |
 | `app.shipments` | Courier integration, service, tracking/AWB reference, state, and lifecycle timestamps |
+| `app.shipment_documents` | Private waybill/label metadata, tracking ID, provider version/checksum, protected artifact reference and generated/cached/printed timestamps |
 | `app.shipment_events` | Immutable courier events with provider identity, scan type/location, occurred/received timestamps |
 | `app.returns` / `app.return_items` | Return request, reason, state, item quantity/condition/resolution; S3 owns resulting physical movements |
 | `app.sender_profiles` | Brand/channel sender identity linked to integration and secret reference |
@@ -130,12 +138,14 @@ S1 commands also use `private.integrations`, `private.webhook_events`, `private.
 |---|---|---|
 | `core` dimensions | `dim_customer`, `dim_customer_identity`, `dim_brand`, `dim_store`, `dim_channel` | Conformed identifiers across every source |
 | `core` facts | `fct_orders`, `fct_order_items`, `fct_order_state_events`, `fct_conversation_messages`, `fct_shipments`, `fct_returns` | Immutable history and lifecycle events |
-| Customer marts | `customer_360`, `customer_cohorts`, `customer_retention`, `customer_lifecycle_eligibility` | Governed profile, retention, and activation inputs |
+| Customer marts | `customer_360`, `customer_cohorts`, `customer_retention`, `customer_lifecycle_state_daily`, `customer_lifecycle_transition`, `customer_base_movement_period`, `customer_lifecycle_eligibility` | Governed profile, historical lifecycle state/movement, retention, and activation inputs |
 | Commerce marts | `order_funnel`, `channel_conversion`, `delivery_performance`, `service_performance` | Conversion and operational diagnosis |
 | CDP | identity graph, profile snapshots, audience memberships | Derived RudderStack Profiles outputs with merge provenance |
 | Quality | missing source orders, duplicate IDs, state regressions, unlinked customers, event/outbox lag | Release and action gates |
 
 LTV must remain four labelled metrics: `gross_ltv`, `net_ltv`, `contribution_ltv`, and later `predicted_ltv`. Every surface states currency, observation window, definition version, and warehouse freshness.
+
+Customer lifecycle reporting follows the same discipline. The canonical customer record does not store one timeless `VIP`, `reactivated` or `lapsed` label. BigQuery/dbt produces versioned daily snapshots and transitions from qualifying order events, and a governed serving view exposes current state plus the policy/evidence timestamp. `New`, `reactivated` and `lapsed` are period movements; `active`/`at risk`/`lapsed` are point-in-time lifecycle states; VIP/value tier and shared-address/risk signals remain independent dimensions.
 
 ## API surface
 
@@ -163,8 +173,8 @@ Core events include:
 
 - `customer_identified`, `customer_identity_verified`, `customer_merge_proposed`, `customer_merged`, `customer_consent_updated`
 - `conversation_started`, `message_received`, `message_sent`, `message_delivered`, `message_engaged`, `conversation_handed_off`, `conversation_closed`
-- `checkout_started`, `order_draft_created`, `order_created`, `order_confirmed`, `order_approved`, `order_cancelled`, `order_rejected`
-- `fulfilment_requested`, `order_packed`, `order_shipped`, `order_delivered`, `order_returned`
+- `checkout_started`, `order_draft_created`, `manual_order_draft_created`, `order_created`, `order_confirmed`, `order_qc_started`, `order_information_requested`, `order_approved`, `order_cancelled`, `order_rejected`
+- `fulfilment_requested`, `ninjavan_order_submitted`, `ninjavan_order_processed`, `shipment_waybill_cached`, `shipment_waybill_printed`, `order_packed`, `shipment_handed_over`, `shipment_picked_up`, `shipment_in_transit`, `order_delivered`, `shipment_rejected`, `shipment_rts_started`, `order_returned`
 
 Every event carries globally unique `event_id`, `occurred_at`, `received_at`, workspace/brand/store, source channel, aggregate IDs, actor, correlation/causation IDs, schema version, and replay-safe source identity.
 

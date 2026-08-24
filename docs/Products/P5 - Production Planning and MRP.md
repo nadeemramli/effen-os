@@ -2,7 +2,7 @@
 title: P5 - Production Planning and MRP
 description: Product requirements for Fullkit demand-to-production planning, raw-material balance, BOMs, capacity, work orders, batches, yield and finished-goods receipt.
 created: 2026-07-16
-updated: 2026-07-16
+updated: 2026-08-25
 status: proposed
 tags: [fullkit, p5, production, mrp, manufacturing, inventory]
 ---
@@ -13,6 +13,9 @@ tags: [fullkit, p5, production, mrp, manufacturing, inventory]
 > P5 is the manufacturing planning and execution product. It decides **what, how much, how and when to make**. P4/WMS decides **where stock is and what physically moved**. P5 consumes approved demand and S3 balances, creates material and capacity plans, and returns verified finished goods to S3.
 
 Portfolio context: [[Fullkit Product Portfolio PRD]]. Infrastructure context: [[PRD]], [[Fullkit Technical Architecture]], [[Fullkit Schema Blueprint]], [[S3 - Inventory]], [[P4 - Commerce Operations and WMS]] and [[Growth Engine]].
+
+> [!important] Current operating input — 25 Aug 2026
+> EFFEN currently has two distinct production paths: Factory 1 compounds, encapsulates and bottles a finished product before warehouse transfer; Factory 2 compounds and fills loose sachets, which the warehouse later converts into sellable boxes. Factory progress is reported batch-by-batch through WhatsApp. See [[Production, Inventory and Marketplace Integration Plan]] for the confirmed flow, pack/UOM rules, WhatsApp-assisted capture boundary, and marketplace dependency.
 
 ## 1. Thesis and users
 
@@ -59,6 +62,24 @@ P5 must never edit an on-hand quantity directly. Material issue, return, scrap a
 - Batch/lot, yield, scrap, rework and quality control
 - Finished-goods receipt and release/quarantine through S3/P4
 - Production cost snapshots and plan-versus-actual learning
+
+## 3A. Confirmed EFFEN factory topology
+
+### Factory 1 — completed bottle output
+
+`raw material → formula/compound batch → encapsulation → bottle filling → quality/release → transfer to warehouse`
+
+The factory's accountable output is a completed bottle. Product pack configuration retains the exact capsules per bottle, such as 24 or 30, and the formula/batch lineage.
+
+### Factory 2 — sachet output, warehouse finished-good conversion
+
+`raw material → formula/compound batch → sachet filling → loose sachet release → transfer to warehouse → sachets + packaging → sellable box`
+
+The factory's accountable output is the individual sachet. Warehouse packaging is a controlled manufacturing/assembly step that consumes sachets and packaging materials and receives a sellable box, such as a 7- or 14-sachet box.
+
+P5 owns the formula, routing, batch, stage, yield and packaging-BOM contract even when the last physical step occurs in the warehouse. P4 provides the warehouse task; S3 records the transfer, component consumption and finished-good receipt. This “manufacturing pack” workflow must remain separate from packing a customer parcel for fulfilment.
+
+Factory staff should not need to adopt the Fullkit website for routine progress reporting. A WhatsApp ingestion layer may record and parse their existing structured updates, but quality release, factory dispatch, warehouse receipt and inventory movement remain governed physical milestones rather than free-text AI decisions.
 
 ## 4. Non-goals
 

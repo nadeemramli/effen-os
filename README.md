@@ -21,6 +21,7 @@ supabase/functions/       Woo, WhatsApp, Ninja Van, mart-sync, and AI edge funct
 warehouse/                BigQuery dbt project for governed growth facts
 infra/                    Terraform for the GCP growth-data platform
 docs/                     Product plans, ADRs, operating notes, and current state
+docs/plans/               Program plan, Obsidian source manifest, and link stubs for vault-only plans
 ```
 
 ## Local development

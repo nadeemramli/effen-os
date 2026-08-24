@@ -2,17 +2,17 @@
 title: Fullkit Frontend UI UX Plan and Fable Prompt
 description: Frontend-first product plan, information architecture, phased Supabase and Vercel delivery, and a one-shot prompt for building the first Fullkit interface in Fable.
 created: 2026-07-23
-updated: 2026-08-19
+updated: 2026-08-25
 status: historical-plan
 tags: [fullkit, frontend, ui, ux, fable, supabase, vercel]
 ---
 
 # Fullkit Frontend UI/UX Plan and Fable Prompt
 
-> [!important] Delivery status — 19 Aug 2026
-> This is the original frontend-first plan and Fable prompt. Slice 0 and much of the live read-side foundation have shipped; production, contribution, fulfilment shadowing, and growth-data work have also moved beyond the sequence described here. Use [[CURRENT_STATE|Fullkit current development state]] for today’s surface-by-surface status.
+> [!important] Operating-workflow addendum — 25 Aug 2026
+> This remains the original frontend-first plan. Current workflow discovery now defines the two-factory production/inventory paths plus a unified Woo/marketplace/manual-order QC flow, Ninja Van AWB Manager and fulfilment monitoring, three CRM automation models backed initially by Strive, and the functional workspaces/metrics behind the shipped secondary-sidebar shell. See [[Production, Inventory and Marketplace Integration Plan]], [[Order Intake, Fulfilment and CRM Automation Plan]], and [[Operational Workspaces, Customer Base and Profit Metrics Plan]].
 
-Related product decisions: [[Fullkit Product Portfolio PRD]], [[Fullkit Technical Architecture]], [[Fullkit Schema Blueprint]], [[Growth Engine]], [[P1 - Customer Revenue Engine]], [[P3 - Marketing Execution and Commerce Experience]], [[P4 - Commerce Operations and WMS]], and [[P6 - Finance Control]].
+Related product decisions: [[Fullkit Product Portfolio PRD]], [[Fullkit Technical Architecture]], [[Fullkit Schema Blueprint]], [[Growth Engine]], [[P1 - Customer Revenue Engine]], [[P3 - Marketing Execution and Commerce Experience]], [[P4 - Commerce Operations and WMS]], [[P6 - Finance Control]], and [[Operational Workspaces, Customer Base and Profit Metrics Plan]].
 
 ## 1. Product decision
 
@@ -466,6 +466,9 @@ Create a Vercel preview deployment first, validate all core flows, then promote 
 
 ## 12. One-shot Fable build prompt
 
+> [!warning] Historical prototype prompt
+> This prompt was written for the original frontend prototype and should not be rerun against the current `effen-os` application. For ongoing WSL development, Obsidian synchronization, repository-document cleanup and phased implementation, use [[operational-workspaces-customer-profit|the phased implementation plan in this repository]].
+
 Copy everything inside the following block into Fable:
 
 ```text
@@ -739,3 +742,60 @@ Official implementation references:
 - [Supabase Data API exposure change](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically)
 - [Vercel Next.js deployment](https://vercel.com/docs/frameworks/full-stack/nextjs)
 - [Vercel preview deployment workflow](https://vercel.com/docs/deployments/overview)
+
+## 15. Current operations information architecture
+
+The operating walkthrough adds the following role-specific views. Route names may be refined, but the state boundaries must remain visible.
+
+### Navigation baseline
+
+The section rail and secondary sidebar for Orders, Customers and Fulfilment are already implemented in `effen-os`. They are a current shell capability, not a new feature in this plan. The next requirement is functional maturity: each permanent destination must have a distinct population, definition, reason-for-inclusion, primary action or analytical drill-down, exit rule and evidence receipt. A permanent navigation item must not be only a restyled tag/filter.
+
+### Orders
+
+- **New / QC:** one source-labelled queue for Woo, marketplace and manual orders;
+- **New manual order:** real draft, validation, duplicate check, customer/address/product/payment capture and authorized confirmation;
+- **Needs customer information:** one-click governed WhatsApp/email request plus correction evidence;
+- **Holds and exceptions:** address, mapping, stock, payment/COD, duplicate/risk and courier reasons;
+- **Approved:** validated order with reservation receipt, ready for AWB Manager.
+
+### Fulfilment
+
+- **AWB Manager:** ready to push, submission processing, Pending Pickup, waybill available/cached/printed and per-order failures;
+- **Fulfilment queue:** released, picking, picked, packing, packed and ready for handover;
+- **In transit:** only parcels with Ninja Van pickup/carrier evidence;
+- **Delivery exceptions:** failed attempts and customer/address/reschedule actions;
+- **Rejected / RTS:** rejected, return-to-sender and returned-receipt state;
+- **Completed:** delivered orders with order-CRM and product-flow enrollment status.
+
+The interface must never collapse QC approval, inventory reservation, Ninja Van submission, AWB print, warehouse handover, carrier pickup and delivery into one status.
+
+### Customers
+
+- **Customer base:** opening and closing active file, new/reactivated additions, lapsed losses, net active change/rate, policy version, coverage and exact-population drill-through;
+- **All customers:** canonical search and Customer 360 entry point;
+- **VIP:** value-tier population with rule reason, movement, risk and governed retention/service actions;
+- **At risk:** lifecycle population approaching lapse with priority, eligibility, assignment and recovery outcome;
+- **Shared address:** risk/household/reseller review surface with cluster evidence and disposition; never an automatic identity merge or campaign audience.
+
+Customer Base belongs under Customers. Marketing may consume or deep-link to the governed customer facts, but must not calculate a second definition. Lifecycle state, period transition, value tier, repeat state, risk signal and activation eligibility remain separate axes.
+
+### Profit
+
+- **Contribution overview:** retain the implemented CM2/CM3 P&L, trend, brand × market table and coverage gates;
+- **Customer economics:** observed contribution LTV, repeat rate, LTV:nCAC and customer-base context by matched cohort;
+- **Acquisition efficiency:** blended/paid nCAC, first-order contribution, first-order profitability and break-even CAC;
+- **Cohorts and payback:** cumulative contribution by acquisition cohort and observed horizon;
+- **Definitions and coverage:** qualifying order/new-customer rules, spend allocation, FX/cost versions, coverage and freshness.
+
+`nCAC` is currency per new customer; `LTV:nCAC` is the ratio. Platform ROAS/CPA/CPC stay under Marketing/channel diagnosis and must not be relabelled as Fullkit customer economics or incrementality. The detailed contracts are in [[Operational Workspaces, Customer Base and Profit Metrics Plan]].
+
+### CRM automation
+
+- **Order automations:** operational event, conditions, approved template, WhatsApp/email fallback, timeout/cancellation and delivery results;
+- **Product flows:** replenishment group, delivered pack duration, lead days, steps, repurchase reset, suppressions and approved offer;
+- **Campaigns:** audience snapshot, schedule, template, exclusions, consent/contact caps, approval and goal;
+- **Templates and providers:** Fullkit template/version to Strive/email binding, sender/account capability and health;
+- **Dispatch and exceptions:** scheduled/sent/delivered/failed/suppressed jobs with customer/order/journey evidence.
+
+The first release uses these three model-specific editors, not a generic drag-and-drop automation canvas.

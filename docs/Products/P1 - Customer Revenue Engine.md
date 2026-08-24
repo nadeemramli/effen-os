@@ -2,17 +2,20 @@
 title: P1 - Customer Revenue Engine
 description: Product requirements for Fullkit lifecycle CRM, customer service and omnichannel Conversation Hub.
 created: 2026-07-16
-updated: 2026-07-16
+updated: 2026-08-25
 status: proposed
 tags: [fullkit, p1, lifecycle, crm, retention, ltv, customer-service, conversation]
 ---
 
 # P1 — Customer Revenue Engine
 
-Parent portfolio: [[Fullkit Product Portfolio PRD]]. Technical placement: [[Fullkit Technical Architecture]]. Infrastructure: [[S1 - Customer and Order Hub]] and [[S4 - Money]]. Related bounded product: [[AI Sales Closer]].
+Parent portfolio: [[Fullkit Product Portfolio PRD]]. Technical placement: [[Fullkit Technical Architecture]]. Infrastructure: [[S1 - Customer and Order Hub]] and [[S4 - Money]]. Related bounded product: [[AI Sales Closer]]. Current operating plans: [[Production, Inventory and Marketplace Integration Plan]], [[Order Intake, Fulfilment and CRM Automation Plan]], and [[Operational Workspaces, Customer Base and Profit Metrics Plan]].
 
 > [!summary] Product decision
 > P1 combines two coordinated modules—**Lifecycle CRM** and the **Conversation Hub**—because both manage customer contact policy and history. The [[AI Sales Closer]] remains a separate product because it owns a higher-risk, conversion-specific opportunity workflow.
+
+> [!important] Current provider and CRM model — 25 Aug 2026
+> EFFEN currently uses Strive.asia for WhatsApp/CRM delivery. Fullkit should own triggers, consent, suppression, journey state, dynamic reset/exit, idempotency and outcomes while Strive initially owns WhatsApp transport/templates. The current operating model has three distinct programs: order-management flow to reduce rejected/returned orders, product flow to increase repeat purchase/LTV, and governed event/promotional campaign flow.
 
 ## Product thesis
 
@@ -41,6 +44,20 @@ Its goal is not message volume. Its goal is higher contribution LTV, faster serv
 | What does this person need in this inbound conversation? | P1 Conversation Hub |
 | Should we recommend an offer and advance toward a new order? | AI Sales Closer |
 | Is the order/payment/shipment factually confirmed? | S1/S4/P4 authoritative APIs |
+
+### Replenishment dependency
+
+The CRM-automation walkthrough is captured in [[Order Intake, Fulfilment and CRM Automation Plan]]. Use the delivered sellable variant, pack quantity, versioned capsules/sachets per pack, approved nominal days of supply, return/refund/service suppression, consent and contact policy. A replenishment window begins from confirmed delivery or another explicitly approved consumption assumption—not marketplace order creation or an AI guess.
+
+### Current three-model operating plan
+
+| Model | Objective | Key behavior |
+|---|---|---|
+| Order management | Reduce preventable rejection/return and improve delivery clarity | Missing-information request, AWB/processing, Ninja Van pickup, exception/recovery, delivered onboarding and RTS handling |
+| Product flow | Increase repeat purchase and contribution LTV | Delivery-based product timing, pack-duration rules, dynamic repurchase reset, follow-up and approved offer when eligible |
+| Campaign flow | Run approved event/promotional communication | Governed audience, schedule, template, exclusions, consent, contact caps and outcome measurement |
+
+Start with model-specific configuration screens rather than a general drag-and-drop builder. Reuse the versioned journey/step/enrollment records underneath; build a generic canvas only after real workflows repeatedly exceed these three models.
 
 ## Users and jobs
 
@@ -91,6 +108,19 @@ P1 reads a freshness-labelled customer context assembled from:
 
 P1 does not recreate these source facts in a second CRM profile database.
 
+### Customer Base and operational cohorts
+
+The Customers section needs one governed Customer Base workspace plus functional cohort views. The secondary-sidebar shell already exists; P1 supplies the lifecycle/contact behavior behind it rather than creating another navigation system.
+
+- **Customer Base** shows opening/closing active customers, new/reactivated additions, lapsed losses and net active change under a versioned lifecycle policy.
+- **VIP** is a value-tier cohort; it may overlap at-risk or shared-address signals.
+- **At risk** is a lifecycle snapshot used to prioritize eligible recovery action before lapse.
+- **Shared address** is a reviewable identity/risk/reseller signal, not a lifecycle state and not an automatic campaign audience.
+
+The lapse threshold must be governed and historical. A 60-day view may be a configured policy, but Fullkit should prefer an approved behavior-derived repurchase threshold when sample size is sufficient. Product-flow replenishment timing remains independent: a seven- or fourteen-day consumption reminder does not redefine the company-level lifecycle state.
+
+P1 owns the permitted action after a customer enters a cohort—eligibility, journey enrollment, message purpose, frequency/holdout treatment and outcome. S1/BigQuery own the customer identity, qualifying purchase history, state snapshots and transitions used to determine membership.
+
 ## Lifecycle campaign map
 
 | Lifecycle stage | Campaign/workflow | Trigger | Primary success signal |
@@ -138,6 +168,8 @@ Channel and journey vendors may execute transport/workflows initially, but must 
 ## Build-versus-buy recommendation
 
 ### Recommended Phase 1 hybrid
+
+The vendor mix below remains a target/build-versus-buy analysis. The current operating transport is Strive.asia and should be integrated through the same vendor-neutral dispatch contract before considering replacement.
 
 | Layer | Recommended owner | Rationale |
 |---|---|---|
@@ -262,6 +294,8 @@ Canonical identity, conversation/message history, service-case identity and cust
 | `fct_lifecycle_message` | Dispatch × customer/channel; delivery, engagement, cost and conversion window |
 | `fct_lifecycle_incrementality` | Experiment/holdout × cohort; lift and uncertainty |
 | `fct_customer_lifecycle_state_daily` | Customer × date; state, recency, eligibility and risk |
+| `fct_customer_lifecycle_transition` | Customer × transition; new, reactivated, at-risk and lapsed movement under a policy version |
+| `fct_customer_base_movement_period` | Period × brand/market/policy; opening active, additions, losses, corrections and closing active reconciliation |
 | `fct_conversation` | Conversation; channel, intent, ownership, resolution and conversion |
 | `fct_conversation_sla` | Conversation/assignment; first response, waits, breaches and resolution time |
 | `fct_service_case` | Case; category, severity, outcome, refund/return and recovery |
@@ -300,7 +334,7 @@ Message clicks or last-touch conversions are not automatically incremental. Jour
 - Customer identified/merged; consent granted/revoked
 - Checkout started; order confirmed/cancelled
 - Payment collected/failed/refunded
-- Order packed/shipped/delivered/rejected/returned
+- Order information requested/QC approved; Ninja Van order processed/waybill available; order packed/handed over; carrier picked up/in transit/delivered/rejected/returned
 - Product back in stock; replenishment eligibility changed
 - AI closer opportunity/handoff/outcome
 
@@ -406,6 +440,10 @@ Sales intent can create or update an [[AI Sales Closer]] opportunity. The closer
 ## Definition of done for MVP
 
 - One customer profile shows canonical identity, orders, consent, lifecycle contacts and conversation history with freshness.
+- Customer Base reconciles opening active + new + reactivated − lapsed ± named corrections to closing active under one visible policy version.
+- VIP, at-risk and shared-address views explain why each customer is included and keep value, lifecycle, risk and contact-eligibility axes separate.
+- Order-management, product and campaign automations retain different purpose, exit/reset and success metrics.
+- A delivered qualifying repeat purchase recalculates the product timeline and cancels obsolete reminder/offer steps.
 - Welcome, post-purchase, feedback, replenishment and win-back journeys execute through vendor-neutral Fullkit IDs.
 - Every dispatch passes consent, suppression and frequency checks.
 - Inbound WhatsApp/social messages enter one queue with clear bot/human ownership.

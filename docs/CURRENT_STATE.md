@@ -1,15 +1,18 @@
 ---
 title: Fullkit current development state
 description: Code-backed status of Fullkit surfaces, data paths, write boundaries, and known gaps.
-updated: 2026-08-19
+updated: 2026-08-25
 status: living
-source_commit: 2972255845552a1b45fc365df4d4f9ffd11eec5e
+source_commit: 20fc8702bdf483168346adb9b353ae853802a4e7
 tags: [fullkit, status, implementation, operations]
 ---
 
 # Fullkit current development state
 
-This is the release-status companion to the product and architecture documents. It describes what exists on `main` at commit `29722558` (18 Aug 2026). When this document conflicts with a proposal, the implementation hierarchy at the end of this page wins.
+This is the release-status companion to the product and architecture documents. It describes what exists on `main` at commit `20fc870` (25 Aug 2026). When this document conflicts with a proposal, the implementation hierarchy at the end of this page wins.
+
+> [!note] Program in progress — 25 Aug 2026
+> The operational-workspaces program (Customer Base, cohort workspaces, Orders QC, Profit customer economics, fulfilment/CRM and production continuation) is tracked in [[plans/operational-workspaces-customer-profit|the program plan]]. Nothing listed there changes a status on this page until its slice ships and this page is updated.
 
 ## Audit scope and implementation census
 
@@ -18,9 +21,9 @@ This classification comes from a repository-wide audit of routes, client calls, 
 | Area inspected | Inventory at the source commit |
 |---|---|
 | Application | 12 sidebar sections (27 section children across Orders, Customers, Fulfilment), 6 settings entries, and 41 App Router page files |
-| Operational backend | 65 migration files covering 68 recorded migrations, and 7 edge functions |
-| Automation registry | 27 definitions: 23 live, 1 on hold, 3 planned |
-| Architecture decisions | 8 ADRs; ADR-0002 remains draft, while ADR-0006 activates only its shadow pilot |
+| Operational backend | 67 migration files covering 70 recorded migrations, and 7 edge functions |
+| Automation registry | 28 definitions: 23 live, 1 on hold, 4 planned |
+| Architecture decisions | 9 ADRs; ADR-0002 remains draft, while ADR-0006 activates only its shadow pilot |
 | Growth data platform | 18 warehouse files, 11 infrastructure files, and 1 GitHub Actions workflow |
 | Support tooling | Fighter-history import plus an authenticated E2E session-mint helper |
 
@@ -42,12 +45,12 @@ This classification comes from a repository-wide audit of routes, client calls, 
 | Area | Current status | What is implemented now | Boundary / next step |
 |---|---|---|---|
 | Command Centre | Hybrid | Live commercial scorecard can replace its scorecard when a real session is present. | Morning briefing, work queue, plan charts, and recommendations still come from the demo store. |
-| Orders | Live read side | Paginated Woo order mirror, brand/market/store/status/currency/age filters, detail pages, identity link, evidence context, and 15-minute mirror expectations. | New-order creation and several legacy actions still use the prototype repository; Fighter remains operational authority. |
-| Customers | Live | Resolved identities, Customer 360, contribution LTV and risk, address-cluster/reseller signals, saved segments, and filtered CSV export. | Export is intentionally capped at 20,000 rows and carries a personal-data warning. |
-| Fulfilment | Live read + shadow write | Live order queues, Ninja Van tracking, ship-readiness checks, corrections, holds/releases, AI address suggestions, shadow payloads, and return-to-sender lane. | Pick/pack/handover stays in Fighter. Live Ninja Van consignment creation is off until the ADR-0006 exit gate passes. |
+| Orders | Live read side | Paginated Woo order mirror, brand/market/store/status/currency/age filters, detail pages, identity link, evidence context, 15-minute mirror expectations, and a section sidebar whose open-queue badges come from one grouped RPC. | Queues are `source_status`/time slices, not owned QC work queues: there is no `qc_state`, reason code, owner or SLA on an order. `New (24h)` is a time window. New-order creation and bulk import are prototype/placeholder; Fighter remains operational authority. |
+| Customers | Live | Resolved identities, Customer 360, contribution LTV and risk, address-cluster/reseller signals, saved segments, filtered CSV export, and VIP / At risk / Shared address as section-sidebar query views. | Lifecycle (`≤30d` active, `≤90d` at risk, else dormant), value tier and repeat state are unversioned `CASE` expressions duplicated in SQL and the browser; there is no daily snapshot, transition history, reactivation/lapse movement or Customer Base surface. Export is capped at 20,000 rows and carries a personal-data warning. |
+| Fulfilment | Live read + shadow write | Overview, Ship-readiness, Exceptions and Returns pages over one shared floor snapshot: live order queues, Ninja Van tracking, ship-readiness checks, corrections, holds/releases, AI address suggestions, shadow payloads, and return-to-sender lane. Book courier, Delivery notes, Bulk tracking, Pickup locations, Duplicate orders, Fraud checker and Postcode finder are navigable placeholders. | Pick/pack/handover stays in Fighter. Live Ninja Van consignment creation is off until the ADR-0006 exit gate passes. |
 | Automations | Live registry | One registry documents cron, webhook, SQL, Airbyte, dbt, mart-sync, identity, cost, and fulfilment automations with available health evidence. | WhatsApp inbound is deployed but awaits the Meta app connection; several finance/activation automations remain planned. |
 | Marketing | Live with demo fallback | Meta account coverage, campaign facts, spend, Fullkit revenue/orders, custom date ranges, brand/market/platform scope, CM2, and CM3. | Platform attribution is not incrementality. Google and TikTok appear as unconnected placeholders. |
-| Profit | Live read-only | Contribution P&L on the commerce daily spine, period trend, brand × market view, COGS, fulfilment, ads, dated WHT, and coverage gates. | This is contribution, not net profit; fixed costs and several finance feeds remain absent. |
+| Profit | Live read-only | Contribution P&L on the commerce daily spine, period trend, brand × market view, COGS, fulfilment, ads, dated WHT, and coverage gates. | This is contribution, not net profit; fixed costs and several finance feeds remain absent. There are no acquisition cohorts, spend-to-customer allocation, nCAC, horizon LTV, first-order profitability or payback; the only LTV is a lifetime client-side sum on the customer detail page. |
 | Catalog and Inventory | Live | Products/variants, Woo product mirror, SKU mapping queue, pack sizes, governed unit costs, unit economics, on-hand/cover/stock signals. | Mapping and coverage warnings remain explicit; stock authority is not yet a full WMS. |
 | Production | Live controlled write | Per-product raw material → premix → in-progress → in-stock counters, append-only ledger, computed backlog, material/inbound management, arrival posting, and days of cover. | BOM/MRP, work orders, lots/expiry, locations, reservations, and automated stock deduction are deferred. |
 | Setup | Live admin | Authenticated Woo connection management and manual sync, live brand/product/variant setup, WhatsApp Cloud API credentials and number-to-brand mapping, and OpenRouter key rotation. Secrets are write-only from the browser and stored in Vault/edge-function secrets. | HQ-admin/RLS boundaries apply. Ninja Van credentials and external-write promotion are not exposed as ordinary setup actions. |
@@ -191,6 +194,7 @@ These are repository-declared schedules, not proof that every runtime job is cur
 - The only checked-in GitHub Actions workflow is dbt-specific. Pull requests touching `warehouse/**` run `dbt compile`; scheduled/manual runs execute `dbt build`.
 - The repository contains two custom dbt SQL tests plus schema tests in `warehouse/models/marts/marts.yml`. `scripts/e2e/mint_session.py` prepares an authenticated browser session but is not an end-to-end test suite.
 - There is no checked-in frontend unit, integration, or browser test suite and no GitHub Actions job that runs frontend lint/tests. Vercel build success therefore verifies compilation/deployment, not behavioral coverage.
+- There are no generated Supabase types: every RPC/row contract is a hand-maintained interface in `apps/web/src/lib/supabase/live.ts`, and there is no `supabase/config.toml` or local database test suite. Migrations are applied through the Supabase MCP and filed under their recorded version (see `supabase/migrations/README.md`).
 
 ## Source-of-truth order
 
