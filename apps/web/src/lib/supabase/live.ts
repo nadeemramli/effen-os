@@ -1,3 +1,4 @@
+import type { CustomerBaseMovement, MovementGrain, MovementMeasure, TransitionPopulation } from "@/lib/domain/lifecycle";
 import type { OrderQueueCounts } from "@/lib/domain/order-views";
 import { getSupabase } from "./client";
 
@@ -1485,4 +1486,57 @@ export async function fetchOrderQueueCounts(q: {
     throw new Error(error.message);
   }
   return data as OrderQueueCounts;
+}
+
+/* ---------- Customer lifecycle contract (program plan Phase 1) ---------- */
+
+/**
+ * Reconciled customer-base movement for the Customer Base page. Scope follows
+ * the top bar: brand and/or the integrations behind the selected markets.
+ * Returns `{ status: "unavailable", reason }` rather than zeros when the
+ * contract has not been computed yet.
+ */
+export async function fetchCustomerBaseMovement(q: {
+  grain: MovementGrain;
+  from: string | null;
+  to: string | null;
+  brandId: number | null;
+  integrationIn: number[] | null;
+  policyVersion?: number | null;
+}): Promise<CustomerBaseMovement> {
+  const { data, error } = await getSupabase().rpc("live_customer_base_movement", {
+    p_grain: q.grain,
+    p_from: q.from,
+    p_to: q.to,
+    p_brand_id: q.brandId,
+    p_integration_ids: q.integrationIn,
+    p_policy_version: q.policyVersion ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as CustomerBaseMovement;
+}
+
+/** Exact masked population behind one movement measure; keyset-paginated. */
+export async function fetchCustomerTransitionPopulation(q: {
+  grain: MovementGrain;
+  periodStart: string;
+  measure: MovementMeasure;
+  brandId: number | null;
+  integrationIn: number[] | null;
+  policyVersion?: number | null;
+  cursor?: string | null;
+  limit?: number;
+}): Promise<TransitionPopulation> {
+  const { data, error } = await getSupabase().rpc("live_customer_transition_population", {
+    p_grain: q.grain,
+    p_period_start: q.periodStart,
+    p_measure: q.measure,
+    p_brand_id: q.brandId,
+    p_integration_ids: q.integrationIn,
+    p_policy_version: q.policyVersion ?? null,
+    p_cursor: q.cursor ?? null,
+    p_limit: q.limit ?? 50,
+  });
+  if (error) throw new Error(error.message);
+  return data as TransitionPopulation;
 }

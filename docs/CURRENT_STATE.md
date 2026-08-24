@@ -21,7 +21,7 @@ This classification comes from a repository-wide audit of routes, client calls, 
 | Area inspected | Inventory at the source commit |
 |---|---|
 | Application | 12 sidebar sections (27 section children across Orders, Customers, Fulfilment), 6 settings entries, and 41 App Router page files |
-| Operational backend | 67 migration files covering 70 recorded migrations, and 7 edge functions |
+| Operational backend | 73 migration files covering 76 recorded migrations, 7 edge functions, and one plain-SQL invariant test file under `supabase/tests/` |
 | Automation registry | 28 definitions: 23 live, 1 on hold, 4 planned |
 | Architecture decisions | 9 ADRs; ADR-0002 remains draft, while ADR-0006 activates only its shadow pilot |
 | Growth data platform | 18 warehouse files, 11 infrastructure files, and 1 GitHub Actions workflow |
@@ -46,7 +46,7 @@ This classification comes from a repository-wide audit of routes, client calls, 
 |---|---|---|---|
 | Command Centre | Hybrid | Live commercial scorecard can replace its scorecard when a real session is present. | Morning briefing, work queue, plan charts, and recommendations still come from the demo store. |
 | Orders | Live read side | Paginated Woo order mirror, brand/market/store/status/currency/age filters, detail pages, identity link, evidence context, 15-minute mirror expectations, and a section sidebar whose open-queue badges come from one grouped RPC. | Queues are `source_status`/time slices, not owned QC work queues: there is no `qc_state`, reason code, owner or SLA on an order. `New (24h)` is a time window. New-order creation and bulk import are prototype/placeholder; Fighter remains operational authority. |
-| Customers | Live | Resolved identities, Customer 360, contribution LTV and risk, address-cluster/reseller signals, saved segments, filtered CSV export, and VIP / At risk / Shared address as section-sidebar query views. | Lifecycle (`≤30d` active, `≤90d` at risk, else dormant), value tier and repeat state are unversioned `CASE` expressions duplicated in SQL and the browser; there is no daily snapshot, transition history, reactivation/lapse movement or Customer Base surface. Export is capped at 20,000 rows and carries a personal-data warning. |
+| Customers | Live | Resolved identities, Customer 360, contribution LTV and risk, address-cluster/reseller signals, saved segments, filtered CSV export, and VIP / At risk / Shared address as section-sidebar query views. A governed lifecycle contract (policy v1, provisional 60-day lapse) computes qualifying orders, acquisition cohorts, state intervals, transitions and reconciled weekly/monthly base movement nightly in `private.*`, served by `live_customer_base_movement` and `live_customer_transition_population`. | The contract is backend-only until the Customer Base page ships: the list and detail pages still use the unversioned `≤30d` / `≤90d` `CASE` lifecycle in SQL and the browser, and value tier / repeat state remain unversioned. Identity merges are not historised, so the movement corrections line is always 0. Export is capped at 20,000 rows and carries a personal-data warning. |
 | Fulfilment | Live read + shadow write | Overview, Ship-readiness, Exceptions and Returns pages over one shared floor snapshot: live order queues, Ninja Van tracking, ship-readiness checks, corrections, holds/releases, AI address suggestions, shadow payloads, and return-to-sender lane. Book courier, Delivery notes, Bulk tracking, Pickup locations, Duplicate orders, Fraud checker and Postcode finder are navigable placeholders. | Pick/pack/handover stays in Fighter. Live Ninja Van consignment creation is off until the ADR-0006 exit gate passes. |
 | Automations | Live registry | One registry documents cron, webhook, SQL, Airbyte, dbt, mart-sync, identity, cost, and fulfilment automations with available health evidence. | WhatsApp inbound is deployed but awaits the Meta app connection; several finance/activation automations remain planned. |
 | Marketing | Live with demo fallback | Meta account coverage, campaign facts, spend, Fullkit revenue/orders, custom date ranges, brand/market/platform scope, CM2, and CM3. | Platform attribution is not incrementality. Google and TikTok appear as unconnected placeholders. |
@@ -152,6 +152,7 @@ The checked-in dbt mart currently governs advertising facts; commerce contributi
 | Customer identity read model | Every 15 minutes, seven minutes after Woo | Concurrent refresh with a longer timeout for address normalization. |
 | Commerce daily spine | Every 15 minutes, three minutes after Woo | Refreshes recent daily facts used by range contribution queries. |
 | Fulfilment gate | Every 5 minutes | Grades pilot orders and respects holds. |
+| Customer lifecycle contract | Daily at 01:30 MYT | `private.refresh_customer_lifecycle_daily()`: incremental qualifying-order refresh on `synced_at`, then rebuild of cohorts, state intervals, transitions and base movement under the current policy version (~90 s; first proven run 24 Aug 2026). Full backfills are driven by hand through the v3 step functions, never scheduled. |
 | OpenRouter address suggestions | Every 15 minutes, five minutes after Woo | Quiet when unconfigured; capped and suggest-only. |
 | Ninja Van shadow submit/compare | Every 15 minutes, ten minutes after Woo | Quiet when no store is enabled; shadow makes no external request. |
 | Woo product mirror | Hourly at minute 40 | Keeps store product/variant evidence current. |
@@ -194,7 +195,8 @@ These are repository-declared schedules, not proof that every runtime job is cur
 - The only checked-in GitHub Actions workflow is dbt-specific. Pull requests touching `warehouse/**` run `dbt compile`; scheduled/manual runs execute `dbt build`.
 - The repository contains two custom dbt SQL tests plus schema tests in `warehouse/models/marts/marts.yml`. `scripts/e2e/mint_session.py` prepares an authenticated browser session but is not an end-to-end test suite.
 - There is no checked-in frontend unit, integration, or browser test suite and no GitHub Actions job that runs frontend lint/tests. Vercel build success therefore verifies compilation/deployment, not behavioral coverage.
-- There are no generated Supabase types: every RPC/row contract is a hand-maintained interface in `apps/web/src/lib/supabase/live.ts`, and there is no `supabase/config.toml` or local database test suite. Migrations are applied through the Supabase MCP and filed under their recorded version (see `supabase/migrations/README.md`).
+- There are no generated Supabase types: every RPC/row contract is a hand-maintained interface in `apps/web/src/lib/supabase/live.ts`, and there is no `supabase/config.toml`. Migrations are applied through the Supabase MCP and filed under their recorded version (see `supabase/migrations/README.md`).
+- `supabase/tests/customer_lifecycle_contract.sql` holds plain-SQL invariant tests for the lifecycle contract (reconciliation identity, disjoint state intervals, valid transitions, scope sums, accepted ≥ delivered). They run against the project after a refresh; there is no automated database test job yet.
 
 ## Source-of-truth order
 
