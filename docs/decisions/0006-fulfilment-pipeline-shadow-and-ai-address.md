@@ -94,7 +94,7 @@ postcode, address line, COD amount.
 
 Returns showed RM0 everywhere although 557 parcels had a "Returned to
 Sender" event since the webhook went live. Verified causes and what
-changed (`20260817000008_nv_returns.sql`):
+changed (`20260817103250_nv_returns.sql`):
 
 - `nv_shipments.brand_id` was never written and the contribution `rts`
   join was NULL-unsafe. Now `nv_shipments` carries durable **`rts_at`**

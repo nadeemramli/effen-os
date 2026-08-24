@@ -102,7 +102,7 @@ price of ≤15-min-stale corrections).
   both now prefer raw shipping over the billing-derived projection, so a
   ship-elsewhere order no longer exports a billing postcode under a
   shipping street.
-- Migration: `20260808000001_address_identity_and_clusters.sql` (applied
+- Migration: `20260808104454_address_identity_and_clusters.sql` (applied
   remotely in four parts, `address_identity_*`, because the MV rebuild
   exceeds the migration client's timeout — the MV was created `WITH NO
   DATA` and populated by a one-shot server-side refresh).

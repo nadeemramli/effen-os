@@ -6,7 +6,7 @@ canonical; VISENA SDN BHD duplicates only append to source_entities), dedupes
 by the platform-global Order ID, normalizes (MYT→UTC, phone digits, MY/SG,
 items), and loads Supabase in batches through the Management API SQL endpoint
 (auth: the CLI access token in ~/.supabase/access-token — no DB password
-needed). See supabase/migrations/20260813000001_fighter_history_import.sql
+needed). See supabase/migrations/20260812181411_fighter_history_import.sql
 for the staging DDL and the transform.
 
 Usage:
