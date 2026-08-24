@@ -1,6 +1,8 @@
+import { isDemoMode } from "@/lib/supabase/client";
 import type { DailyPlanPoint } from "@/lib/domain/types";
 import { dailyCommercial, type DailyCommercialRow } from "@/lib/domain/metrics";
 import { dateKey } from "./clock";
+import { applyDemoProfile } from "./demo-profile";
 import { BRANDS, LEGAL_ENTITIES, PERSONAS, STORES, WORKSPACE } from "./data/org";
 import { PRODUCTS } from "./data/catalog";
 import { CUSTOMERS } from "./data/customers";
@@ -94,7 +96,7 @@ export interface SeedSnapshot {
 }
 
 export function composeSeedSnapshot(): SeedSnapshot {
-  return structuredClone({
+  const snapshot = structuredClone({
     workspace: WORKSPACE,
     legalEntities: LEGAL_ENTITIES,
     brands: BRANDS,
@@ -126,6 +128,12 @@ export function composeSeedSnapshot(): SeedSnapshot {
     notifications: NOTIFICATIONS,
     reports: REPORTS,
   });
+
+  // Demo builds get fictional business names and an epoch rolled forward to
+  // today. Everything else — the internal app included — sees the seed as
+  // authored. See demo-profile.ts for why this is applied here and not in
+  // the data modules.
+  return isDemoMode() ? applyDemoProfile(snapshot) : snapshot;
 }
 
 /* ---------- invariants behind the scripted opening line ---------- */

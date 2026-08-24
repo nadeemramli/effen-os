@@ -2,6 +2,7 @@
 import { assertSeedInvariants, composeSeedSnapshot } from "./index";
 import { sumRows } from "@/lib/domain/metrics";
 import { dateKey } from "./clock";
+import { applyDemoProfile, demoDayShift, findDemoLeaks } from "./demo-profile";
 
 assertSeedInvariants();
 const s = composeSeedSnapshot();
@@ -22,4 +23,20 @@ console.log("pending recs:", s.recommendations.filter((r) => r.status === "pendi
 console.log("stale ints:", s.integrations.filter((i) => i.status === "stale").length);
 console.log("draft orders:", s.orders.filter((o) => o.isDraft).length);
 console.log("exceptions:", s.orders.filter((o) => o.exceptionStatus !== "none").length);
+
+/* ---------- demo profile ---------- */
+// The public reviewer build renders this snapshot. Any real business name
+// surviving into it would be visible to an external marketplace reviewer,
+// so this is a build gate, not a lint.
+const demo = applyDemoProfile(s);
+const leaks = findDemoLeaks(demo);
+console.log("demo day shift:", demoDayShift(), "days");
+if (leaks.length) {
+  console.error(`\nDemo profile leaks ${leaks.length} real identifier(s):`);
+  for (const l of leaks.slice(0, 20)) console.error("  -", JSON.stringify(l));
+  if (leaks.length > 20) console.error(`  … and ${leaks.length - 20} more`);
+  console.error("\nAdd a substitution in src/lib/seed/demo-profile.ts.");
+  process.exit(1);
+}
+console.log("demo profile: clean");
 console.log("OK");

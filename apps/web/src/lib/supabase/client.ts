@@ -23,6 +23,21 @@ export function isAuthRequired(): boolean {
 }
 
 /**
+ * Demo mode — the reviewer-facing deployment.
+ *
+ * Set NEXT_PUBLIC_FULLKIT_MODE=demo on a build that has NO Supabase
+ * variables at all. The seed then stands in for every live read, the seed
+ * epoch rolls forward so the dataset always ends today, and real business
+ * names are swapped for demo ones before anything is rendered.
+ *
+ * next.config.ts refuses to build if this is set alongside a Supabase URL,
+ * so a demo deployment cannot silently acquire production credentials.
+ */
+export function isDemoMode(): boolean {
+  return process.env.NEXT_PUBLIC_FULLKIT_MODE === "demo";
+}
+
+/**
  * hCaptcha sitekey. Set this whenever the project has CAPTCHA protection
  * enabled (Auth > Bot and Abuse Protection) — GoTrue then rejects every
  * sign-in that arrives without a captcha token, before it looks at the
