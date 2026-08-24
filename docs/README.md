@@ -14,6 +14,7 @@ Start with [Current development state](CURRENT_STATE.md). It is the code-backed 
 
 - [Current development state](CURRENT_STATE.md)
 - [Growth data platform plan](ops/growth-data-platform-plan.md)
+- [Marketplace onboarding plan](ops/marketplace-onboarding-plan.md)
 - [SKU mapping register](ops/sku-mapping-register.md)
 - [Supabase advisor register](ops/supabase-advisor-register.md)
 
@@ -27,8 +28,9 @@ Start with [Current development state](CURRENT_STATE.md). It is the code-backed 
 | [0004 — Merchandise COGS spine](decisions/0004-merchandise-cogs-spine.md) | Accepted and live |
 | [0005 — Customer segments](decisions/0005-customer-segments.md) | Accepted and live |
 | [0006 — Fulfilment shadow and AI address assist](decisions/0006-fulfilment-pipeline-shadow-and-ai-address.md) | Accepted; shadow pilot live, no external courier writes |
-| [0007 — Address identity](decisions/0007-address-identity.md) | Accepted and live |
+| [0007 — Address identity](decisions/0007-address-identity.md) | Accepted and live; marketplace half withdrawn 21 Aug 2026 |
 | [0008 — Commerce daily spine](decisions/0008-commerce-daily-spine.md) | Accepted and live |
+| [0009 — Marketplace ISV posture](decisions/0009-marketplace-isv-posture.md) | Accepted; registration not submitted, no connector built |
 
 ADR-0006 activates a narrow shadow phase from ADR-0002; it does not approve ADR-0002’s full write-side cutover.
 

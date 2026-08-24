@@ -106,3 +106,26 @@ price of ≤15-min-stale corrections).
   remotely in four parts, `address_identity_*`, because the MV rebuild
   exceeds the migration client's timeout — the MV was created `WITH NO
   DATA` and populated by a one-shot server-side refresh).
+
+## Addendum 2026-08-21 — the marketplace half of this decision does not hold
+
+Decision 2 above justifies the normalized address key as "the durable
+identity signal for marketplace ingestion (TikTok Shop / Shopee mask phone
+and e-mail with virtual identifiers)". Reading Shopee's *Requesting Access
+to Sensitive Data* guide shows that premise was incomplete: Shopee masks
+**address** as well, alongside customer name, phone and e-mail. Every
+candidate join key is masked by default.
+
+Nothing about the Woo/Fighter path changes — the address key remains the
+durable signal there, and the ~8,200 identities it merged are unaffected.
+What is withdrawn is the claim that it solves marketplace ingestion. It
+cannot, until Shopee grants unmasked access, which requires a penetration
+test report and IP allowlisting.
+
+Do not build a resolver over masked marketplace values. Virtual identifiers
+are per-order or per-shop tokens, so clustering on them would manufacture
+identities that look confident and are wrong — worse than leaving
+marketplace orders unresolved and saying so.
+
+See [ADR-0009](0009-marketplace-isv-posture.md) and
+`docs/ops/marketplace-onboarding-plan.md` for the approval path.
