@@ -1,3 +1,4 @@
+import type { AwbManager, DispatchRequest, DispatchTemplate, FulfilmentStateEvent } from "@/lib/domain/fulfilment-states";
 import type { CustomerEconomics } from "@/lib/domain/customer-economics";
 import type { OrderDraft, OrderQc, OrderQcEvent, WorkspaceMember } from "@/lib/domain/order-qc";
 import type { CohortKey, CohortSummary, WorkItem, WorkItemAction, WorkItemSeverity, WorkItemSource } from "@/lib/domain/cohorts";
@@ -704,10 +705,18 @@ export async function fetchFulfilmentForOrder(orderId: number): Promise<{
   released_by: string | null;
   released_at: string | null;
   tracking_id: string | null;
+  nv_state?: string;
+  warehouse_state?: string;
+  carrier_state?: string;
+  notification_state?: string;
+  carrier_last_status?: string | null;
+  carrier_picked_up_at?: string | null;
+  handed_over_at?: string | null;
+  awb_printed_at?: string | null;
 } | null> {
   const { data, error } = await getSupabase()
     .from("order_fulfilment")
-    .select("stage, gate_issues, gate_warnings, eligible_at, held_by, held_at, hold_reason, released_by, released_at, tracking_id")
+    .select("stage, gate_issues, gate_warnings, eligible_at, held_by, held_at, hold_reason, released_by, released_at, tracking_id, nv_state, warehouse_state, carrier_state, notification_state, carrier_last_status, carrier_picked_up_at, handed_over_at, awb_printed_at")
     .eq("order_read_id", orderId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -1743,4 +1752,87 @@ export async function fetchCustomerEconomics(q: { brandId: number | null; countr
   });
   if (error) throw new Error(error.message);
   return data as CustomerEconomics;
+}
+
+/* ---------- Fulfilment states + CRM dispatch (Phase 6, shadow) ---------- */
+
+export async function fetchAwbManager(days = 14): Promise<AwbManager> {
+  const { data, error } = await getSupabase().rpc("live_awb_manager", { p_days: days });
+  if (error) throw new Error(error.message);
+  return data as AwbManager;
+}
+
+export async function fetchFulfilmentStateEvents(orderReadId: number): Promise<FulfilmentStateEvent[]> {
+  const { data, error } = await getSupabase()
+    .from("fulfilment_state_events")
+    .select("id, order_read_id, dimension, from_state, to_state, source, actor_label, note, evidence, created_at")
+    .eq("order_read_id", orderReadId)
+    .order("created_at", { ascending: false })
+    .limit(50);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as FulfilmentStateEvent[];
+}
+
+async function fulfilmentRpc(fn: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const { data, error } = await getSupabase().rpc(fn, args);
+  if (error) throw new Error(error.message);
+  return data as Record<string, unknown>;
+}
+
+/** Operator-recorded facts. None of these touch carrier_state. */
+export const awbMarkCached = (orderReadId: number, note: string | null) => fulfilmentRpc("awb_mark_cached", { p_order_read_id: orderReadId, p_note: note });
+export const awbMarkPrinted = (orderReadId: number, note: string | null) => fulfilmentRpc("awb_mark_printed", { p_order_read_id: orderReadId, p_note: note });
+export const fulfilmentMarkHandover = (orderReadId: number, note: string | null) => fulfilmentRpc("fulfilment_mark_handover", { p_order_read_id: orderReadId, p_note: note });
+export const qcReleaseToFulfilment = (qcId: number, note: string | null, expectedVersion: number) =>
+  fulfilmentRpc("qc_release_to_fulfilment", { p_qc_id: qcId, p_note: note, p_expected_version: expectedVersion });
+
+export async function fetchDispatchRequests(q: { status?: DispatchRequest["status"] | "all"; identityKey?: string; orderReadId?: number; limit?: number }): Promise<DispatchRequest[]> {
+  let query = getSupabase().from("dispatch_requests").select("*").order("created_at", { ascending: false }).limit(q.limit ?? 100);
+  if (q.status && q.status !== "all") query = query.eq("status", q.status);
+  if (q.identityKey) query = query.eq("identity_key", q.identityKey);
+  if (q.orderReadId) query = query.eq("order_read_id", q.orderReadId);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  return (data ?? []) as DispatchRequest[];
+}
+
+export async function fetchDispatchTemplates(): Promise<DispatchTemplate[]> {
+  const { data, error } = await getSupabase().from("dispatch_templates").select("key, version, channel, model, purpose, language, body_preview, variables, status").order("key");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as DispatchTemplate[];
+}
+
+/** Records the contact decision; the shadow transport stores what would be sent and sends nothing. */
+export async function createDispatchRequest(q: {
+  identityKey: string;
+  model: DispatchRequest["model"];
+  purpose: string;
+  channel: DispatchRequest["channel"];
+  templateKey: string | null;
+  templateVersion: number;
+  variables: Record<string, unknown>;
+  orderReadId: number | null;
+  triggerEvent: string;
+  note: string | null;
+}): Promise<{ created: boolean; request: DispatchRequest }> {
+  const { data, error } = await getSupabase().rpc("create_dispatch_request", {
+    p_identity_key: q.identityKey,
+    p_model: q.model,
+    p_purpose: q.purpose,
+    p_channel: q.channel,
+    p_template_key: q.templateKey,
+    p_template_version: q.templateVersion,
+    p_variables: q.variables,
+    p_order_read_id: q.orderReadId,
+    p_trigger_event: q.triggerEvent,
+    p_note: q.note,
+  });
+  if (error) throw new Error(error.message);
+  return data as { created: boolean; request: DispatchRequest };
+}
+
+export async function cancelDispatchRequest(id: number, reason: string | null): Promise<{ changed: boolean; request: DispatchRequest }> {
+  const { data, error } = await getSupabase().rpc("cancel_dispatch_request", { p_id: id, p_reason: reason });
+  if (error) throw new Error(error.message);
+  return data as { changed: boolean; request: DispatchRequest };
 }

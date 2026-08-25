@@ -38,6 +38,7 @@ import {
   qcEnrol,
   qcHold,
   qcReject,
+  qcReleaseToFulfilment,
   qcRequestInformation,
   qcStartReview,
 } from "@/lib/supabase/live";
@@ -159,7 +160,12 @@ export function QcPanel({
                 {can("reject") && <Button size="sm" variant="destructive" className="h-7" disabled={busy !== null} onClick={() => setMode("reject")}>Reject</Button>}
               </div>
             )}
-            {allowed.length === 0 && <p className="text-muted-foreground">Terminal state; no further QC actions.</p>}
+            {qc.qc_state === "approved" && qc.fulfilment_release_state !== "released" && canDecide && (
+              <Button size="sm" variant="outline" className="h-7" disabled={busy !== null} onClick={() => void run("approve", () => qcReleaseToFulfilment(qc.id, null, qc.version), "Released to fulfilment (no stock movement, no courier call)")}>
+                Release to fulfilment
+              </Button>
+            )}
+            {allowed.length === 0 && <p className="text-muted-foreground">Terminal QC state; no further QC actions.{qc.qc_state === "approved" && qc.fulfilment_release_state === "released" && " Released to fulfilment."}</p>}
             {!canReview && allowed.length > 0 && <p className="text-muted-foreground">Your role can view QC but not act on it.</p>}
 
             <ul className="space-y-1 border-t pt-2 text-[11px] text-muted-foreground">

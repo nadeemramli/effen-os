@@ -15,6 +15,16 @@ import { tonePill } from "@/components/status/status-pill";
 import { EmptyState } from "@/components/states";
 import { LiveGuard } from "@/components/auth/live-guard";
 import { QcPanel } from "@/components/orders/qc-panel";
+import {
+  CARRIER_STATE_META,
+  NOTIFICATION_STATE_META,
+  NV_STATE_META,
+  WAREHOUSE_STATE_META,
+  type CarrierState,
+  type NotificationState,
+  type NvState,
+  type WarehouseState,
+} from "@/lib/domain/fulfilment-states";
 import { getSupabase } from "@/lib/supabase/client";
 import {
   fetchAiSuggestion,
@@ -454,6 +464,17 @@ function OrderDetailInner() {
                         </span>
                       )}
                     </span>
+                  </div>
+                )}
+                {pipeline?.nv_state && (
+                  <div className="rounded-md border px-2 py-1.5 text-xs">
+                    <div className="mb-1 font-medium">Fulfilment facts (shadow)</div>
+                    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px]">
+                      <dt className="text-muted-foreground">Ninja Van / AWB</dt><dd>{NV_STATE_META[pipeline.nv_state as NvState]?.label ?? pipeline.nv_state}{pipeline.awb_printed_at ? ` · printed ${fmtDateTime(pipeline.awb_printed_at)}` : ""}</dd>
+                      <dt className="text-muted-foreground">Warehouse</dt><dd>{WAREHOUSE_STATE_META[pipeline.warehouse_state as WarehouseState]?.label ?? pipeline.warehouse_state}{pipeline.handed_over_at ? ` · ${fmtDateTime(pipeline.handed_over_at)}` : ""}</dd>
+                      <dt className="text-muted-foreground">Carrier (webhook)</dt><dd>{CARRIER_STATE_META[pipeline.carrier_state as CarrierState]?.label ?? pipeline.carrier_state}{pipeline.carrier_last_status ? ` · ${pipeline.carrier_last_status}` : ""}</dd>
+                      <dt className="text-muted-foreground">Notification</dt><dd>{NOTIFICATION_STATE_META[pipeline.notification_state as NotificationState]?.label ?? pipeline.notification_state}</dd>
+                    </dl>
                   </div>
                 )}
                 <div className="flex justify-between"><span className="text-muted-foreground">Fulfilment</span><span>{order.source_status === "completed" ? "Fulfilled" : order.source_status === "processing" ? "To fulfil (Fighter operates)" : "—"}</span></div>

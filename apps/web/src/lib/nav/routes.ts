@@ -23,6 +23,7 @@ import {
   ListChecks,
   MapPin,
   Megaphone,
+  MessageSquareText,
   Package,
   PackageCheck,
   PackagePlus,
@@ -259,6 +260,14 @@ const CUSTOMER_CHILDREN: ChildRouteDef[] = [
     status: "live",
     blurb: "Active base: new, reactivated, lapsed, net movement",
   },
+  {
+    key: "customers-dispatch",
+    label: "Dispatch",
+    path: "/customers/dispatch",
+    icon: MessageSquareText,
+    status: "live",
+    blurb: "Contact decisions and shadow transport; nothing sent",
+  },
   // Cohort workspaces: real routes with their own header numbers and
   // follow-up actions. The same populations remain reachable as starter
   // segments on All customers (`?segment=`).
@@ -273,36 +282,19 @@ const CUSTOMER_CHILDREN: ChildRouteDef[] = [
   })),
 ];
 
-const ADR_0006_GATE =
-  "Nothing is sent to a courier until the ADR-0006 exit gate passes (two consecutive weeks at 99%+ shadow agreement)";
-
 const FULFILMENT_CHILDREN: ChildRouteDef[] = [
   { key: "fulfilment-overview", label: "Overview", path: "/fulfilment", isDefault: true, icon: GitBranch, group: "Floor", status: "live" },
   { key: "fulfilment-readiness", label: "Ship-readiness", path: "/fulfilment/readiness", icon: ClipboardCheck, group: "Floor", status: "live" },
   { key: "fulfilment-exceptions", label: "Exceptions", path: "/fulfilment/exceptions", icon: ShieldAlert, group: "Floor", status: "live" },
   { key: "fulfilment-returns", label: "Returns", path: "/fulfilment/returns", icon: Undo2, group: "Floor", status: "live" },
   {
-    key: "fulfilment-book-courier",
-    label: "Book courier",
-    path: "/fulfilment/book-courier",
+    key: "fulfilment-awb",
+    label: "AWB Manager",
+    path: "/fulfilment/awb",
     icon: Truck,
     group: "Courier",
-    status: "next-module",
-    nextModule: {
-      summary:
-        "Create the consignment and the AWB in one action — per order or per batch — with the brand's sender profile applied. Replaces Fighter's separate Push Order and Generate AWB steps.",
-      workflow: [
-        "Choose the courier (Ninja Van, J&T) per order or for a whole pick list",
-        "One idempotent consignment per order (key FK-{integration}-{order}) — a retry never double-books",
-        "Tracking id and waybill attach to the shipment record; labels print singly or in bulk",
-        `Runs in shadow first: payloads are generated and compared with Fighter's bookings. ${ADR_0006_GATE}`,
-      ],
-      unlocks: [
-        "ADR-0006 exit gate",
-        "Ninja Van credentials + endpoint verification for live mode",
-        "Fighter scope-down so exactly one system books each order",
-      ],
-    },
+    status: "live",
+    blurb: "Shadow: push, AWB, print, handover, pickup as separate facts",
   },
   {
     key: "fulfilment-delivery-notes",
