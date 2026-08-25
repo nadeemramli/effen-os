@@ -144,6 +144,9 @@ t as (
          jsonb_build_object('violations', count(*) filter (where opening_active < 0 or closing_active < 0 or at_risk_closing < 0 or retained < 0))
   from private.customer_base_movement_period m, policy p where m.policy_version = p.version
   union all
+  -- Point-in-time checks (16–18) evaluate at the movement row's computed_at, not now(): an
+  -- in-progress period is a refresh-time snapshot, and at-risk intervals carry a deterministic
+  -- future valid_to, so now() would drift from the stored closing until the next refresh.
   -- 16. Closing by cumulative events equals the direct point-in-time count of open episodes at period end.
   select 'closing_matches_point_in_time',
          count(*) filter (where closing_active <> pit) = 0,
@@ -152,8 +155,8 @@ t as (
     select m.closing_active,
            (select count(*) from private.customer_base_episode e
              where e.policy_version = m.policy_version
-               and e.entered_at <= least((m.period_end::timestamp at time zone 'Asia/Kuala_Lumpur'), now())
-               and (e.exited_at is null or e.exited_at > least((m.period_end::timestamp at time zone 'Asia/Kuala_Lumpur'), now()))) as pit
+               and e.entered_at <= least((m.period_end::timestamp at time zone 'Asia/Kuala_Lumpur'), m.computed_at)
+               and (e.exited_at is null or e.exited_at > least((m.period_end::timestamp at time zone 'Asia/Kuala_Lumpur'), m.computed_at))) as pit
     from private.customer_base_movement_period m, policy p
     where m.policy_version = p.version and m.grain = 'month' and m.scope_type = 'workspace'
   ) c
@@ -166,8 +169,8 @@ t as (
     select m.at_risk_closing,
            (select count(*) from private.customer_lifecycle_state s
              where s.policy_version = m.policy_version and s.state = 'at_risk'
-               and s.valid_from <= least((m.period_end::timestamp at time zone 'Asia/Kuala_Lumpur'), now())
-               and (s.valid_to is null or s.valid_to > least((m.period_end::timestamp at time zone 'Asia/Kuala_Lumpur'), now()))) as pit
+               and s.valid_from <= least((m.period_end::timestamp at time zone 'Asia/Kuala_Lumpur'), m.computed_at)
+               and (s.valid_to is null or s.valid_to > least((m.period_end::timestamp at time zone 'Asia/Kuala_Lumpur'), m.computed_at))) as pit
     from private.customer_base_movement_period m, policy p
     where m.policy_version = p.version and m.grain = 'month' and m.scope_type = 'workspace'
   ) c
@@ -181,7 +184,7 @@ t as (
            (select count(*) from private.customer_base_episode e
              where e.policy_version = m.policy_version
                and e.entered_at <= (m.period_start::timestamp at time zone 'Asia/Kuala_Lumpur')
-               and (e.exited_at is null or e.exited_at > least((m.period_end::timestamp at time zone 'Asia/Kuala_Lumpur'), now()))) as pit
+               and (e.exited_at is null or e.exited_at > least((m.period_end::timestamp at time zone 'Asia/Kuala_Lumpur'), m.computed_at))) as pit
     from private.customer_base_movement_period m, policy p
     where m.policy_version = p.version and m.grain = 'month' and m.scope_type = 'workspace'
   ) c

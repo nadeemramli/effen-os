@@ -1,8 +1,27 @@
 # Supabase advisor register
 
-**Last sweep: 2026-08-02.** Run the security + performance advisors after
-every migration; update this register when a finding is fixed or an
-acceptance changes. Findings not listed here should be treated as new.
+**Last sweep: 2026-08-25** (Phase 8 hardening, after migrations
+`20260824190819` → `20260825075212`). Run the security + performance
+advisors after every migration; update this register when a finding is
+fixed or an acceptance changes. Findings not listed here should be treated
+as new.
+
+## Sweep 2026-08-25 — findings and disposition
+
+Security: 73 lints — 66× WARN `authenticated_security_definer_function_executable`,
+2× WARN `anon_security_definer_function_executable`, 4× WARN
+`function_search_path_mutable`, 1× INFO `rls_enabled_no_policy`.
+Performance: 99 lints — 28× INFO unindexed FK, 68× INFO unused index, 2×
+INFO no primary key, 1× INFO auth connections.
+
+| Finding | Disposition |
+|---|---|
+| 66× authenticated-executable SECURITY DEFINER RPCs (every `live_*`, `qc_*`, `awb_*`, `create_/close_*`, `save_/approve_*`, `set_*`, `map_*`, `review_*` added by the program) | **Accepted — same shape as the 2026-08-02 acceptance below**: `SET search_path = ''`, first-line membership / `private.has_role` gate, EXECUTE only to `authenticated` + `service_role`. Re-verified 2026-08-25 by the Phase 8 role matrix (`sales_cs`, `operations`, `finance`, `analyst`, `marketing_growth`): reads member-gated, every write role-gated, direct table writes denied. |
+| 2× anon-executable SECURITY DEFINER: `nv_events_rts_rollup()`, `nv_shipments_link_trigger()` | **Fixed** in `customer_lifecycle_contract_v8`: EXECUTE revoked from `public`, `anon`, `authenticated`. Both return `trigger`, so PostgREST could not have invoked them anyway; the revoke removes the lint and the ambiguity. |
+| 4× mutable search_path: `public.norm_phone`, `public.norm_address`, `public.identity_key`, `private.latest_address` | **Accepted, pre-existing** (see 2026-08-02 note on `latest_address`). `identity_key` backs an expression index on `orders_read`; altering its config is deferred to a dedicated change with a reindex plan. |
+| 1× RLS enabled, no policy: `public.nv_tokens` | **Accepted** — carrier tokens are read/written only by the edge functions (`service_role`); no browser role may see this table, so "no policy" is the intended deny-all. |
+| 28× unindexed FKs — mostly `workspace_id` on the new small registry tables (`fulfilment_state_events`, `inventory_items`, `customer_lifecycle_policy`, …) | **Accepted until review 2026-09-15**: single-workspace tables of tens to hundreds of rows; the FK column is never a join key on a hot path. Add covering indexes only if a plan shows a seq scan on them. |
+| 68× unused indexes (incl. every index created by the program) | **Expected** — created in the last 36 hours; usage stats are empty. Review 2026-09-15 with the 2026-09-01 items below. |
 
 ## Fixed (migration `20260802000002_advisor_mitigations`)
 
