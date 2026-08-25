@@ -1,3 +1,4 @@
+import type { CustomerEconomics } from "@/lib/domain/customer-economics";
 import type { OrderDraft, OrderQc, OrderQcEvent, WorkspaceMember } from "@/lib/domain/order-qc";
 import type { CohortKey, CohortSummary, WorkItem, WorkItemAction, WorkItemSeverity, WorkItemSource } from "@/lib/domain/cohorts";
 import type { CustomerBaseMovement, CustomerLifecycleStates, MovementGrain, MovementMeasure, TransitionPopulation } from "@/lib/domain/lifecycle";
@@ -1729,4 +1730,17 @@ export async function discardOrderDraft(id: number, note: string | null): Promis
   const { data, error } = await getSupabase().rpc("discard_order_draft", { p_id: id, p_note: note });
   if (error) throw new Error(error.message);
   return data as { draft: OrderDraft; changed: boolean };
+}
+
+/* ---------- Profit customer economics (Phase 5) ---------- */
+
+/** econ-v1 cohort economics for the scope; the browser renders published values and suppression reasons only. */
+export async function fetchCustomerEconomics(q: { brandId: number | null; countries?: string[] | null; months?: number }): Promise<CustomerEconomics> {
+  const { data, error } = await getSupabase().rpc("live_brand_customer_economics", {
+    p_brand_id: q.brandId,
+    p_countries: q.countries && q.countries.length > 0 ? q.countries : null,
+    p_months: q.months ?? 12,
+  });
+  if (error) throw new Error(error.message);
+  return data as CustomerEconomics;
 }

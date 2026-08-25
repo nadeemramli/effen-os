@@ -478,6 +478,14 @@ export const ROUTES: RouteDef[] = [
     group: "Growth",
     status: "live",
     permission: "reports.view",
+    childGroups: ["Customer economics"],
+    children: [
+      { key: "profit-overview", label: "Contribution overview", path: "/profit", isDefault: true, icon: TrendingUp, status: "live", blurb: "CM2 / CM3 on the commerce spine" },
+      { key: "profit-customer-economics", label: "Customer economics", path: "/profit/customer-economics", icon: Users, group: "Customer economics", status: "live", blurb: "First-order contribution, LTV by horizon, repeat" },
+      { key: "profit-acquisition-efficiency", label: "Acquisition efficiency", path: "/profit/acquisition-efficiency", icon: BadgeDollarSign, group: "Customer economics", status: "live", blurb: "nCAC, paid share, FOP" },
+      { key: "profit-cohorts-payback", label: "Cohorts & payback", path: "/profit/cohorts-payback", icon: Gauge, group: "Customer economics", status: "live", blurb: "LTV:nCAC by cohort and horizon" },
+      { key: "profit-definitions-coverage", label: "Definitions & coverage", path: "/profit/definitions-coverage", icon: ClipboardList, group: "Customer economics", status: "live", blurb: "Formulas, provisional decisions, suppression" },
+    ],
   },
   {
     key: "creative",
