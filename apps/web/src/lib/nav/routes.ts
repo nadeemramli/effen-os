@@ -505,6 +505,13 @@ export const ROUTES: RouteDef[] = [
     group: "Merchandise",
     status: "live",
     permission: "catalog.view",
+    childGroups: ["Registry"],
+    children: [
+      { key: "inventory-overview", label: "Stock signals", path: "/inventory", isDefault: true, icon: Boxes, status: "live", blurb: "On hand, cover and mapping queue" },
+      { key: "inventory-registry", label: "Items & locations", path: "/inventory/registry", icon: Warehouse, group: "Registry", status: "live", blurb: "Item master and logical locations (S3 rule)" },
+      { key: "inventory-pack-configurations", label: "Pack configurations", path: "/inventory/pack-configurations", icon: Package, group: "Registry", status: "live", blurb: "Versioned pack master per sellable variant" },
+      { key: "inventory-marketplaces", label: "Marketplaces", path: "/inventory/marketplaces", icon: Cable, group: "Registry", status: "live", blurb: "Account registry, cutover mode, listing mapping" },
+    ],
   },
   {
     key: "production",
@@ -514,6 +521,10 @@ export const ROUTES: RouteDef[] = [
     group: "Merchandise",
     status: "live",
     permission: "catalog.view",
+    children: [
+      { key: "production-overview", label: "Pipeline", path: "/production", isDefault: true, icon: Factory, status: "live", blurb: "Stages, materials, inbound, ledger" },
+      { key: "production-observations", label: "WhatsApp observations", path: "/production/observations", icon: MessageSquareText, status: "live", blurb: "Factory updates as evidence; review links, never moves stock" },
+    ],
   },
   {
     key: "finance",

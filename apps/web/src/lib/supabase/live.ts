@@ -1,3 +1,4 @@
+import type { InventoryRegistry, MarketplaceRegistry, WaObservations } from "@/lib/domain/inventory-registry";
 import type { AwbManager, DispatchRequest, DispatchTemplate, FulfilmentStateEvent } from "@/lib/domain/fulfilment-states";
 import type { CustomerEconomics } from "@/lib/domain/customer-economics";
 import type { OrderDraft, OrderQc, OrderQcEvent, WorkspaceMember } from "@/lib/domain/order-qc";
@@ -1836,3 +1837,31 @@ export async function cancelDispatchRequest(id: number, reason: string | null): 
   if (error) throw new Error(error.message);
   return data as { changed: boolean; request: DispatchRequest };
 }
+
+/* ---------- Production / inventory / marketplace registries (Phase 7) ---------- */
+
+async function registryRpc<T>(fn: string, args: Record<string, unknown> = {}): Promise<T> {
+  const { data, error } = await getSupabase().rpc(fn, args);
+  if (error) throw new Error(error.message);
+  return data as T;
+}
+
+export const fetchInventoryRegistry = () => registryRpc<InventoryRegistry>("live_inventory_registry");
+export const fetchMarketplaceRegistry = () => registryRpc<MarketplaceRegistry>("live_marketplace_registry");
+export const fetchWaObservations = (state: string | null, limit = 100) => registryRpc<WaObservations>("live_wa_observations", { p_state: state, p_limit: limit });
+
+/** New DRAFT version; approving supersedes the previous approved row. Never edits history. */
+export const savePackConfiguration = (q: {
+  variantId: number; presentationType: string; containedUnitType: string; containedUnitsPerPack: number; sellableUom: string;
+  contentPerUnit: string | null; recommendedUnitsPerDay: number | null; nominalDaysSupply: number | null; packagingBomVersion: string | null; effectiveFrom: string; note: string | null;
+}) => registryRpc<{ configuration: unknown }>("save_pack_configuration", {
+  p_variant_id: q.variantId, p_presentation_type: q.presentationType, p_contained_unit_type: q.containedUnitType, p_contained_units_per_pack: q.containedUnitsPerPack,
+  p_sellable_uom: q.sellableUom, p_content_per_unit: q.contentPerUnit, p_recommended_units_per_day: q.recommendedUnitsPerDay, p_nominal_days_supply: q.nominalDaysSupply,
+  p_packaging_bom_version: q.packagingBomVersion, p_effective_from: q.effectiveFrom, p_note: q.note,
+});
+export const approvePackConfiguration = (id: number, note: string | null) => registryRpc<{ changed: boolean }>("approve_pack_configuration", { p_id: id, p_note: note });
+/** ADR-0009: only disconnected / read_only / shadow are accepted by the server. */
+export const setMarketplaceCutover = (accountId: number, mode: string, note: string | null) => registryRpc<{ changed: boolean }>("set_marketplace_cutover", { p_account_id: accountId, p_mode: mode, p_note: note });
+export const mapMarketplaceListing = (listingId: number, variantId: number | null, note: string | null) => registryRpc<{ listing: unknown }>("map_marketplace_listing", { p_listing_id: listingId, p_variant_id: variantId, p_note: note });
+export const reviewWaObservation = (q: { id: number; state: "linked" | "accepted" | "rejected"; productionItemId: number | null; batchRef: string | null; note: string | null }) =>
+  registryRpc<{ observation: unknown }>("review_wa_observation", { p_id: q.id, p_state: q.state, p_production_item_id: q.productionItemId, p_batch_ref: q.batchRef, p_note: q.note });
