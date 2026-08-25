@@ -1,3 +1,4 @@
+import type { OrderDraft, OrderQc, OrderQcEvent, WorkspaceMember } from "@/lib/domain/order-qc";
 import type { CohortKey, CohortSummary, WorkItem, WorkItemAction, WorkItemSeverity, WorkItemSource } from "@/lib/domain/cohorts";
 import type { CustomerBaseMovement, CustomerLifecycleStates, MovementGrain, MovementMeasure, TransitionPopulation } from "@/lib/domain/lifecycle";
 import type { OrderQueueCounts } from "@/lib/domain/order-views";
@@ -204,6 +205,8 @@ export interface LiveOrderRow {
   placed_at: string | null;
   updated_at_source?: string | null;
   synced_at: string;
+  /** Explicit QC record (embedded); null = not enrolled. */
+  order_qc?: Pick<OrderQc, "id" | "qc_state" | "reason_codes" | "owner_membership_id" | "due_at" | "version"> | null;
 }
 
 export async function fetchLiveOrders(brandId: number | null, limit = 100): Promise<LiveOrderRow[]> {
@@ -231,6 +234,8 @@ export interface LiveOrdersQuery {
   currency: string | null;
   sinceHours: number | null;
   search: string;
+  /** Saved-view QC slice: inner-join order_qc and keep these states. */
+  qcStateIn?: string[] | null;
 }
 
 export interface LiveOrdersPage {
@@ -242,10 +247,11 @@ export async function fetchLiveOrdersPage(q: LiveOrdersQuery): Promise<LiveOrder
   let query = getSupabase()
     .from("orders_read")
     .select(
-      "id, integration_id, brand_id, source_order_id, order_number, source_status, currency_code, total, customer, items, raw, placed_at, updated_at_source, synced_at",
+      `id, integration_id, brand_id, source_order_id, order_number, source_status, currency_code, total, customer, items, raw, placed_at, updated_at_source, synced_at, order_qc${q.qcStateIn && q.qcStateIn.length > 0 ? "!inner" : ""}(id, qc_state, reason_codes, owner_membership_id, due_at, version)`,
       { count: "exact" },
     );
   if (q.brandId !== null) query = query.eq("brand_id", q.brandId);
+  if (q.qcStateIn && q.qcStateIn.length > 0) query = query.in("order_qc.qc_state", q.qcStateIn);
   if (q.integrationId !== null) query = query.eq("integration_id", q.integrationId);
   else if (q.integrationIn && q.integrationIn.length > 0) query = query.in("integration_id", q.integrationIn);
   if (q.status) query = query.eq("source_status", q.status);
@@ -272,7 +278,13 @@ export async function fetchLiveOrdersPage(q: LiveOrdersQuery): Promise<LiveOrder
     .order("id", { ascending: false })
     .range(from, from + q.pageSize - 1);
   if (error) throw new Error(error.message);
-  return { rows: (data ?? []) as LiveOrderRow[], total: count ?? 0 };
+  // order_qc is one-to-one (unique FK): PostgREST returns an object, but normalise
+  // defensively so an array shape can never hide the QC state.
+  const rows = ((data ?? []) as unknown as Array<LiveOrderRow & { order_qc?: unknown }>).map((r) => ({
+    ...r,
+    order_qc: Array.isArray(r.order_qc) ? ((r.order_qc[0] as LiveOrderRow["order_qc"]) ?? null) : ((r.order_qc as LiveOrderRow["order_qc"]) ?? null),
+  }));
+  return { rows, total: count ?? 0 };
 }
 
 /* ---------- Command Centre scorecard ---------- */
@@ -1614,4 +1626,107 @@ export async function closeWorkItem(q: { id: number; outcome: "done" | "dropped"
   });
   if (error) throw new Error(error.message);
   return data as { changed: boolean; work_item: WorkItem };
+}
+
+/* ---------- Orders New/QC and drafts (Phase 4) ---------- */
+
+export async function fetchOrderQc(orderReadId: number): Promise<{ qc: OrderQc | null; events: OrderQcEvent[] }> {
+  const supabase = getSupabase();
+  const { data: qc, error } = await supabase.from("order_qc").select("*").eq("order_read_id", orderReadId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!qc) return { qc: null, events: [] };
+  const { data: events, error: e2 } = await supabase
+    .from("order_qc_events")
+    .select("*")
+    .eq("order_qc_id", (qc as OrderQc).id)
+    .order("created_at", { ascending: false });
+  if (e2) throw new Error(e2.message);
+  return { qc: qc as OrderQc, events: (events ?? []) as OrderQcEvent[] };
+}
+
+export async function fetchWorkspaceMembers(): Promise<WorkspaceMember[]> {
+  const { data, error } = await getSupabase().rpc("live_workspace_members");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as WorkspaceMember[];
+}
+
+async function qcRpc(fn: string, args: Record<string, unknown>): Promise<{ qc: OrderQc } & Record<string, unknown>> {
+  const { data, error } = await getSupabase().rpc(fn, args);
+  if (error) throw new Error(error.message);
+  return data as { qc: OrderQc } & Record<string, unknown>;
+}
+
+/** Idempotent: returns the existing record when the order is already in QC. */
+export const qcEnrol = (orderReadId: number) => qcRpc("qc_enrol", { p_order_read_id: orderReadId });
+export const qcStartReview = (qcId: number, note: string | null, expectedVersion: number) =>
+  qcRpc("qc_start_review", { p_qc_id: qcId, p_note: note, p_expected_version: expectedVersion });
+/** Creates an internal work item as the shadow dispatch job; `sent` is always false. */
+export const qcRequestInformation = (qcId: number, reasonCodes: string[], note: string | null, channel: "whatsapp_manual" | "call", expectedVersion: number) =>
+  qcRpc("qc_request_information", { p_qc_id: qcId, p_reason_codes: reasonCodes, p_note: note, p_channel: channel, p_expected_version: expectedVersion }) as Promise<{ qc: OrderQc; dispatch_job_id: number | null; sent: false }>;
+export const qcCorrectAndRevalidate = (qcId: number, corrected: Record<string, string> | null, note: string | null, expectedVersion: number) =>
+  qcRpc("qc_correct_and_revalidate", { p_qc_id: qcId, p_corrected: corrected, p_note: note, p_expected_version: expectedVersion });
+export const qcHold = (qcId: number, reasonCodes: string[], note: string | null, expectedVersion: number) =>
+  qcRpc("qc_hold", { p_qc_id: qcId, p_reason_codes: reasonCodes, p_note: note, p_expected_version: expectedVersion }) as Promise<{ qc: OrderQc; pipeline_held: boolean }>;
+export const qcAssign = (qcId: number, ownerMembershipId: number | null, dueAt: string | null, expectedVersion: number) =>
+  qcRpc("qc_assign", { p_qc_id: qcId, p_owner_membership_id: ownerMembershipId, p_due_at: dueAt, p_expected_version: expectedVersion });
+export const qcApprove = (qcId: number, note: string | null, expectedVersion: number) =>
+  qcRpc("qc_approve", { p_qc_id: qcId, p_note: note, p_expected_version: expectedVersion });
+export const qcReject = (qcId: number, reasonCodes: string[], note: string | null, expectedVersion: number) =>
+  qcRpc("qc_reject", { p_qc_id: qcId, p_reason_codes: reasonCodes, p_note: note, p_expected_version: expectedVersion }) as Promise<{ qc: OrderQc; pipeline_held: boolean }>;
+
+/* drafts */
+
+export async function fetchOrderDrafts(q: { status: "draft" | "confirmed" | "discarded" | "all"; limit?: number }): Promise<Array<OrderDraft & { order_qc: Pick<OrderQc, "id" | "qc_state" | "version"> | null }>> {
+  let query = getSupabase()
+    .from("order_drafts")
+    .select("*, order_qc(id, qc_state, version)")
+    .order("updated_at", { ascending: false })
+    .limit(q.limit ?? 100);
+  if (q.status !== "all") query = query.eq("status", q.status);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  // One-to-one embed; normalise defensively (see fetchLiveOrdersPage).
+  return ((data ?? []) as unknown as Array<OrderDraft & { order_qc?: unknown }>).map((d) => ({
+    ...d,
+    order_qc: ((Array.isArray(d.order_qc) ? d.order_qc[0] : d.order_qc) ?? null) as Pick<OrderQc, "id" | "qc_state" | "version"> | null,
+  }));
+}
+
+export async function saveOrderDraft(q: {
+  id: number | null;
+  integrationId: number | null;
+  customer: OrderDraft["customer"];
+  shipping: OrderDraft["shipping"];
+  items: OrderDraft["items"];
+  paymentMethod: OrderDraft["payment_method"];
+  note: string | null;
+  idempotencyKey: string | null;
+  expectedVersion: number | null;
+}): Promise<OrderDraft> {
+  const { data, error } = await getSupabase().rpc("save_order_draft", {
+    p_id: q.id,
+    p_integration_id: q.integrationId,
+    p_customer: q.customer,
+    p_shipping: q.shipping,
+    p_items: q.items,
+    p_payment_method: q.paymentMethod,
+    p_note: q.note,
+    p_currency_code: null,
+    p_idempotency_key: q.idempotencyKey,
+    p_expected_version: q.expectedVersion,
+  });
+  if (error) throw new Error(error.message);
+  return (data as { draft: OrderDraft }).draft;
+}
+
+export async function confirmOrderDraft(id: number, expectedVersion: number): Promise<{ draft: OrderDraft; qc: OrderQc; changed: boolean }> {
+  const { data, error } = await getSupabase().rpc("confirm_order_draft", { p_id: id, p_expected_version: expectedVersion });
+  if (error) throw new Error(error.message);
+  return data as { draft: OrderDraft; qc: OrderQc; changed: boolean };
+}
+
+export async function discardOrderDraft(id: number, note: string | null): Promise<{ draft: OrderDraft; changed: boolean }> {
+  const { data, error } = await getSupabase().rpc("discard_order_draft", { p_id: id, p_note: note });
+  if (error) throw new Error(error.message);
+  return data as { draft: OrderDraft; changed: boolean };
 }

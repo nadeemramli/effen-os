@@ -14,6 +14,7 @@ import { PageBody } from "@/components/shell/page-header";
 import { tonePill } from "@/components/status/status-pill";
 import { EmptyState } from "@/components/states";
 import { LiveGuard } from "@/components/auth/live-guard";
+import { QcPanel } from "@/components/orders/qc-panel";
 import { getSupabase } from "@/lib/supabase/client";
 import {
   fetchAiSuggestion,
@@ -607,6 +608,14 @@ function OrderDetailInner() {
               </CardContent>
             </Card>
           )}
+
+          <QcPanel
+            orderReadId={order.id}
+            sourceStatus={order.source_status}
+            readinessIssues={readiness !== "unknown" && readiness ? readiness.issues : undefined}
+            hasCorrection={correction !== null}
+            onChanged={() => setReloadKey((k) => k + 1)}
+          />
 
           <Card>
             <CardHeader><CardTitle className="text-sm font-medium">Scope</CardTitle></CardHeader>

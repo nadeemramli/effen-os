@@ -30,6 +30,7 @@ import {
 } from "@/lib/supabase/live";
 import type { StatusMeta } from "@/lib/domain/status-maps";
 import { ORDER_VIEWS } from "@/lib/domain/order-views";
+import { QcCell } from "@/components/orders/qc-panel";
 import { useAppStore } from "@/lib/store/provider";
 import { cn } from "@/lib/utils";
 
@@ -158,6 +159,7 @@ function OrdersInner() {
         statusIn: status === "any" ? activeView.statusIn : null,
         currency: currency === "any" ? null : currency,
         sinceHours: ageHours ?? activeView.sinceHours,
+        qcStateIn: status === "any" ? (activeView.qcStateIn ?? null) : null,
         search: q,
       });
       setRows(result.rows);
@@ -259,6 +261,12 @@ function OrdersInner() {
         header: "Owner",
         enableSorting: false,
         cell: () => <span className="text-muted-foreground">—</span>,
+      },
+      {
+        id: "qc",
+        header: "QC",
+        enableSorting: false,
+        cell: ({ row }) => <QcCell qc={row.original.order_qc} />,
       },
       {
         id: "placed",

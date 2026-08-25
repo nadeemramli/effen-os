@@ -16,6 +16,10 @@
 export interface OrderQueueCounts {
   by_status: Record<string, number>;
   new_24h: number;
+  /** Open QC records (explicit qc_state), scoped like the rest. */
+  qc: { new: number; in_review: number; needs_customer_info: number; on_hold: number; open: number };
+  /** Fullkit manual-order drafts awaiting confirmation. */
+  drafts: number;
   /** Courier-wide parcel counts — not brand-scoped (parcels are Fighter-booked). */
   courier: { in_transit: number; returned_14d: number };
   computed_at: string;
@@ -28,6 +32,8 @@ export interface OrderView {
   statusIn: string[] | null;
   /** `placed_at >= now() - N hours`; null = any age. */
   sinceHours: number | null;
+  /** `order_qc.qc_state in (...)` via an inner join; null = no QC filter. */
+  qcStateIn?: string[] | null;
   /** Picks this view's count out of the grouped RPC result; absent = no badge (archive queue). */
   count?: (c: OrderQueueCounts) => number;
 }
@@ -38,8 +44,9 @@ function sum(c: OrderQueueCounts, keys: string[]): number {
 
 export const ORDER_VIEWS: OrderView[] = [
   { key: "all", label: "All", statusIn: null, sinceHours: null },
-  { key: "draft", label: "Draft", statusIn: ["checkout-draft"], sinceHours: null, count: (c) => sum(c, ["checkout-draft"]) },
-  { key: "new", label: "New (24h)", statusIn: null, sinceHours: 24, count: (c) => c.new_24h },
+  { key: "draft", label: "Checkout drafts", statusIn: ["checkout-draft"], sinceHours: null, count: (c) => sum(c, ["checkout-draft"]) },
+  // Explicit QC state, never a time window: every order here has a qc_state.
+  { key: "qc", label: "New / QC", statusIn: null, sinceHours: null, qcStateIn: ["new", "in_review", "needs_customer_info", "on_hold"], count: (c) => c.qc?.open ?? 0 },
   { key: "needs-payment", label: "Needs payment", statusIn: ["pending", "on-hold", "failed"], sinceHours: null, count: (c) => sum(c, ["pending", "on-hold", "failed"]) },
   { key: "to-fulfil", label: "To fulfil", statusIn: ["processing"], sinceHours: null, count: (c) => sum(c, ["processing"]) },
   { key: "completed", label: "Completed", statusIn: ["completed"], sinceHours: null },

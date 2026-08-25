@@ -51,6 +51,7 @@ export function useQueueCounts(enabled: boolean): QueueCounts | undefined {
       ),
       "orders-view-in-transit": data.courier.in_transit,
       "orders-view-returned": data.courier.returned_14d,
+      "orders-drafts": data.drafts,
     };
   }, [active, error, data]);
 }
