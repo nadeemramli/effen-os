@@ -1,41 +1,45 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
 import {
   AlertTriangle,
   ArrowRight,
-  Boxes,
   Cable,
   CheckCircle2,
-  ClipboardList,
-  Megaphone,
-  Sparkles,
+  ClipboardCheck,
+  FilePen,
+  Truck,
+  Undo2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ChartCard } from "@/components/charts/chart-card";
-import {
-  ChartLegend,
-  PlanVsActualByBrand,
-  ContributionTrend,
-} from "@/components/charts/commercial-charts";
-import { MetricCard } from "@/components/metrics/metric-card";
 import { LiveScorecard } from "@/components/metrics/live-scorecard";
 import { PageBody } from "@/components/shell/page-header";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
-import { useActivePersona, useSession, rangeDays } from "@/hooks/use-session";
-import { formatMoney, formatPercent, formatRatio } from "@/lib/domain/money";
-import { sumRows } from "@/lib/domain/metrics";
+import { ErrorState, InlineCount } from "@/components/states";
+import { useLiveQuery } from "@/hooks/use-live-query";
+import { useActivePersona, useSession } from "@/hooks/use-session";
+import { workItemActionLabel, type WorkItem } from "@/lib/domain/cohorts";
+import { statusMeta } from "@/lib/domain/integrations";
+import type { OrderQueueCounts } from "@/lib/domain/order-views";
 import { ROLE_LABELS } from "@/lib/rbac/matrix";
-import { dateKey } from "@/lib/seed/clock";
 import { useAppStore } from "@/lib/store/provider";
+import {
+  fetchIntegrationConnections,
+  fetchLiveBrands,
+  fetchOpenWorkItems,
+  fetchOrderQueueCounts,
+  fetchShadowReport,
+  fetchWooConnections,
+  integrationFreshness,
+  type LiveBrand,
+  type LiveIntegration,
+  type ShadowReport,
+} from "@/lib/supabase/live";
+import { formatDateTime } from "@/lib/utils/dates";
 import { cn } from "@/lib/utils";
-import { formatDate, formatRelative } from "@/lib/utils/dates";
-
-const WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
-const word = (n: number) => WORDS[n] ?? String(n);
+import { DemoCommandCenter } from "./_components/demo-command-center";
 
 const SEVERITY_TONE: Record<string, string> = {
   critical: "text-destructive",
@@ -44,171 +48,157 @@ const SEVERITY_TONE: Record<string, string> = {
   low: "text-muted-foreground",
 };
 
+interface Snapshot {
+  integrations: LiveIntegration[];
+  brands: LiveBrand[];
+  counts: OrderQueueCounts | null;
+  /** null = the follow-up query failed (shown as unavailable, never as "nothing waiting"). */
+  workItems: WorkItem[] | null;
+  shadow: ShadowReport | null;
+  fetchedAt: number;
+}
+
+function workItemHref(w: WorkItem): string {
+  if (w.entity_ref.startsWith("customer:")) return `/customers/${encodeURIComponent(w.entity_ref.slice("customer:".length))}`;
+  if (w.entity_ref.startsWith("order:")) return `/orders/${w.entity_ref.slice("order:".length)}`;
+  return "/customers/base";
+}
+
+/**
+ * Landing page over the live mirror: what needs attention now (QC, drafts,
+ * courier, sources), the commercial scorecard, open follow-ups, connection
+ * trust and the courier shadow gate. Every count comes from a server RPC or
+ * table read; while a query is in flight the slot shows a skeleton, never 0.
+ * Builds without Supabase (demo mode) render the seeded prototype instead.
+ */
 export default function CommandCenterPage() {
   const session = useSession();
+  const isLive = session.authEmail !== null;
+  if (!isLive) return <DemoCommandCenter />;
+  return <LiveCommandCenter />;
+}
+
+function LiveCommandCenter() {
+  const session = useSession();
   const persona = useActivePersona();
-  const brands = useAppStore((s) => s.brands);
-  const orders = useAppStore((s) => s.orders);
-  const integrations = useAppStore((s) => s.integrations);
-  const recommendations = useAppStore((s) => s.recommendations);
-  const workItems = useAppStore((s) => s.workItems);
-  const dailyRows = useAppStore((s) => s.dailyRows);
-  const dailyPlan = useAppStore((s) => s.dailyPlan);
-  const dqIssues = useAppStore((s) => s.dqIssues);
-  const adAccounts = useAppStore((s) => s.adAccounts);
-  const personas = useAppStore((s) => s.personas);
-  const products = useAppStore((s) => s.products);
+  const liveBrandId = useAppStore((s) => s.session.liveBrandId);
+  const liveMarkets = useAppStore((s) => s.session.liveMarkets);
 
-  const pending = recommendations.filter((r) => r.status === "pending");
-  const staleSources = integrations.filter((i) => i.status === "stale");
+  const q = useLiveQuery<Snapshot>(async () => {
+    const woo = await fetchWooConnections();
+    const integrationIn =
+      liveMarkets.length > 0
+        ? woo.filter((c) => liveMarkets.includes(c.config?.country_code ?? "")).map((c) => c.id)
+        : null;
+    const [integrations, brands, counts, workItems, shadow] = await Promise.all([
+      fetchIntegrationConnections(),
+      fetchLiveBrands(),
+      fetchOrderQueueCounts({ brandId: liveBrandId, integrationIn }),
+      fetchOpenWorkItems(6).catch(() => null),
+      fetchShadowReport(14).catch(() => null),
+    ]);
+    return { integrations, brands, counts, workItems, shadow, fetchedAt: Date.now() };
+  }, [liveBrandId, liveMarkets]);
 
-  const brandName = (id: string) => brands.find((b) => b.id === id)?.name ?? id;
-  const personaName = (id: string | null) =>
-    personas.find((p) => p.id === id)?.name ?? "Unassigned";
+  const d = q.data;
+  const counts = d?.counts ?? null;
+  const graded = (d?.integrations ?? []).map((i) => ({ ...i, freshness: integrationFreshness(i, d?.fetchedAt ?? 0) }));
+  const configured = graded.filter((i) => i.freshness !== "pending");
+  const attentionSources = d
+    ? configured.filter((i) => i.freshness !== "fresh" || i.status === "degraded" || i.status === "disconnected")
+    : null;
+  const healthy = configured.filter((i) => i.freshness === "fresh" && i.status === "healthy").length;
+  const brandName = liveBrandId === null ? null : (d?.brands.find((b) => b.id === liveBrandId)?.name ?? `brand #${liveBrandId}`);
+  const scopeLabel = [brandName, liveMarkets.length > 0 ? liveMarkets.join(" + ") : null].filter(Boolean).join(" · ");
 
-  /* ---------- scoped commercial numbers ---------- */
-  const days = rangeDays(session.dateRange, session.customRange);
-  const keys = useMemo(
-    () => new Set(Array.from({ length: days }, (_, i) => dateKey(i))),
-    [days],
-  );
-  const scopedRows = dailyRows.filter(
-    (r) => keys.has(r.date) && (session.brandId === "all" || r.brandId === session.brandId),
-  );
-  const totals = sumRows(scopedRows);
-  const scopedPlan = dailyPlan.filter(
-    (p) => keys.has(p.date) && (session.brandId === "all" || p.brandId === session.brandId),
-  );
-  const planContribution = scopedPlan.reduce((s, p) => s + p.expectedContribution, 0);
-  const contributionVariance =
-    planContribution > 0 ? (totals.contribution - planContribution) / planContribution : 0;
-
-  /* ---------- yesterday (for the briefing line) ---------- */
-  const yKey = dateKey(1);
-  const yPlanRows = dailyPlan.filter((p) => p.date === yKey);
-  const yActual = yPlanRows.reduce((s, p) => s + p.actualContribution, 0);
-  const yExpected = yPlanRows.reduce((s, p) => s + p.expectedContribution, 0);
-  const contributionBelowPlan = yActual < yExpected;
-
-  /* ---------- attention strip ---------- */
-  const exceptionOrders = orders.filter((o) => o.exceptionStatus !== "none");
-  const stalledShipments = orders.filter(
-    (o) => o.exceptionStatus === "shipment_exception",
-  );
-  const paymentExceptions = orders.filter((o) => o.exceptionStatus === "payment_exception");
-  const stockRisk = products.flatMap((p) =>
-    p.variants.filter((v) => v.onHand - v.reserved <= 0 || v.onHand - v.reserved < v.reorderPoint / 2),
-  );
-  const pacingRisk = 1; // CMP-0003 — surfaced via diagnosis DIA-0001
+  const firstName = persona.name.split(" ")[0] ?? persona.name;
+  const n = (v: number | null | undefined) => (d && v !== null && v !== undefined ? v : null);
 
   const attention = [
     {
-      icon: ClipboardList,
-      label: "Order exceptions",
-      count: exceptionOrders.length,
-      detail: `${stalledShipments.length} stalled shipments · ${paymentExceptions.length} payment`,
-      href: "/orders?view=exceptions",
+      icon: ClipboardCheck,
+      label: "New / QC",
+      count: n(counts?.qc.open),
+      detail: counts ? `${counts.qc.new} new · ${counts.qc.needs_customer_info} need customer info · ${counts.qc.on_hold} on hold` : "explicit QC state per order",
+      href: "/orders?view=qc",
+      tone: "warning" as const,
+    },
+    {
+      icon: FilePen,
+      label: "Checkout drafts",
+      count: n(counts?.drafts),
+      detail: "Fullkit drafts awaiting confirmation",
+      href: "/orders/drafts",
+      tone: "neutral" as const,
+    },
+    {
+      icon: Truck,
+      label: "In transit",
+      count: n(counts?.courier.in_transit),
+      detail: "courier-wide parcels, Fighter-booked",
+      href: "/fulfilment",
+      tone: "neutral" as const,
+    },
+    {
+      icon: Undo2,
+      label: "Returned, 14d",
+      count: n(counts?.courier.returned_14d),
+      detail: "RTS with carrier evidence",
+      href: "/fulfilment/returns",
       tone: "destructive" as const,
     },
     {
       icon: Cable,
-      label: "Failed syncs",
-      count: staleSources.length,
-      detail: staleSources.map((s) => s.provider).join(" · ") || "All sources healthy",
+      label: "Sources needing attention",
+      count: attentionSources ? attentionSources.length : null,
+      detail: attentionSources && attentionSources.length > 0
+        ? attentionSources.slice(0, 3).map((s) => s.provider).join(" · ") + (attentionSources.length > 3 ? " · …" : "")
+        : d ? `${healthy}/${configured.length} configured sources fresh` : "freshness against each SLA",
       href: "/settings/integrations",
       tone: "warning" as const,
     },
-    {
-      icon: Megaphone,
-      label: "Ad pacing risk",
-      count: pacingRisk,
-      detail: "CMP-0003 spend +35%, MER 2.1 vs 3.0",
-      href: "/marketing?campaign=CMP-0003",
-      tone: "warning" as const,
-    },
-    {
-      icon: Boxes,
-      label: "Stock risk",
-      count: stockRisk.length,
-      detail: "VER-TON-100 stocked out · low cover on 2 SKUs",
-      href: "/catalog?filter=stock-risk",
-      tone: "warning" as const,
-    },
-    {
-      icon: Sparkles,
-      label: "Approvals waiting",
-      count: pending.length,
-      detail: "Growth recommendations awaiting a decision",
-      href: "/profit",
-      tone: "ai" as const,
-    },
   ];
-
-  /* ---------- charts ---------- */
-  const brandChart = brands.map((b) => {
-    const actual = scopedRows.filter((r) => r.brandId === b.id).reduce((s, r) => s + r.contribution, 0);
-    const plan = scopedPlan.filter((p) => p.brandId === b.id).reduce((s, p) => s + p.expectedContribution, 0);
-    return { brand: b.name.replace(" (Demo)", ""), plan, actual };
-  });
-
-  // Trend starts at D-1: today is partial and would show a misleading dip.
-  const trend = Array.from({ length: 30 }, (_, i) => {
-    const k = dateKey(30 - i);
-    const rows = dailyPlan.filter(
-      (p) => p.date === k && (session.brandId === "all" || p.brandId === session.brandId),
-    );
-    return {
-      date: formatDate(rows[0]?.date ?? k),
-      actual: rows.reduce((s, p) => s + p.actualContribution, 0),
-      plan: rows.reduce((s, p) => s + p.expectedContribution, 0),
-    };
-  });
-
-  /* ---------- work queue ---------- */
-  const myWork = workItems.filter((w) => w.status === "open");
-  const mine = myWork.filter((w) => w.ownerId === persona.id);
-  const queue = mine.length > 0 ? mine : myWork;
-
-  /* ---------- data trust ---------- */
-  const healthy = integrations.filter((i) => i.status === "healthy").length;
-  const openDq = dqIssues.filter((i) => i.status !== "resolved");
-  const unmappedCount =
-    adAccounts.filter((a) => a.status === "unmapped").length +
-    openDq.filter((i) => i.category === "mapping").length;
-  const reconciliationIssues = openDq.filter((i) => i.category === "reconciliation").length;
 
   return (
     <PageBody>
-      {/* ---------- morning briefing (composed from live state) ---------- */}
-      <section aria-label="Morning briefing">
+      <section aria-label="Briefing">
         <p className="max-w-3xl text-balance text-xl font-medium leading-relaxed tracking-tight">
-          Good morning{persona.name === "Nadeem" ? "" : `, ${persona.name.split(" ")[0]}`}.{" "}
-          <Link href="/profit" className="rounded text-ai underline decoration-ai/40 underline-offset-4 outline-none hover:decoration-ai focus-visible:ring-2 focus-visible:ring-ring">
-            {word(pending.length)} item{pending.length === 1 ? "" : "s"} need{pending.length === 1 ? "s" : ""} a decision
+          Good morning, {firstName}.{" "}
+          <Link href="/orders?view=qc" className="rounded text-warning underline decoration-warning/40 underline-offset-4 outline-none hover:decoration-warning focus-visible:ring-2 focus-visible:ring-ring">
+            <InlineCount value={n(counts?.qc.open)} width="w-8" /> order{counts?.qc.open === 1 ? "" : "s"} in New / QC
           </Link>
           ,{" "}
-          <Link href="/settings/data-health" className="rounded text-warning underline decoration-warning/40 underline-offset-4 outline-none hover:decoration-warning focus-visible:ring-2 focus-visible:ring-ring">
-            {word(staleSources.length).toLowerCase()} source{staleSources.length === 1 ? " is" : "s are"} stale
+          <Link href="/settings/integrations" className="rounded text-info underline decoration-info/40 underline-offset-4 outline-none hover:decoration-info focus-visible:ring-2 focus-visible:ring-ring">
+            <InlineCount value={attentionSources ? attentionSources.length : null} width="w-6" /> source{attentionSources?.length === 1 ? "" : "s"} need{attentionSources?.length === 1 ? "s" : ""} attention
           </Link>
-          , and yesterday&apos;s contribution is{" "}
-          <Link href="/reports/commercial-overview" className={cn("rounded underline underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-ring", contributionBelowPlan ? "text-destructive decoration-destructive/40 hover:decoration-destructive" : "text-success decoration-success/40 hover:decoration-success")}>
-            {contributionBelowPlan ? "below" : "on"} plan
+          , and{" "}
+          <Link href="/fulfilment" className="rounded underline decoration-foreground/30 underline-offset-4 outline-none hover:decoration-foreground focus-visible:ring-2 focus-visible:ring-ring">
+            <InlineCount value={n(counts?.courier.in_transit)} width="w-10" /> parcel{counts?.courier.in_transit === 1 ? "" : "s"} in transit
           </Link>
-          {contributionBelowPlan && (
-            <span className="text-muted-foreground">
-              {" "}
-              ({formatMoney(yActual, "MYR", { compact: true })} vs {formatMoney(yExpected, "MYR", { compact: true })})
-            </span>
-          )}
           .
         </p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Composed from live prototype state · viewing as {ROLE_LABELS[session.role]} · demo clock 23 Jul 2026, 09:00 MYT
+        <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span>Live mirror · viewing as {ROLE_LABELS[session.role]}</span>
+          {scopeLabel && <span>· scoped to {scopeLabel}</span>}
+          {counts && (
+            <>
+              <span>· counts as of</span>
+              <FreshnessBadge lastSuccessAt={counts.computed_at} slaMinutes={15} realClock />
+            </>
+          )}
         </p>
       </section>
 
-      {/* ---------- attention strip ---------- */}
-      <section aria-label="Needs attention" className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+      {q.error && !d && (
+        <ErrorState title="Could not load the live overview" description={q.error} retry={() => void q.reload()} />
+      )}
+      {q.error && d && (
+        <p className="rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          Refresh failed — showing the previous snapshot. {q.error}
+        </p>
+      )}
+
+      <section aria-label="Needs attention" className={cn("grid grid-cols-2 gap-3 xl:grid-cols-5", q.refreshing && "opacity-70")}>
         {attention.map((a) => (
           <Link
             key={a.label}
@@ -221,17 +211,12 @@ export default function CommandCenterPage() {
                   "size-4",
                   a.tone === "destructive" && "text-destructive",
                   a.tone === "warning" && "text-warning",
-                  a.tone === "ai" && "text-ai",
+                  a.tone === "neutral" && "text-muted-foreground",
                 )}
                 aria-hidden
               />
-              <span
-                className={cn(
-                  "tnum text-xl font-semibold",
-                  a.count === 0 && "text-muted-foreground",
-                )}
-              >
-                {a.count}
+              <span className={cn("tnum text-xl font-semibold", a.count === 0 && "text-muted-foreground")}>
+                <InlineCount value={a.count} width="w-8" />
               </span>
             </div>
             <div className="mt-1.5 text-sm font-medium">{a.label}</div>
@@ -240,158 +225,57 @@ export default function CommandCenterPage() {
         ))}
       </section>
 
-      {/* ---------- commercial scorecard: live mirror when signed in, demo otherwise ---------- */}
       <LiveScorecard
         fallback={
-          <section aria-label="Commercial scorecard" className="grid grid-cols-2 gap-3 lg:grid-cols-4 2xl:grid-cols-7">
-        <MetricCard
-          metricKey="net_revenue"
-          value={formatMoney(totals.netRevenue, "MYR", { compact: true })}
-          hint={session.dateRange === "today" ? "Today to 09:00" : `Last ${days} days`}
-        />
-        <MetricCard
-          metricKey="contribution"
-          value={formatMoney(totals.contribution, "MYR", { compact: true })}
-          delta={{
-            text: `${formatPercent(contributionVariance, 1, true)} vs plan`,
-            tone: contributionVariance >= 0 ? "success" : "destructive",
-          }}
-        />
-        <MetricCard metricKey="ad_spend" value={formatMoney(totals.adSpend, "MYR", { compact: true })} />
-        <MetricCard
-          metricKey="blended_mer"
-          value={totals.adSpend > 0 ? formatRatio(totals.netRevenue / totals.adSpend) : "—"}
-        />
-        <MetricCard metricKey="orders" value={totals.orders.toLocaleString()} />
-        <MetricCard
-          metricKey="new_customer_mix"
-          value={totals.orders > 0 ? formatPercent(totals.newCustomerOrders / totals.orders, 0) : "—"}
-        />
-            <MetricCard
-              metricKey="target_variance"
-              value={formatPercent(contributionVariance, 1, true)}
-              delta={{
-                text: contributionVariance >= 0 ? "on or above plan" : "below plan",
-                tone: contributionVariance >= 0 ? "success" : "destructive",
-              }}
-            />
-          </section>
+          <p className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+            The commercial scorecard needs the Supabase environment variables — this build has none.
+          </p>
         }
       />
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <ChartCard
-          title="Contribution vs plan by brand"
-          subtitle={
-            session.dateRange === "today"
-              ? "Today to 09:00 — partial day against a full-day plan"
-              : `Last ${days} days, actual vs plan`
-          }
-          right={<ChartLegend items={[{ label: "Plan", color: "var(--muted-foreground)" }, { label: "Actual", color: "var(--chart-1)" }]} />}
-        >
-          <PlanVsActualByBrand data={brandChart} currencyLabel="RM" />
-        </ChartCard>
-        <ChartCard
-          title="Daily contribution, 30 days"
-          subtitle="Contribution after marketing vs the Growth Engine daily expectation"
-          right={<ChartLegend items={[{ label: "Plan", color: "var(--muted-foreground)" }, { label: "Actual", color: "var(--chart-1)" }]} />}
-        >
-          <ContributionTrend data={trend} currencyLabel="RM" />
-        </ChartCard>
-      </div>
-
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        {/* ---------- my work ---------- */}
         <Card className="xl:col-span-1">
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
-            <CardTitle className="text-sm font-medium">
-              {mine.length > 0 ? `My work — ${persona.name}` : "Open work queue"}
-            </CardTitle>
+            <CardTitle className="text-sm font-medium">Open follow-ups</CardTitle>
             <Badge variant="outline" className="tnum text-xs">
-              {queue.length}
+              <InlineCount value={d ? (d.workItems ? d.workItems.length : "?") : null} width="w-4" />
             </Badge>
           </CardHeader>
           <CardContent className="space-y-0 divide-y">
-            {queue.slice(0, 6).map((w) => (
-              <div key={w.id} className="flex items-start gap-2.5 py-2.5 first:pt-0 last:pb-0">
-                <AlertTriangle className={cn("mt-0.5 size-3.5 shrink-0", SEVERITY_TONE[w.severity])} aria-hidden />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{w.title}</div>
-                  <div className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
-                    <span>{personaName(w.ownerId)}</span>
-                    <span>·</span>
-                    <span className="tnum">due {formatRelative(w.dueAt)}</span>
-                  </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">{w.nextAction}</div>
-                </div>
-                <Button asChild variant="ghost" size="sm" className="h-7 shrink-0 px-2 text-xs">
-                  <Link
-                    href={
-                      w.entityRef.startsWith("order:")
-                        ? `/orders/${w.entityRef.split(":")[1]}`
-                        : w.entityRef.startsWith("recommendation:")
-                          ? "/profit"
-                          : w.entityRef.startsWith("integration:")
-                            ? `/settings/integrations/${w.entityRef.split(":")[1]}`
-                            : "/command-center"
-                    }
-                  >
-                    Open
-                  </Link>
-                </Button>
-              </div>
-            ))}
-            {queue.length === 0 && (
+            {!d ? (
+              <p className="py-4 text-sm text-muted-foreground">Loading…</p>
+            ) : d.workItems === null ? (
+              <p className="py-4 text-sm text-muted-foreground">Follow-ups unavailable — the work-item query failed.</p>
+            ) : d.workItems.length === 0 ? (
               <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
                 <CheckCircle2 className="size-4 text-success" aria-hidden />
-                Nothing waiting on you.
+                No open follow-ups. Cohort workspaces create them.
               </div>
+            ) : (
+              d.workItems.map((w) => (
+                <div key={w.id} className="flex items-start gap-2.5 py-2.5 first:pt-0 last:pb-0">
+                  <AlertTriangle className={cn("mt-0.5 size-3.5 shrink-0", SEVERITY_TONE[w.severity] ?? "text-muted-foreground")} aria-hidden />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{w.title}</div>
+                    <div className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+                      <span>{workItemActionLabel(w.next_action)}</span>
+                      {w.due_at && (
+                        <>
+                          <span>·</span>
+                          <span className="tnum">due {formatDateTime(w.due_at)}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <Button asChild variant="ghost" size="sm" className="h-7 shrink-0 px-2 text-xs">
+                    <Link href={workItemHref(w)}>Open</Link>
+                  </Button>
+                </div>
+              ))
             )}
           </CardContent>
         </Card>
 
-        {/* ---------- ranked recommendations ---------- */}
-        <Card className="xl:col-span-1">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0">
-            <CardTitle className="flex items-center gap-1.5 text-sm font-medium">
-              <Sparkles className="size-4 text-ai" aria-hidden />
-              Growth recommendations
-            </CardTitle>
-            <Button asChild variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs">
-              <Link href="/profit">
-                All <ArrowRight className="size-3" aria-hidden />
-              </Link>
-            </Button>
-          </CardHeader>
-          <CardContent className="space-y-0 divide-y">
-            {[...pending]
-              .sort((a, b) => b.expectedContributionImpact - a.expectedContributionImpact)
-              .slice(0, 4)
-              .map((r) => (
-                <Link key={r.id} href="/profit" className="block py-2.5 outline-none first:pt-0 last:pb-0 focus-visible:ring-2 focus-visible:ring-ring">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="truncate text-sm font-medium">{r.title}</span>
-                    <span className="tnum shrink-0 text-sm font-semibold text-success">
-                      +{formatMoney(r.expectedContributionImpact, r.currency, { compact: true })}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-                    <span className="tnum">{Math.round(r.confidence * 100)}% confidence</span>
-                    <span>·</span>
-                    <span className={cn(r.risk === "high" ? "text-destructive" : r.risk === "medium" ? "text-warning" : undefined)}>
-                      {r.risk} risk
-                    </span>
-                    <span>·</span>
-                    <span>{personaName(r.ownerId)}</span>
-                    <span>·</span>
-                    <span className="tnum">expires {formatRelative(r.expiresAt)}</span>
-                  </div>
-                </Link>
-              ))}
-          </CardContent>
-        </Card>
-
-        {/* ---------- data trust ---------- */}
         <Card className="xl:col-span-1">
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-sm font-medium">Data trust</CardTitle>
@@ -403,46 +287,80 @@ export default function CommandCenterPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Source coverage</span>
+              <span className="text-muted-foreground">Configured sources fresh</span>
               <span className="tnum font-medium">
-                {healthy}/{integrations.length} healthy
+                {d ? `${healthy}/${configured.length}` : <InlineCount value={null} width="w-10" />}
               </span>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Reconciliation</span>
-              <span className={cn("tnum font-medium", reconciliationIssues > 0 && "text-warning")}>
-                {reconciliationIssues > 0 ? `${reconciliationIssues} open exceptions` : "clean"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Unmapped records</span>
-              <span className={cn("tnum font-medium", unmappedCount > 0 && "text-warning")}>
-                {unmappedCount}
+              <span className="text-muted-foreground">Pending setup</span>
+              <span className="tnum font-medium text-muted-foreground">
+                {d ? graded.length - configured.length : <InlineCount value={null} width="w-6" />}
               </span>
             </div>
             <div className="space-y-1.5 border-t pt-2">
-              {[...integrations]
-                .sort((a, b) => (a.status === "stale" ? -1 : 1) - (b.status === "stale" ? -1 : 1))
+              {(attentionSources && attentionSources.length > 0 ? attentionSources : configured)
                 .slice(0, 5)
                 .map((i) => (
                   <div key={i.id} className="flex items-center justify-between gap-2 text-xs">
                     <Link href={`/settings/integrations/${i.id}`} className="truncate text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
                       {i.name}
                     </Link>
-                    <FreshnessBadge lastSuccessAt={i.lastSuccessAt} slaMinutes={i.freshnessSlaMinutes} />
+                    {i.status === "degraded" || i.status === "disconnected" ? (
+                      <span className={cn("rounded-full border px-2 py-0.5 text-[11px]", statusMeta(i.status).className)}>{statusMeta(i.status).label}</span>
+                    ) : (
+                      <FreshnessBadge lastSuccessAt={i.last_success_at} slaMinutes={i.freshness_sla_minutes} realClock />
+                    )}
                   </div>
                 ))}
+              {d && configured.length === 0 && (
+                <p className="text-xs text-muted-foreground">No configured sources yet.</p>
+              )}
             </div>
           </CardContent>
         </Card>
-      </div>
 
-      {/* brand scope note */}
-      {session.brandId !== "all" && (
-        <p className="text-xs text-muted-foreground">
-          Scoped to {brandName(session.brandId)} — switch to “All brands” in the top bar for the full picture.
-        </p>
-      )}
+        <Card className="xl:col-span-1">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardTitle className="text-sm font-medium">Courier shadow gate</CardTitle>
+            <Button asChild variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs">
+              <Link href="/settings/automations">
+                Automations <ArrowRight className="size-3" aria-hidden />
+              </Link>
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            {!d ? (
+              <p className="py-2 text-muted-foreground">Loading…</p>
+            ) : d.shadow === null ? (
+              <p className="py-2 text-muted-foreground">Shadow report unavailable.</p>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Coverage, 14 days</span>
+                  <span className={cn("tnum font-medium", (d.shadow.coverage_pct ?? 0) >= 99 ? "text-success" : "text-warning")}>
+                    {d.shadow.coverage_pct === null ? "—" : `${d.shadow.coverage_pct.toFixed(1)}%`}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Matched / mismatched / unmatched</span>
+                  <span className="tnum font-medium">
+                    {d.shadow.totals.matched ?? 0} / {d.shadow.totals.mismatched ?? 0} / {d.shadow.totals.unmatched ?? 0}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Open payloads</span>
+                  <span className="tnum font-medium">{d.shadow.open}</span>
+                </div>
+                <p className="border-t pt-2 text-[11px] text-muted-foreground">
+                  ADR-0006 exit: ≥99% agreement for two consecutive weeks before any consignment is booked by Fullkit.
+                  Fighter books today.
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </PageBody>
   );
 }

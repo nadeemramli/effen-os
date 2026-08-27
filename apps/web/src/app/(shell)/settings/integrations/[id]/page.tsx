@@ -2,129 +2,148 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useMemo, useState } from "react";
-import { ArrowLeft, KeyRound, RefreshCcw, ShieldAlert } from "lucide-react";
+import { useState } from "react";
+import { ArrowLeft, Loader2, RefreshCcw, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { LiveGuard } from "@/components/auth/live-guard";
 import { PageBody } from "@/components/shell/page-header";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
-import { EmptyState } from "@/components/states";
-import { useRepo } from "@/hooks/use-repo";
+import { EmptyState, ErrorState, RefreshChip, SkeletonCards, SkeletonTable } from "@/components/states";
+import { useLiveQuery } from "@/hooks/use-live-query";
 import { usePermission } from "@/hooks/use-session";
+import { describeConfig, setupHrefFor, slaLabel, statusMeta } from "@/lib/domain/integrations";
 import { RouteGuard } from "@/lib/rbac/guard";
-import { useAppStore } from "@/lib/store/provider";
-import { formatDateTime, formatRelative } from "@/lib/utils/dates";
+import {
+  fetchIntegrationConnection,
+  fetchSyncRunsFor,
+  triggerSync,
+  type LiveIntegration,
+  type LiveSyncRun,
+} from "@/lib/supabase/live";
+import { formatDateTime } from "@/lib/utils/dates";
 import { cn } from "@/lib/utils";
 
+/**
+ * One connection from the live register with its reason-coded sync history.
+ * The only action here is a manual WooCommerce sync (the same edge function
+ * the 15-minute job calls); every other provider is configured on its Setup
+ * surface and has no browser-triggered run.
+ */
 function IntegrationDetailInner() {
   const params = useParams<{ id: string }>();
-  const repo = useRepo();
+  const id = Number(params.id);
+  const validId = Number.isInteger(id) && id > 0;
   const canRetry = usePermission("integrations.retry");
+  const canConnect = usePermission("integrations.connect");
+  const [syncing, setSyncing] = useState(false);
 
-  const integration = useAppStore((s) => s.integrations.find((i) => i.id === params.id));
-  const allRuns = useAppStore((s) => s.syncRuns);
-  const runs = useMemo(
-    () =>
-      allRuns
-        .filter((r) => r.integrationId === params.id)
-        .sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1)),
-    [allRuns, params.id],
-  );
-  const allDqIssues = useAppStore((s) => s.dqIssues);
-  const dqIssues = useMemo(
-    () => allDqIssues.filter((i) => i.integrationId === params.id && i.status !== "resolved"),
-    [allDqIssues, params.id],
-  );
-  const brands = useAppStore((s) => s.brands);
-  const personas = useAppStore((s) => s.personas);
-  const [reauthOpen, setReauthOpen] = useState(false);
+  const q = useLiveQuery(async () => {
+    if (!validId) return { connection: null as LiveIntegration | null, runs: [] as LiveSyncRun[] };
+    const [connection, runs] = await Promise.all([fetchIntegrationConnection(id), fetchSyncRunsFor(id, 50)]);
+    return { connection, runs };
+  }, [id, validId]);
 
+  if (q.error && !q.data) {
+    return (
+      <PageBody className="max-w-3xl">
+        <ErrorState title="Could not load this connection" description={q.error} retry={() => void q.reload()} />
+      </PageBody>
+    );
+  }
+  if (q.loading) {
+    return (
+      <PageBody className="max-w-5xl">
+        <SkeletonCards count={3} />
+        <SkeletonTable rows={5} cols={6} />
+      </PageBody>
+    );
+  }
+  const integration = q.data?.connection ?? null;
+  const runs = q.data?.runs ?? [];
   if (!integration) {
     return (
       <PageBody className="max-w-3xl">
         <EmptyState
           title="Connection not found"
-          description="No integration with this ID exists in the prototype."
+          description={`No connection with id ${params.id} exists in the live register.`}
           action={{ label: "All integrations", href: "/settings/integrations" }}
         />
       </PageBody>
     );
   }
 
-  const owner = personas.find((p) => p.id === integration.ownerId);
+  const status = statusMeta(integration.status);
+  const setupHref = setupHrefFor(integration.provider);
+  const configRows = describeConfig(integration.config);
+  const isWoo = integration.provider === "WooCommerce";
+
+  async function handleSync() {
+    if (!integration) return;
+    setSyncing(true);
+    try {
+      const result = (await triggerSync(integration.id)) as { results?: Record<string, unknown>[] };
+      const summary = (result.results ?? [])
+        .map((r) => `${r.connection}: ${r.success ? `${r.written} orders` : (r.skipped ?? r.failed)}`)
+        .join(" · ");
+      toast.info("Sync finished", { description: summary || "No pages attempted." });
+      await q.reload();
+    } catch (e) {
+      toast.error("Sync failed to start", { description: (e as Error).message });
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   return (
     <PageBody className="max-w-5xl">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
             <Button asChild variant="ghost" size="icon" className="size-7" aria-label="Back to integrations">
               <Link href="/settings/integrations"><ArrowLeft className="size-4" /></Link>
             </Button>
-            <h1 className="text-lg font-semibold tracking-tight">{integration.name}</h1>
-            <Badge
-              variant="outline"
-              className={cn(
-                "capitalize",
-                integration.status === "healthy" && "border-success/30 bg-success/10 text-success",
-                integration.status === "degraded" && "border-warning/30 bg-warning/10 text-warning",
-                integration.status === "stale" && "border-destructive/30 bg-destructive/10 text-destructive",
-              )}
-            >
-              {integration.status}
-            </Badge>
+            <h1 className="truncate text-lg font-semibold tracking-tight">{integration.name}</h1>
+            <Badge variant="outline" className={cn("shrink-0", status.className)}>{status.label}</Badge>
+            {q.refreshing && <RefreshChip />}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            {integration.provider} · {integration.environment} · {integration.direction.replace("_", " + ")} · owner {owner?.name}
+            {integration.provider} · {integration.environment} · {integration.direction.replace("_", " + ")} · {integration.category}
           </p>
         </div>
         <div className="flex gap-2">
-          {integration.status === "stale" && integration.id === "INT-shopee" && (
-            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setReauthOpen(true)}>
-              <KeyRound className="size-3.5" aria-hidden /> Re-authorize
+          {setupHref && canConnect && (
+            <Button asChild size="sm" variant="outline" className="gap-1.5">
+              <Link href={setupHref}><Settings2 className="size-3.5" aria-hidden /> Configure</Link>
             </Button>
           )}
-          {canRetry ? (
-            <Button
-              size="sm"
-              className="gap-1.5"
-              onClick={async () => {
-                await repo.retrySync(integration.id);
-                const failsAgain = integration.id === "INT-shopee";
-                if (failsAgain) {
-                  toast.error("Retry failed — credentials expired", { description: "Re-authorization by the seller-centre owner is required. The failed run is recorded below." });
-                } else {
-                  toast.success("Sync completed", { description: "Checkpoint advanced; freshness updated." });
-                }
-              }}
-            >
-              <RefreshCcw className="size-3.5" aria-hidden /> Retry sync
-            </Button>
-          ) : (
-            <Button size="sm" variant="outline" disabled title="Requires Operations or HQ role">
-              Retry sync — Operations only
-            </Button>
-          )}
+          {isWoo &&
+            (canRetry ? (
+              <Button size="sm" className="gap-1.5" disabled={syncing || integration.status === "pending_setup"} onClick={() => void handleSync()}>
+                {syncing ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <RefreshCcw className="size-3.5" aria-hidden />}
+                Sync now
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" disabled title="Requires Operations or HQ role">
+                Sync now — Operations only
+              </Button>
+            ))}
         </div>
       </div>
 
       {integration.notes && (
-        <p className={cn(
-          "rounded-md border px-3 py-2 text-sm",
-          integration.status === "stale"
-            ? "border-destructive/25 bg-destructive/10 text-destructive"
-            : "border-border bg-muted/40 text-muted-foreground",
-        )}>
+        <p
+          className={cn(
+            "rounded-md border px-3 py-2 text-sm",
+            integration.status === "stale" || integration.status === "disconnected"
+              ? "border-destructive/25 bg-destructive/10 text-destructive"
+              : integration.status === "degraded"
+                ? "border-warning/25 bg-warning/10 text-warning"
+                : "border-border bg-muted/40 text-muted-foreground",
+          )}
+        >
           {integration.notes}
         </p>
       )}
@@ -133,22 +152,24 @@ function IntegrationDetailInner() {
         <Card>
           <CardHeader><CardTitle className="text-sm font-medium">Connection</CardTitle></CardHeader>
           <CardContent className="space-y-1.5 text-sm">
-            <div className="flex justify-between"><span className="text-muted-foreground">Brand scope</span>
-              <span className="text-right">{integration.brandScope.length === 0 ? "Workspace-wide" : integration.brandScope.map((b) => brands.find((x) => x.id === b)?.name.replace(" (Demo)", "")).join(", ")}</span>
-            </div>
             <div className="flex justify-between"><span className="text-muted-foreground">Environment</span><span>{integration.environment}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Direction</span><span className="capitalize">{integration.direction.replace("_", " + ")}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Freshness SLA</span>
-              <span className="tnum">{integration.freshnessSlaMinutes >= 60 ? `${Math.round(integration.freshnessSlaMinutes / 60)}h` : `${integration.freshnessSlaMinutes}m`}</span>
-            </div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Freshness SLA</span><span className="tnum">{slaLabel(integration.freshness_sla_minutes)}</span></div>
             <div className="flex items-center justify-between"><span className="text-muted-foreground">Last success</span>
-              <FreshnessBadge lastSuccessAt={integration.lastSuccessAt} slaMinutes={integration.freshnessSlaMinutes} />
+              {integration.last_success_at || integration.status !== "pending_setup" ? (
+                <FreshnessBadge lastSuccessAt={integration.last_success_at} slaMinutes={integration.freshness_sla_minutes} realClock />
+              ) : (
+                <span className="text-xs text-muted-foreground">not connected</span>
+              )}
             </div>
             <div className="flex justify-between"><span className="text-muted-foreground">Last failure</span>
-              <span className="tnum">{integration.lastFailureAt ? formatRelative(integration.lastFailureAt) : "none recorded"}</span>
+              <span className="tnum">{integration.last_failure_at ? formatDateTime(integration.last_failure_at) : "none recorded"}</span>
             </div>
             <div className="flex justify-between"><span className="text-muted-foreground">Credential rotation</span>
-              <span className="tnum">{integration.credentialRotatesAt ? formatRelative(integration.credentialRotatesAt) : "n/a"}</span>
+              <span className="tnum">{integration.credential_rotates_at ? formatDateTime(integration.credential_rotates_at) : "not scheduled"}</span>
+            </div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Secret</span>
+              <span className="text-xs">{integration.config && "secret_ref" in integration.config ? "in Vault" : integration.status === "pending_setup" ? "not stored" : "server-side"}</span>
             </div>
           </CardContent>
         </Card>
@@ -159,7 +180,7 @@ function IntegrationDetailInner() {
             <div>
               <div className="mb-1 text-xs font-medium text-muted-foreground">Read</div>
               <div className="flex flex-wrap gap-1">
-                {integration.readScopes.length > 0 ? integration.readScopes.map((s) => (
+                {integration.read_scopes.length > 0 ? integration.read_scopes.map((s) => (
                   <span key={s} className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">{s}</span>
                 )) : <span className="text-xs text-muted-foreground">none</span>}
               </div>
@@ -167,13 +188,13 @@ function IntegrationDetailInner() {
             <div>
               <div className="mb-1 text-xs font-medium text-muted-foreground">Write</div>
               <div className="flex flex-wrap gap-1">
-                {integration.writeScopes.length > 0 ? integration.writeScopes.map((s) => (
+                {integration.write_scopes.length > 0 ? integration.write_scopes.map((s) => (
                   <span key={s} className="rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] text-warning">{s}</span>
                 )) : <span className="text-xs text-muted-foreground">none — read-only connection</span>}
               </div>
             </div>
             <p className="border-t pt-2 text-[11px] text-muted-foreground">
-              Credentials live in the server-side secrets manager. Fullkit never displays tokens or keys.
+              Credentials live in Supabase Vault. Fullkit never displays tokens or keys.
             </p>
           </CardContent>
         </Card>
@@ -183,18 +204,19 @@ function IntegrationDetailInner() {
           <CardContent className="space-y-1.5 text-sm">
             <div>
               <div className="text-xs text-muted-foreground">Checkpoint</div>
-              <div className="tnum mt-0.5 text-xs">{integration.syncCheckpoint ?? "—"}</div>
+              <div className="tnum mt-0.5 break-all text-xs">{integration.sync_checkpoint ?? "—"}</div>
             </div>
             <div className="flex justify-between pt-1"><span className="text-muted-foreground">Errors (24h)</span>
-              <span className={cn("tnum", integration.errorCount24h > 0 && "text-warning")}>{integration.errorCount24h}</span>
+              <span className={cn("tnum", integration.error_count_24h > 0 && "text-warning")}>{integration.error_count_24h}</span>
             </div>
-            {dqIssues.length > 0 && (
+            {configRows.length > 0 && (
               <div className="space-y-1 border-t pt-2">
-                <div className="text-xs font-medium text-muted-foreground">Open data-quality issues</div>
-                {dqIssues.map((i) => (
-                  <Link key={i.id} href="/settings/data-health" className="flex items-start gap-1.5 text-xs text-warning underline-offset-2 hover:underline">
-                    <ShieldAlert className="mt-0.5 size-3 shrink-0" aria-hidden /> {i.id}: {i.title}
-                  </Link>
+                <div className="text-xs font-medium text-muted-foreground">Configuration</div>
+                {configRows.map((c) => (
+                  <div key={c.key} className="flex justify-between gap-2 text-xs">
+                    <span className="text-muted-foreground">{c.key}</span>
+                    <span className="tnum truncate" title={c.value}>{c.value}</span>
+                  </div>
                 ))}
               </div>
             )}
@@ -205,92 +227,70 @@ function IntegrationDetailInner() {
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium">Sync history</CardTitle>
-          <p className="text-xs text-muted-foreground">Reason-coded — a failed run never advances the checkpoint.</p>
+          <p className="text-xs text-muted-foreground">
+            Last {runs.length} runs, reason-coded — a failed run never advances the checkpoint.
+          </p>
         </CardHeader>
         <CardContent>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b text-left text-xs text-muted-foreground">
-                <th className="pb-2 font-medium">Started</th>
-                <th className="pb-2 font-medium">Status</th>
-                <th className="pb-2 text-right font-medium">Read</th>
-                <th className="pb-2 text-right font-medium">Written</th>
-                <th className="pb-2 text-right font-medium">Errors</th>
-                <th className="pb-2 font-medium">Reason</th>
-                <th className="pb-2 font-medium">Message</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((r) => (
-                <tr key={r.id} className="border-b last:border-0">
-                  <td className="tnum py-2 pr-3 text-xs">{formatDateTime(r.startedAt)}</td>
-                  <td className="py-2 pr-3">
-                    <span className={cn(
-                      "text-xs font-medium capitalize",
-                      r.status === "success" && "text-success",
-                      r.status === "partial" && "text-warning",
-                      r.status === "failed" && "text-destructive",
-                    )}>
-                      {r.status}
-                    </span>
-                  </td>
-                  <td className="tnum py-2 pr-3 text-right text-xs">{r.recordsRead.toLocaleString()}</td>
-                  <td className="tnum py-2 pr-3 text-right text-xs">{r.recordsWritten.toLocaleString()}</td>
-                  <td className={cn("tnum py-2 pr-3 text-right text-xs", r.errorCount > 0 && "text-warning")}>{r.errorCount}</td>
-                  <td className="py-2 pr-3">
-                    {r.reasonCode ? (
-                      <span className="rounded border border-warning/25 bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] text-warning">{r.reasonCode}</span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="max-w-64 py-2 text-xs text-muted-foreground">{r.message}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {runs.length === 0 ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">
+              No sync runs recorded for this connection{isWoo ? "" : " — this provider is ingested by webhook or scheduled job, not a per-connection sync"}.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="pb-2 font-medium">Started</th>
+                    <th className="pb-2 font-medium">Status</th>
+                    <th className="pb-2 text-right font-medium">Read</th>
+                    <th className="pb-2 text-right font-medium">Written</th>
+                    <th className="pb-2 font-medium">Reason</th>
+                    <th className="pb-2 font-medium">Message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((r) => (
+                    <tr key={r.id} className="border-b last:border-0">
+                      <td className="tnum py-2 pr-3 text-xs">{formatDateTime(r.started_at)}</td>
+                      <td className="py-2 pr-3">
+                        <span className={cn(
+                          "text-xs font-medium capitalize",
+                          r.status === "success" && "text-success",
+                          r.status === "partial" && "text-warning",
+                          r.status === "failed" && "text-destructive",
+                        )}>
+                          {r.status}
+                        </span>
+                      </td>
+                      <td className="tnum py-2 pr-3 text-right text-xs">{Number(r.records_read ?? 0).toLocaleString()}</td>
+                      <td className="tnum py-2 pr-3 text-right text-xs">{Number(r.records_written ?? 0).toLocaleString()}</td>
+                      <td className="py-2 pr-3">
+                        {r.reason_code ? (
+                          <span className="rounded border border-warning/25 bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] text-warning">{r.reason_code}</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="max-w-80 py-2 text-xs text-muted-foreground">{r.message ?? ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
-
-      {/* re-authorize explainer */}
-      <Dialog open={reauthOpen} onOpenChange={setReauthOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Re-authorize Shopee MY</DialogTitle>
-            <DialogDescription asChild>
-              <div className="space-y-2 text-sm">
-                <p>
-                  Shopee tokens can only be re-issued by the seller-centre <span className="font-medium text-foreground">owner account</span> via
-                  Shopee&apos;s own consent screen — Fullkit cannot do this on the owner&apos;s behalf, in any mode.
-                </p>
-                <p className="text-muted-foreground">
-                  In production this button sends the owner (Jun Wei) a secure re-consent link and tracks completion.
-                  In this demo, no external call is made.
-                </p>
-              </div>
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setReauthOpen(false)}>Close</Button>
-            <Button
-              onClick={() => {
-                setReauthOpen(false);
-                toast.info("Re-consent link queued for the connection owner", { description: "Tracked as a work item for Jun Wei (Demo)." });
-              }}
-            >
-              Send re-consent link
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </PageBody>
   );
 }
 
 export default function IntegrationDetailPage() {
   return (
-    <RouteGuard permission="integrations.view">
-      <IntegrationDetailInner />
-    </RouteGuard>
+    <LiveGuard>
+      <RouteGuard permission="integrations.view">
+        <IntegrationDetailInner />
+      </RouteGuard>
+    </LiveGuard>
   );
 }

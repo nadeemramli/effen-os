@@ -43,6 +43,9 @@ const QUALITY_TONE: Record<string, string> = {
 export function MetricCard({ metricKey, label, value, delta, hint, className, info }: MetricCardProps) {
   const def = useAppStore((s) => s.metricDefinitions.find((m) => m.key === metricKey));
   const integrations = useAppStore((s) => s.integrations);
+  // With a live session the seeded source list and its demo-clock freshness
+  // would be fiction; the definition, grain and caveat still apply.
+  const isLive = useAppStore((s) => s.session.authEmail !== null);
 
   return (
     <Card className={cn("gap-1.5 px-4 py-3", className)}>
@@ -87,6 +90,8 @@ export function MetricCard({ metricKey, label, value, delta, hint, className, in
                   <span className="text-muted-foreground">Grain: </span>
                   {def.grain}
                 </div>
+                {!isLive && (
+                  <>
                 <div className="text-xs">
                   <span className="text-muted-foreground">Sources: </span>
                   {def.sourceIntegrationIds
@@ -103,6 +108,8 @@ export function MetricCard({ metricKey, label, value, delta, hint, className, in
                     return latest ? formatRelative(latest) : "n/a";
                   })()}
                 </div>
+                  </>
+                )}
                 {def.caveat && (
                   <p className="rounded-md border border-warning/25 bg-warning/10 px-2 py-1.5 text-xs text-warning">
                     {def.caveat}

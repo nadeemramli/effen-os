@@ -11,7 +11,7 @@ import { ChartLegend, SpendRevenueTrend } from "@/components/charts/commercial-c
 import { LiveAdsPanel } from "@/components/metrics/live-ads-panel";
 import { LiveCampaignExplorer } from "@/components/metrics/live-campaign-explorer";
 import { MetricCard, MetricCardSkeleton } from "@/components/metrics/metric-card";
-import { SkeletonTable } from "@/components/states";
+import { EmptyState, ErrorState, SkeletonTable } from "@/components/states";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { MoneyCell } from "@/components/tables/cells";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
@@ -63,6 +63,7 @@ function MarketingInner() {
   // "loading" renders skeletons, "error" keeps demo visible behind a banner.
   const [live, setLive] = useState<
     | { kind: "demo" }
+    | { kind: "empty" }
     | { kind: "loading" }
     | { kind: "ready"; ads: GrowthAds; liveBrands: LiveBrand[]; contribution: LiveContribution }
     | { kind: "error"; message: string }
@@ -106,8 +107,8 @@ function MarketingInner() {
           ),
         ]);
         if (cancelled) return;
-        // No warehouse data at all is a legitimate demo fallback, not an error.
-        setLive(ads ? { kind: "ready", ads, liveBrands, contribution } : { kind: "demo" });
+        // A signed-in session never sees demo numbers: an empty warehouse is its own state.
+        setLive(ads ? { kind: "ready", ads, liveBrands, contribution } : { kind: "empty" });
       } catch (e) {
         if (!cancelled) setLive({ kind: "error", message: (e as Error).message });
       }
@@ -311,6 +312,27 @@ function MarketingInner() {
     return { rows, mix };
   }, [growth, liveMarkets, bounds.from, bounds.to, platformFilter]);
 
+  if (live.kind === "empty" || live.kind === "error") {
+    return (
+      <PageBody className="max-w-none">
+        <PageHeader
+          title="Marketing"
+          description="Consolidated ads view: warehouse spend and platform attribution beside Fullkit order truth. Accounts are connected in Airbyte; the register mirrors them."
+        />
+        {live.kind === "error" ? (
+          <ErrorState title="Live ads mirror unavailable" description={live.message} retry={() => setRetryKey((k) => k + 1)} />
+        ) : (
+          <EmptyState
+            title="No warehouse ad data yet"
+            description="The ads mirror returned no facts for any connected account. Check the Airbyte sources and the mart-sync job before reading anything here."
+            action={{ label: "Automations", href: "/settings/automations" }}
+          />
+        )}
+        <LiveCampaignExplorer platforms={platformFilter} fallback={null} />
+      </PageBody>
+    );
+  }
+
   return (
     <PageBody className="max-w-none">
       {/* Ad accounts are connected in Airbyte (one OAuth source per account);
@@ -320,18 +342,6 @@ function MarketingInner() {
         description="Consolidated ads view — warehouse spend and platform attribution beside Fullkit order truth. Accounts are connected in Airbyte; the register mirrors them."
       />
 
-      {live.kind === "error" && (
-        <p className="flex items-center justify-between gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
-          <span>Live ads mirror unavailable — showing demo data. {live.message}</span>
-          <button
-            type="button"
-            className="shrink-0 font-medium underline-offset-2 hover:underline"
-            onClick={() => setRetryKey((k) => k + 1)}
-          >
-            Retry
-          </button>
-        </p>
-      )}
 
       {/* platform scope + focused-brand chip (live mode) */}
       {growth && (

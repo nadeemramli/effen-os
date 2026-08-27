@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { SkeletonTable } from "@/components/states";
+import { EmptyState, ErrorState, SkeletonTable } from "@/components/states";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
 import { useAppStore } from "@/lib/store/provider";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
@@ -15,8 +15,9 @@ import { cn } from "@/lib/utils";
  * rows from ad_daily_facts with dbt brand attribution, targeting-geo market,
  * and the owning ad account from the register. Consolidates ALL connected
  * accounts and platforms; the page's brand / market / platform scopes filter
- * it. Renders its own card when live data exists; otherwise renders the
- * fallback (the demo explorer) so demo mode is unaffected.
+ * it. The seeded fallback renders only on builds without Supabase — with a
+ * session, an empty warehouse, an RPC failure or a scope that matches
+ * nothing all say so explicitly instead of showing demo campaigns.
  */
 
 interface CampaignRow {
@@ -41,6 +42,13 @@ interface GrowthCampaigns {
   rows: CampaignRow[];
 }
 
+type State =
+  | "checking"
+  | "unconfigured"
+  | "signed-out"
+  | { error: string }
+  | { campaigns: GrowthCampaigns; brands: LiveBrand[] };
+
 const LIMIT_CHOICES = [5, 10, 25, 0] as const; // 0 = all fetched
 
 export function LiveCampaignExplorer({
@@ -51,12 +59,8 @@ export function LiveCampaignExplorer({
   /** Selected platform filter from the page; empty = all platforms. */
   platforms: string[];
 }) {
-  // "checking" renders a skeleton (a live session may be about to supply
-  // data); "absent" is the resolved no-live-data case where the demo
-  // fallback is honest.
-  const [state, setState] = useState<
-    "checking" | "absent" | { campaigns: GrowthCampaigns; brands: LiveBrand[] }
-  >(() => (isSupabaseConfigured() ? "checking" : "absent"));
+  const [state, setState] = useState<State>(() => (isSupabaseConfigured() ? "checking" : "unconfigured"));
+  const [retryKey, setRetryKey] = useState(0);
   const [limit, setLimit] = useState<number>(10);
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
@@ -66,7 +70,7 @@ export function LiveCampaignExplorer({
     void (async () => {
       const { data: session } = await getSupabase().auth.getSession();
       if (!session.session) {
-        setState("absent");
+        setState("signed-out");
         return;
       }
       try {
@@ -74,32 +78,53 @@ export function LiveCampaignExplorer({
           getSupabase().rpc("live_growth_campaigns", { p_days: 30, p_limit: 200 }),
           fetchLiveBrands(),
         ]);
-        const campaigns = res.data as GrowthCampaigns | null;
-        setState(
-          !res.error && campaigns && campaigns.rows.length > 0 ? { campaigns, brands } : "absent",
-        );
+        if (res.error) throw new Error(res.error.message);
+        const campaigns = (res.data as GrowthCampaigns | null) ?? { as_of: null, window_days: 30, total_campaigns: 0, rows: [] };
+        setState({ campaigns, brands });
       } catch (e) {
-        // Fallback (demo explorer) renders; never a blank card.
-        console.warn("growth campaigns fetch failed", e);
-        setState("absent");
+        setState({ error: (e as Error).message });
       }
     })();
-  }, []);
+  }, [retryKey]);
 
-  if (state === "checking") {
-    return (
-      <Card role="status" aria-label="Loading campaign explorer">
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">Campaign explorer</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <SkeletonTable rows={6} cols={7} framed={false} />
-        </CardContent>
-      </Card>
+  if (state === "unconfigured") return <>{fallback}</>;
+
+  const frame = (body: React.ReactNode, label = "Campaign explorer") => (
+    <Card role={state === "checking" ? "status" : undefined} aria-label={label}>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">{label}</CardTitle>
+      </CardHeader>
+      <CardContent>{body}</CardContent>
+    </Card>
+  );
+
+  if (state === "checking") return frame(<SkeletonTable rows={6} cols={7} framed={false} />, "Loading campaign explorer");
+  if (state === "signed-out") {
+    return frame(<p className="text-sm text-muted-foreground">Sign in to read the warehouse campaign explorer.</p>);
+  }
+  if ("error" in state) {
+    return frame(
+      <ErrorState
+        title="Campaign explorer unavailable"
+        description={state.error}
+        retry={() => {
+          setState("checking");
+          setRetryKey((k) => k + 1);
+        }}
+      />,
     );
   }
-  if (state === "absent") return <>{fallback}</>;
+
   const { campaigns, brands } = state;
+  if (campaigns.rows.length === 0) {
+    return frame(
+      <EmptyState
+        title="No campaigns in the warehouse"
+        description={`No ad_daily_facts rows in the last ${campaigns.window_days} days. Check the Airbyte sources and the mart-sync job in Automations.`}
+        action={{ label: "Automations", href: "/settings/automations" }}
+      />,
+    );
+  }
 
   const scopeSlug = liveBrandId === null ? null : (brands.find((b) => b.id === liveBrandId)?.slug ?? null);
   const scoped = campaigns.rows.filter(
@@ -108,7 +133,14 @@ export function LiveCampaignExplorer({
       (liveMarkets.length === 0 || liveMarkets.includes(r.market ?? "")) &&
       (platforms.length === 0 || platforms.includes(r.platform)),
   );
-  if (scoped.length === 0) return <>{fallback}</>;
+  if (scoped.length === 0) {
+    return frame(
+      <EmptyState
+        title="No campaigns match this scope"
+        description={`${campaigns.total_campaigns.toLocaleString()} campaigns ran in the last ${campaigns.window_days} days, none under the selected brand, market and platform filters.`}
+      />,
+    );
+  }
 
   const rows = limit === 0 ? scoped : scoped.slice(0, limit);
   const brandLabel = (slug: string | null) =>

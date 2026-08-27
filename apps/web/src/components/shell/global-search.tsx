@@ -11,7 +11,9 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import { useLiveQuery } from "@/hooks/use-live-query";
 import { useAppStore } from "@/lib/store/provider";
+import { fetchIntegrationConnections, type LiveIntegration } from "@/lib/supabase/live";
 
 interface Props {
   open: boolean;
@@ -25,6 +27,12 @@ export function GlobalSearch({ open, onOpenChange }: Props) {
   const products = useAppStore((s) => s.products);
   const campaigns = useAppStore((s) => s.campaigns);
   const integrations = useAppStore((s) => s.integrations);
+  // Live register when signed in (seed ids would 404 on the live detail page).
+  const isLive = useAppStore((s) => s.session.authEmail !== null);
+  const liveIntegrations = useLiveQuery<LiveIntegration[]>(
+    () => (isLive && open ? fetchIntegrationConnections() : Promise.resolve([])),
+    [isLive, open],
+  );
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -118,17 +126,29 @@ export function GlobalSearch({ open, onOpenChange }: Props) {
           ))}
         </CommandGroup>
         <CommandGroup heading="Integrations">
-          {integrations.map((i) => (
-            <CommandItem
-              key={i.id}
-              value={`${i.id} ${i.name} ${i.provider}`}
-              onSelect={() => go(`/settings/integrations/${i.id}`)}
-            >
-              <Cable className="size-4" aria-hidden />
-              <span>{i.name}</span>
-              <span className="text-muted-foreground">{i.status}</span>
-            </CommandItem>
-          ))}
+          {isLive
+            ? (liveIntegrations.data ?? []).map((i) => (
+                <CommandItem
+                  key={i.id}
+                  value={`  `}
+                  onSelect={() => go(`/settings/integrations/`)}
+                >
+                  <Cable className="size-4" aria-hidden />
+                  <span>{i.name}</span>
+                  <span className="text-muted-foreground">{i.status.replace("_", " ")}</span>
+                </CommandItem>
+              ))
+            : integrations.map((i) => (
+                <CommandItem
+                  key={i.id}
+                  value={`  `}
+                  onSelect={() => go(`/settings/integrations/`)}
+                >
+                  <Cable className="size-4" aria-hidden />
+                  <span>{i.name}</span>
+                  <span className="text-muted-foreground">{i.status}</span>
+                </CommandItem>
+              ))}
         </CommandGroup>
       </CommandList>
     </CommandDialog>

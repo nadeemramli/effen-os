@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { MetricCard, MetricCardSkeleton } from "@/components/metrics/metric-card";
+import { ErrorState } from "@/components/states";
 import { useAppStore } from "@/lib/store/provider";
 import { getSupabase, isSupabaseConfigured } from "@/lib/supabase/client";
 import {
@@ -22,18 +23,21 @@ import { rangeBounds, rangeLabel } from "@/lib/store";
 
 /**
  * The original seven-card commercial scorecard, fed by the live mirror when a
- * real session exists (the demo scorecard is the signed-out fallback). Cards
- * whose sources are not yet connected say so instead of faking numbers.
- * Classic windows (Today / 7d / 30d) use the fixed-window RPCs and their
- * 4-week baseline; extended windows (90d / 12 months / custom) use the
- * range RPC — baseline and item-level contribution honestly bow out there.
- * Ad spend always comes from the warehouse trend (server-aggregated — the
- * old raw ad_daily_facts select silently truncated at 1,000 rows).
+ * real session exists. The seeded `fallback` renders only on builds without
+ * Supabase; a configured build with no session, or a failed fetch, says so
+ * instead of showing demo numbers. Cards whose sources are not yet connected
+ * say so instead of faking numbers. Classic windows (Today / 7d / 30d) use
+ * the fixed-window RPCs and their 4-week baseline; extended windows (90d /
+ * 12 months / custom) use the range RPC — baseline and item-level
+ * contribution honestly bow out there. Ad spend always comes from the
+ * warehouse trend (server-aggregated — the old raw ad_daily_facts select
+ * silently truncated at 1,000 rows); when that fetch fails the card says so.
  */
 
 type State =
   | { kind: "checking" }
-  | { kind: "no-session" }
+  | { kind: "unconfigured" }
+  | { kind: "signed-out" }
   | {
       kind: "ready";
       rows: LiveScorecardRow[];
@@ -41,6 +45,7 @@ type State =
       baseline: LivePlanBaselineRow[];
       econ: LiveUnitEconRow[];
       ads: GrowthAds | null;
+      adsError: string | null;
       commerce: LiveCommerceRangeRow[];
     }
   | { kind: "error"; message: string };
@@ -61,6 +66,7 @@ const CLASSIC = new Set(["today", "7d", "30d"]);
 
 export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
   const [state, setState] = useState<State>({ kind: "checking" });
+  const [retryKey, setRetryKey] = useState(0);
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
   const dateRange = useAppStore((s) => s.session.dateRange);
@@ -72,35 +78,66 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
   useEffect(() => {
     if (!isSupabaseConfigured()) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setState({ kind: "no-session" });
+      setState({ kind: "unconfigured" });
       return;
     }
     void (async () => {
       const { data } = await getSupabase().auth.getSession();
       if (!data.session) {
-        setState({ kind: "no-session" });
+        setState({ kind: "signed-out" });
         return;
       }
       try {
-        const [rows, brands, baseline, econ, ads, commerce] = await Promise.all([
+        const [rows, brands, baseline, econ, adsResult, commerce] = await Promise.all([
           fetchLiveScorecard(),
           fetchLiveBrands(),
           fetchLivePlanBaseline(),
           fetchLiveUnitEconomics(),
-          fetchGrowthAds(400).catch(() => null),
-          classic
-            ? Promise.resolve([] as LiveCommerceRangeRow[])
-            : fetchCommerceRange(bounds.from, bounds.to).catch(() => [] as LiveCommerceRangeRow[]),
+          fetchGrowthAds(400).then(
+            (ads) => ({ ads, adsError: null as string | null }),
+            (e: Error) => ({ ads: null as GrowthAds | null, adsError: e.message }),
+          ),
+          classic ? Promise.resolve([] as LiveCommerceRangeRow[]) : fetchCommerceRange(bounds.from, bounds.to),
         ]);
-        setState({ kind: "ready", rows, brands: brands.filter((b) => b.status === "active"), baseline, econ, ads, commerce });
+        setState({
+          kind: "ready",
+          rows,
+          brands: brands.filter((b) => b.status === "active"),
+          baseline,
+          econ,
+          ads: adsResult.ads,
+          adsError: adsResult.adsError,
+          commerce,
+        });
       } catch (e) {
         setState({ kind: "error", message: (e as Error).message });
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateRange, customRange]);
+  }, [dateRange, customRange, retryKey]);
 
-  if (state.kind === "no-session" || state.kind === "error") return <>{fallback}</>;
+  if (state.kind === "unconfigured") return <>{fallback}</>;
+  if (state.kind === "signed-out") {
+    return (
+      <section aria-label="Commercial scorecard" className="rounded-md border px-3 py-2 text-xs text-muted-foreground">
+        Sign in to read the live commercial scorecard.
+      </section>
+    );
+  }
+  if (state.kind === "error") {
+    return (
+      <section aria-label="Commercial scorecard">
+        <ErrorState
+          title="Commercial scorecard unavailable"
+          description={state.message}
+          retry={() => {
+            setState({ kind: "checking" });
+            setRetryKey((k) => k + 1);
+          }}
+        />
+      </section>
+    );
+  }
   if (state.kind === "checking") {
     return (
       <section
@@ -149,6 +186,7 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
     if (liveMarkets.length > 0 && !liveMarkets.includes(t.market ?? "")) continue;
     adSpend += Number(t.spend);
   }
+  const adsUnavailable = state.adsError !== null;
 
   // Baseline expectation exists for classic windows only.
   const expByCcy: Record<string, number> = {};
@@ -166,7 +204,7 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
   const ccyKeys = Object.keys(byCcy);
   const singleCcyRevenue = ccyKeys.length === 1 ? byCcy[ccyKeys[0]!]! : null;
   const mer =
-    adSpend > 0 && singleCcyRevenue !== null && ccyKeys[0] === "MYR"
+    !adsUnavailable && adSpend > 0 && singleCcyRevenue !== null && ccyKeys[0] === "MYR"
       ? (singleCcyRevenue / adSpend).toFixed(2)
       : null;
 
@@ -231,13 +269,25 @@ export function LiveScorecard({ fallback }: { fallback: React.ReactNode }) {
         })()}
         <MetricCard
           metricKey="ad_spend"
-          value={adSpend > 0 ? money("MYR", adSpend) : "—"}
-          hint={adSpend > 0 ? "Warehouse pipeline · all connected ad accounts" : "No spend in this window/scope"}
+          value={!adsUnavailable && adSpend > 0 ? money("MYR", adSpend) : "—"}
+          hint={
+            adsUnavailable
+              ? `Warehouse ads fetch failed — ${state.adsError}`
+              : adSpend > 0
+                ? "Warehouse pipeline · all connected ad accounts"
+                : "No spend in this window/scope"
+          }
         />
         <MetricCard
           metricKey="blended_mer"
           value={mer ?? "—"}
-          hint={mer ? "MYR revenue ÷ warehouse ad spend" : "Needs single-currency scope — pick a market"}
+          hint={
+            mer
+              ? "MYR revenue ÷ warehouse ad spend"
+              : adsUnavailable
+                ? "Needs the warehouse ad spend"
+                : "Needs single-currency scope — pick a market"
+          }
         />
         <MetricCard metricKey="orders" value={orders.toLocaleString()} hint={windowHint} />
         <MetricCard

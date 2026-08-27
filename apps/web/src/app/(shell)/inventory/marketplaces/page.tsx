@@ -4,7 +4,6 @@ import { useState } from "react";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EmptyState, ErrorState, RefreshChip, SkeletonTable } from "@/components/states";
@@ -14,14 +13,17 @@ import { LiveGuard } from "@/components/auth/live-guard";
 import { RouteGuard } from "@/lib/rbac/guard";
 import { usePermission } from "@/hooks/use-session";
 import { useLiveQuery } from "@/hooks/use-live-query";
-import { APPROVAL_TONE, CUTOVER_TONE, PLATFORM_LABELS, type MarketplaceAccount } from "@/lib/domain/inventory-registry";
-import { fetchMarketplaceRegistry, setMarketplaceCutover } from "@/lib/supabase/live";
+import { APPROVAL_TONE, CUTOVER_TONE, PLATFORM_LABELS, type MarketplaceAccount, type MarketplaceListing } from "@/lib/domain/inventory-registry";
+import { fetchLiveCatalog, fetchMarketplaceRegistry, mapMarketplaceListing, setMarketplaceCutover, type LiveVariant } from "@/lib/supabase/live";
+
+const UNMAPPED = "__unmapped__";
 
 /**
  * Per-account marketplace registry with cutover mode (plan §6.2) and the
  * listing→variant mapping grain (§6.3). ADR-0009: partner track, read scopes
  * only; the server refuses pilot_write / live. No connector exists yet, and
- * the page says why.
+ * the page says why. Listing mapping is wired (map_marketplace_listing) so
+ * the first mirrored listings can be resolved to canonical variants by hand.
  */
 export default function MarketplacesPage() {
   return (
@@ -35,8 +37,12 @@ export default function MarketplacesPage() {
 
 function MarketplacesInner() {
   const canManage = usePermission("settings.manage");
-  const reg = useLiveQuery(fetchMarketplaceRegistry, []);
+  const reg = useLiveQuery(async () => {
+    const [registry, catalog] = await Promise.all([fetchMarketplaceRegistry(), fetchLiveCatalog()]);
+    return { ...registry, variants: catalog.variants.filter((v) => v.status === "active") as LiveVariant[] };
+  }, []);
   const [busy, setBusy] = useState<number | null>(null);
+  const [mapping, setMapping] = useState<number | null>(null);
   const d = reg.data;
 
   const cutover = async (a: MarketplaceAccount, mode: string) => {
@@ -52,13 +58,31 @@ function MarketplacesInner() {
     }
   };
 
+  const mapListing = async (l: MarketplaceListing, value: string) => {
+    const variantId = value === UNMAPPED ? null : Number(value);
+    setMapping(l.id);
+    try {
+      await mapMarketplaceListing(l.id, variantId, null);
+      toast.success(variantId === null ? `Listing ${l.listing_id} unmapped` : `Listing ${l.listing_id} mapped`);
+      await reg.reload();
+    } catch (e) {
+      toast.error("Mapping refused", { description: (e as Error).message });
+    } finally {
+      setMapping(null);
+    }
+  };
+
   return (
     <PageBody>
       <PageHeader title="Marketplaces" description="Every seller account with its approval position, scopes, capabilities, source-of-truth map and cutover mode. Orders and stock come only after a proven read-only mirror." />
       <div className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs">
         <ShieldAlert className="size-3.5 text-warning" aria-hidden />
         <span className="text-muted-foreground">{d?.posture ?? "ADR-0009: partner track, read scopes only."}</span>
-        {d && <a href="#" className="text-info underline-offset-2 hover:underline" onClick={(e) => e.preventDefault()} title={d.onboarding_register}>register: {d.onboarding_register}</a>}
+        {d && (
+          <span className="text-muted-foreground">
+            register: <code className="rounded bg-muted px-1 py-0.5 text-[11px]">{d.onboarding_register}</code>
+          </span>
+        )}
         {reg.refreshing && <RefreshChip />}
       </div>
       {reg.error ? (
@@ -123,15 +147,42 @@ function MarketplacesInner() {
                       <tr><th className="py-1.5 pr-2 font-medium">Account</th><th className="py-1.5 pr-2 font-medium">Listing / variation</th><th className="py-1.5 pr-2 font-medium">Source SKU</th><th className="py-1.5 pr-2 font-medium">Mapping</th><th className="py-1.5 font-medium">Variant</th></tr>
                     </thead>
                     <tbody className="divide-y">
-                      {d.listings.map((l) => (
-                        <tr key={l.id}>
-                          <td className="py-1.5 pr-2">{d.accounts.find((a) => a.id === l.account_id)?.account_label ?? l.account_id}</td>
-                          <td className="tnum py-1.5 pr-2">{l.listing_id}{l.variation_id ? ` / ${l.variation_id}` : ""}</td>
-                          <td className="py-1.5 pr-2">{l.source_sku ?? "—"}</td>
-                          <td className="py-1.5 pr-2">{tonePill({ label: l.mapping_status, tone: l.mapping_status === "mapped" ? "success" : l.mapping_status === "unmapped" ? "warning" : "info" })}</td>
-                          <td className="tnum py-1.5">{l.variant_id ?? "—"}</td>
-                        </tr>
-                      ))}
+                      {d.listings.map((l) => {
+                        const variant = l.variant_id === null ? null : d.variants.find((v) => v.id === l.variant_id);
+                        return (
+                          <tr key={l.id}>
+                            <td className="py-1.5 pr-2">{d.accounts.find((a) => a.id === l.account_id)?.account_label ?? l.account_id}</td>
+                            <td className="tnum py-1.5 pr-2">
+                              {l.listing_id}{l.variation_id ? ` / ${l.variation_id}` : ""}
+                              {l.title && <span className="block truncate text-muted-foreground" title={l.title}>{l.title}</span>}
+                            </td>
+                            <td className="py-1.5 pr-2">{l.source_sku ?? "—"}</td>
+                            <td className="py-1.5 pr-2">{tonePill({ label: l.mapping_status, tone: l.mapping_status === "mapped" ? "success" : l.mapping_status === "unmapped" ? "warning" : "info" })}</td>
+                            <td className="py-1.5">
+                              {canManage ? (
+                                <div className="flex items-center gap-2">
+                                  <Select
+                                    value={l.variant_id === null ? UNMAPPED : String(l.variant_id)}
+                                    onValueChange={(v) => void mapListing(l, v)}
+                                    disabled={mapping !== null}
+                                  >
+                                    <SelectTrigger className="h-7 w-64 text-xs" aria-label={`Variant for listing ${l.listing_id}`}><SelectValue placeholder="Map to variant…" /></SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value={UNMAPPED}>unmapped</SelectItem>
+                                      {d.variants.map((v) => (
+                                        <SelectItem key={v.id} value={String(v.id)}>{v.sku} — {v.name}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  {mapping === l.id && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
+                                </div>
+                              ) : (
+                                <span className="tnum">{variant ? `${variant.sku} — ${variant.name}` : l.variant_id ?? "—"}</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

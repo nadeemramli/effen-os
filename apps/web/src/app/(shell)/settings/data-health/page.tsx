@@ -1,241 +1,200 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { CheckCircle2, ShieldAlert } from "lucide-react";
-import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { LiveGuard } from "@/components/auth/live-guard";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
-import { useRepo } from "@/hooks/use-repo";
-import { usePermission } from "@/hooks/use-session";
+import { ErrorState, RefreshChip, SkeletonCards, SkeletonTable } from "@/components/states";
+import { useLiveQuery } from "@/hooks/use-live-query";
+import { slaLabel, statusMeta } from "@/lib/domain/integrations";
 import { RouteGuard } from "@/lib/rbac/guard";
-import { useAppStore } from "@/lib/store/provider";
-import { freshnessOf } from "@/lib/utils/dates";
+import {
+  fetchIntegrationConnections,
+  fetchRecentFailedRuns,
+  integrationFreshness,
+  type IntegrationFreshness,
+} from "@/lib/supabase/live";
+import { formatDateTime } from "@/lib/utils/dates";
 import { cn } from "@/lib/utils";
 
-const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+const FRESHNESS_RANK: Record<IntegrationFreshness, number> = { stale: 0, aging: 1, fresh: 2, pending: 3 };
 
+/**
+ * What can honestly be said about data trust today: per-connection freshness
+ * against its SLA (real clock) and every non-success sync run in the last
+ * 24 hours. There is no governed data-quality issue register yet, and the
+ * page says so rather than scoring one.
+ */
 function DataHealthInner() {
-  const repo = useRepo();
-  const canAck = usePermission("dq.acknowledge");
-  const integrations = useAppStore((s) => s.integrations);
-  const dqIssues = useAppStore((s) => s.dqIssues);
-  const metricDefinitions = useAppStore((s) => s.metricDefinitions);
-  const adAccounts = useAppStore((s) => s.adAccounts);
-  const personas = useAppStore((s) => s.personas);
-  const [severityFilter, setSeverityFilter] = useState("any");
+  const q = useLiveQuery(async () => {
+    const [rows, failed] = await Promise.all([fetchIntegrationConnections(), fetchRecentFailedRuns(24, 50)]);
+    return { rows, failed, fetchedAt: Date.now() };
+  }, []);
+  const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
+  const failed = q.data?.failed ?? [];
+  const fetchedAt = q.data?.fetchedAt ?? 0;
 
-  const freshCount = integrations.filter((i) => freshnessOf(i.lastSuccessAt, i.freshnessSlaMinutes) === "fresh").length;
-  const openIssues = dqIssues.filter((i) => i.status !== "resolved");
-  const criticalOpen = openIssues.filter((i) => i.severity === "critical" || i.severity === "high").length;
-  const reconIssues = openIssues.filter((i) => i.category === "reconciliation").length;
-  const mappingIssues = openIssues.filter((i) => i.category === "mapping").length;
-  const unmappedAccounts = adAccounts.filter((a) => a.status === "unmapped").length;
-  const trustedMetrics = metricDefinitions.filter((m) => m.quality === "trusted").length;
-  const degradedMetrics = metricDefinitions.filter((m) => m.quality === "degraded").length;
-
-  // Simple composite trust score, explained in the UI.
-  const trustScore = Math.max(
-    0,
-    Math.round(
-      100 -
-        (integrations.length - freshCount) * 6 -
-        criticalOpen * 8 -
-        (openIssues.length - criticalOpen) * 2 -
-        degradedMetrics * 4,
-    ),
+  const graded = useMemo(
+    () =>
+      rows
+        .map((i) => ({ ...i, freshness: integrationFreshness(i, fetchedAt) }))
+        .sort((a, b) => FRESHNESS_RANK[a.freshness] - FRESHNESS_RANK[b.freshness] || a.name.localeCompare(b.name)),
+    [rows, fetchedAt],
   );
+  const configured = graded.filter((i) => i.freshness !== "pending");
+  const count = (f: IntegrationFreshness) => graded.filter((i) => i.freshness === f).length;
 
-  const filteredIssues = openIssues
-    .filter((i) => severityFilter === "any" || i.severity === severityFilter)
-    .sort((a, b) => SEVERITY_ORDER[a.severity]! - SEVERITY_ORDER[b.severity]!);
+  const tiles = [
+    { label: "Within SLA", value: `${count("fresh")}/${configured.length}`, tone: count("fresh") === configured.length ? "text-success" : "", hint: "configured sources fresh right now" },
+    { label: "Aging", value: String(count("aging")), tone: count("aging") > 0 ? "text-warning" : "", hint: "past SLA, under 3× SLA" },
+    { label: "Stale", value: String(count("stale")), tone: count("stale") > 0 ? "text-destructive" : "", hint: "beyond 3× SLA or never succeeded" },
+    { label: "Pending setup", value: String(count("pending")), tone: "text-muted-foreground", hint: "registered, not connected" },
+    { label: "Failed runs 24h", value: String(failed.length), tone: failed.length > 0 ? "text-warning" : "", hint: "non-success sync runs, all sources" },
+  ];
 
   return (
     <PageBody className="max-w-none">
       <PageHeader
         title="Data health"
-        description="How much the numbers can be trusted right now — freshness, mappings, reconciliation, and owned issues."
-      />
+        description="How much the numbers can be trusted right now — source freshness against SLA and the last 24 hours of failed runs, from the live register."
+      >
+        <div className="flex items-center gap-2">
+          {q.refreshing && <RefreshChip />}
+          <Link href="/settings/automations" className="text-sm text-info underline-offset-2 hover:underline">
+            Pipeline health
+          </Link>
+        </div>
+      </PageHeader>
 
-      {/* trust score + panels */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Card className="gap-1.5 px-4 py-3">
-          <span className="text-xs font-medium text-muted-foreground">Overall trust score</span>
-          <div className="flex items-baseline gap-2">
-            <span className={cn("tnum text-2xl font-semibold", trustScore >= 80 ? "text-success" : trustScore >= 60 ? "text-warning" : "text-destructive")}>
-              {trustScore}
-            </span>
-            <span className="text-xs text-muted-foreground">/ 100</span>
-          </div>
-          <p className="text-[11px] text-muted-foreground">Penalises stale sources, open issues, degraded metrics.</p>
-        </Card>
-        <Card className="gap-1.5 px-4 py-3">
-          <span className="text-xs font-medium text-muted-foreground">Source freshness</span>
-          <span className="tnum text-2xl font-semibold">{freshCount}/{integrations.length}</span>
-          <p className="text-[11px] text-muted-foreground">within SLA · 2 stale (Shopee, RudderStack)</p>
-        </Card>
-        <Card className="gap-1.5 px-4 py-3">
-          <span className="text-xs font-medium text-muted-foreground">Unmapped records</span>
-          <span className={cn("tnum text-2xl font-semibold", mappingIssues + unmappedAccounts > 0 && "text-warning")}>
-            {mappingIssues + unmappedAccounts}
-          </span>
-          <p className="text-[11px] text-muted-foreground">ad accounts, listings, catalog mappings</p>
-        </Card>
-        <Card className="gap-1.5 px-4 py-3">
-          <span className="text-xs font-medium text-muted-foreground">Reconciliation</span>
-          <span className={cn("tnum text-2xl font-semibold", reconIssues > 0 && "text-warning")}>{reconIssues}</span>
-          <p className="text-[11px] text-muted-foreground">open exceptions (Chip settlement, COGS version)</p>
-        </Card>
-        <Card className="gap-1.5 px-4 py-3">
-          <span className="text-xs font-medium text-muted-foreground">Metric definitions</span>
-          <span className="tnum text-2xl font-semibold">{metricDefinitions.length}</span>
-          <p className="text-[11px] text-muted-foreground">{trustedMetrics} trusted · {degradedMetrics} degraded (identity lag)</p>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        {/* freshness by source */}
-        <Card>
-          <CardHeader><CardTitle className="text-sm font-medium">Freshness by source</CardTitle></CardHeader>
-          <CardContent className="space-y-1.5">
-            {[...integrations]
-              .sort((a, b) => {
-                const order = { stale: 0, aging: 1, fresh: 2 } as const;
-                return order[freshnessOf(a.lastSuccessAt, a.freshnessSlaMinutes)] - order[freshnessOf(b.lastSuccessAt, b.freshnessSlaMinutes)];
-              })
-              .map((i) => (
-                <div key={i.id} className="flex items-center justify-between gap-3 text-sm">
-                  <Link href={`/settings/integrations/${i.id}`} className="min-w-0 flex-1 truncate underline-offset-2 hover:underline">
-                    {i.name}
-                  </Link>
-                  <span className="tnum text-xs text-muted-foreground">
-                    SLA {i.freshnessSlaMinutes >= 60 ? `${Math.round(i.freshnessSlaMinutes / 60)}h` : `${i.freshnessSlaMinutes}m`}
-                  </span>
-                  <FreshnessBadge lastSuccessAt={i.lastSuccessAt} slaMinutes={i.freshnessSlaMinutes} />
-                </div>
-              ))}
-          </CardContent>
-        </Card>
-
-        {/* metric definition coverage */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Metric definition coverage</CardTitle>
-            <p className="text-xs text-muted-foreground">Every governed metric, its quality grade, and current caveat.</p>
-          </CardHeader>
-          <CardContent className="space-y-1.5">
-            {metricDefinitions.map((m) => (
-              <div key={m.key} className="flex items-start justify-between gap-3 text-sm">
-                <div className="min-w-0">
-                  <span>{m.name}</span>
-                  {m.caveat && <p className="truncate text-[11px] text-muted-foreground">{m.caveat}</p>}
-                </div>
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "shrink-0 text-[10px]",
-                    m.quality === "trusted" && "border-success/30 bg-success/10 text-success",
-                    m.quality === "monitored" && "border-info/30 bg-info/10 text-info",
-                    m.quality === "degraded" && "border-warning/30 bg-warning/10 text-warning",
-                  )}
-                >
-                  {m.quality}
-                </Badge>
-              </div>
+      {q.error && !q.data ? (
+        <ErrorState title="Could not load data health" description={q.error} retry={() => void q.reload()} />
+      ) : q.loading ? (
+        <>
+          <SkeletonCards count={5} />
+          <SkeletonTable rows={6} cols={5} />
+        </>
+      ) : (
+        <>
+          <div className={cn("grid grid-cols-2 gap-3 lg:grid-cols-5", q.refreshing && "opacity-70")}>
+            {tiles.map((t) => (
+              <Card key={t.label} className="gap-1.5 px-4 py-3">
+                <span className="text-xs font-medium text-muted-foreground">{t.label}</span>
+                <span className={cn("tnum text-2xl font-semibold", t.tone)}>{t.value}</span>
+                <p className="text-[11px] text-muted-foreground">{t.hint}</p>
+              </Card>
             ))}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* issue queue */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <div>
-            <CardTitle className="text-sm font-medium">Owned issue queue</CardTitle>
-            <p className="mt-0.5 text-xs text-muted-foreground">{openIssues.length} open — every issue has an owner and a severity.</p>
           </div>
-          <Select value={severityFilter} onValueChange={setSeverityFilter}>
-            <SelectTrigger className="h-8 w-32 text-xs" aria-label="Severity filter"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="any">Any severity</SelectItem>
-              {["critical", "high", "medium", "low"].map((s) => (
-                <SelectItem key={s} value={s}>{s}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </CardHeader>
-        <CardContent className="divide-y">
-          {filteredIssues.map((issue) => (
-            <div key={issue.id} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
-              <ShieldAlert
-                className={cn(
-                  "mt-0.5 size-4 shrink-0",
-                  issue.severity === "critical" || issue.severity === "high" ? "text-destructive" : issue.severity === "medium" ? "text-warning" : "text-muted-foreground",
-                )}
-                aria-hidden
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium">{issue.title}</span>
-                  <Badge variant="outline" className="text-[10px] capitalize">{issue.severity}</Badge>
-                  <Badge variant="outline" className="text-[10px] capitalize text-muted-foreground">{issue.category.replace("_", " ")}</Badge>
-                  {issue.status === "acknowledged" && (
-                    <Badge variant="outline" className="border-info/30 bg-info/10 text-[10px] text-info">acknowledged</Badge>
-                  )}
-                </div>
-                <p className="mt-0.5 text-xs text-muted-foreground">{issue.detail}</p>
-                <div className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-muted-foreground">
-                  <span>{issue.id}</span>
-                  <span>owner: {personas.find((p) => p.id === issue.ownerId)?.name ?? "unassigned"}</span>
-                  {issue.integrationId && (
-                    <Link href={`/settings/integrations/${issue.integrationId}`} className="text-info underline-offset-2 hover:underline">
-                      {issue.integrationId}
+
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">Freshness by source</CardTitle>
+                <p className="text-xs text-muted-foreground">Measured against each connection&apos;s own SLA at {formatDateTime(new Date(fetchedAt).toISOString())}.</p>
+              </CardHeader>
+              <CardContent className="space-y-1.5">
+                {graded.map((i) => (
+                  <div key={i.id} className="flex items-center justify-between gap-3 text-sm">
+                    <Link href={`/settings/integrations/${i.id}`} className="min-w-0 flex-1 truncate underline-offset-2 hover:underline">
+                      {i.name}
                     </Link>
-                  )}
-                </div>
-              </div>
-              {issue.status === "open" &&
-                (canAck ? (
-                  <Button
-                    variant="outline" size="sm" className="h-7 shrink-0 text-xs"
-                    onClick={async () => {
-                      await repo.acknowledgeDqIssue(issue.id);
-                      toast.success(`${issue.id} acknowledged`);
-                    }}
-                  >
-                    Acknowledge
-                  </Button>
-                ) : (
-                  <span className="shrink-0 text-[11px] text-muted-foreground">ack: Ops/Finance</span>
+                    <span className="tnum text-xs text-muted-foreground">SLA {slaLabel(i.freshness_sla_minutes)}</span>
+                    {i.freshness === "pending" ? (
+                      <span className={cn("rounded-full border px-2 py-0.5 text-[11px]", statusMeta(i.status).className)}>pending setup</span>
+                    ) : (
+                      <FreshnessBadge lastSuccessAt={i.last_success_at} slaMinutes={i.freshness_sla_minutes} realClock />
+                    )}
+                  </div>
                 ))}
-              {issue.status === "acknowledged" && (
-                <CheckCircle2 className="size-4 shrink-0 text-info" aria-label="Acknowledged" />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">What is not measured yet</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  No governed data-quality issue register exists, so there is no trust score, no owned issue queue and no
+                  reconciliation count on this page. Anything that looks like one would be invented.
+                </p>
+                <ul className="list-disc space-y-1 pl-5 text-xs">
+                  <li>
+                    SKU mapping gaps surface in{" "}
+                    <Link href="/catalog" className="text-info underline-offset-2 hover:underline">Catalog</Link> (store SKU → variant queue).
+                  </li>
+                  <li>
+                    Courier shadow coverage and every scheduled job&apos;s last run live in{" "}
+                    <Link href="/settings/automations" className="text-info underline-offset-2 hover:underline">Automations</Link>.
+                  </li>
+                  <li>
+                    Customer-economics coverage gaps are listed per cell in{" "}
+                    <Link href="/profit/definitions-coverage" className="text-info underline-offset-2 hover:underline">Profit → Definitions &amp; coverage</Link>.
+                  </li>
+                </ul>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">Failed and partial runs — last 24 hours</CardTitle>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {failed.length} run{failed.length === 1 ? "" : "s"} did not succeed. Reason codes come from the sync function; the checkpoint never advances on failure.
+              </p>
+            </CardHeader>
+            <CardContent>
+              {failed.length === 0 ? (
+                <p className="py-4 text-center text-sm text-muted-foreground">Every recorded run in the last 24 hours succeeded.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[720px] text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-xs text-muted-foreground">
+                        <th className="pb-2 font-medium">Started</th>
+                        <th className="pb-2 font-medium">Connection</th>
+                        <th className="pb-2 font-medium">Status</th>
+                        <th className="pb-2 font-medium">Reason</th>
+                        <th className="pb-2 font-medium">Message</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {failed.map((r) => (
+                        <tr key={r.id} className="border-b last:border-0">
+                          <td className="tnum py-2 pr-3 text-xs">{formatDateTime(r.started_at)}</td>
+                          <td className="py-2 pr-3 text-xs">
+                            <Link href={`/settings/integrations/${r.integration_id}`} className="underline-offset-2 hover:underline">{r.integration_name}</Link>
+                          </td>
+                          <td className={cn("py-2 pr-3 text-xs font-medium capitalize", r.status === "failed" ? "text-destructive" : "text-warning")}>{r.status}</td>
+                          <td className="py-2 pr-3">
+                            {r.reason_code ? (
+                              <span className="rounded border border-warning/25 bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] text-warning">{r.reason_code}</span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </td>
+                          <td className="max-w-96 py-2 text-xs text-muted-foreground">{r.message ?? ""}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
-            </div>
-          ))}
-          {filteredIssues.length === 0 && (
-            <p className="py-6 text-center text-sm text-muted-foreground">No open issues at this severity.</p>
-          )}
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+        </>
+      )}
     </PageBody>
   );
 }
 
 export default function DataHealthPage() {
   return (
-    <RouteGuard permission="dq.view">
-      <DataHealthInner />
-    </RouteGuard>
+    <LiveGuard>
+      <RouteGuard permission="dq.view">
+        <DataHealthInner />
+      </RouteGuard>
+    </LiveGuard>
   );
 }

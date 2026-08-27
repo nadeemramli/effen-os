@@ -36,6 +36,7 @@ export interface LiveSyncRun {
   status: string;
   records_read: number;
   records_written: number;
+  error_count?: number | null;
   reason_code: string | null;
   message: string | null;
 }
@@ -1865,3 +1866,165 @@ export const setMarketplaceCutover = (accountId: number, mode: string, note: str
 export const mapMarketplaceListing = (listingId: number, variantId: number | null, note: string | null) => registryRpc<{ listing: unknown }>("map_marketplace_listing", { p_listing_id: listingId, p_variant_id: variantId, p_note: note });
 export const reviewWaObservation = (q: { id: number; state: "linked" | "accepted" | "rejected"; productionItemId: number | null; batchRef: string | null; note: string | null }) =>
   registryRpc<{ observation: unknown }>("review_wa_observation", { p_id: q.id, p_state: q.state, p_production_item_id: q.productionItemId, p_batch_ref: q.batchRef, p_note: q.note });
+
+/* ---------- Integration connections (Settings, Data health, Command Center) ---------- */
+
+/** One row of `integration_connections` — the live register every settings surface reads. */
+export interface LiveIntegration {
+  id: number;
+  workspace_id: number;
+  provider: string;
+  name: string;
+  category: string;
+  environment: string;
+  direction: string;
+  read_scopes: string[];
+  write_scopes: string[];
+  status: string;
+  freshness_sla_minutes: number;
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  sync_checkpoint: string | null;
+  error_count_24h: number;
+  credential_rotates_at: string | null;
+  notes: string | null;
+  config: Record<string, unknown> | null;
+}
+
+const INTEGRATION_COLUMNS =
+  "id, workspace_id, provider, name, category, environment, direction, read_scopes, write_scopes, status, freshness_sla_minutes, last_success_at, last_failure_at, sync_checkpoint, error_count_24h, credential_rotates_at, notes, config";
+
+export async function fetchIntegrationConnections(): Promise<LiveIntegration[]> {
+  const { data, error } = await getSupabase()
+    .from("integration_connections")
+    .select(INTEGRATION_COLUMNS)
+    .order("category")
+    .order("name");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LiveIntegration[];
+}
+
+export async function fetchIntegrationConnection(id: number): Promise<LiveIntegration | null> {
+  const { data, error } = await getSupabase()
+    .from("integration_connections")
+    .select(INTEGRATION_COLUMNS)
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as LiveIntegration | null) ?? null;
+}
+
+export async function fetchSyncRunsFor(integrationId: number, limit = 50): Promise<LiveSyncRun[]> {
+  const { data, error } = await getSupabase()
+    .from("sync_runs")
+    .select("*")
+    .eq("integration_id", integrationId)
+    .order("started_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LiveSyncRun[];
+}
+
+export interface LiveSyncRunWithName extends LiveSyncRun {
+  error_count: number | null;
+  integration_name: string;
+}
+
+/** Every non-success run started in the last `hours`, newest first, with its connection name. */
+export async function fetchRecentFailedRuns(hours = 24, limit = 50): Promise<LiveSyncRunWithName[]> {
+  const since = new Date(Date.now() - hours * 3_600_000).toISOString();
+  const { data, error } = await getSupabase()
+    .from("sync_runs")
+    .select("*, integration_connections(name)")
+    .neq("status", "success")
+    .gte("started_at", since)
+    .order("started_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  type Row = LiveSyncRun & {
+    error_count: number | null;
+    integration_connections: { name: string } | { name: string }[] | null;
+  };
+  return ((data ?? []) as unknown as Row[]).map(({ integration_connections: ic, ...r }) => ({
+    ...r,
+    integration_name: (Array.isArray(ic) ? ic[0]?.name : ic?.name) ?? `connection #${r.integration_id}`,
+  }));
+}
+
+export type IntegrationFreshness = "fresh" | "aging" | "stale" | "pending";
+
+/**
+ * Real-clock freshness band for a connection, measured at `now` (pass the
+ * snapshot's fetch time so a render never reads the wall clock itself).
+ * Mirrors FreshnessBadge's realClock bands: within SLA, within 3x SLA, older.
+ */
+export function integrationFreshness(
+  i: Pick<LiveIntegration, "status" | "last_success_at" | "freshness_sla_minutes">,
+  now: number,
+): IntegrationFreshness {
+  if (i.status === "pending_setup") return "pending";
+  if (!i.last_success_at) return "stale";
+  const ageMin = (now - new Date(i.last_success_at).getTime()) / 60_000;
+  if (ageMin <= i.freshness_sla_minutes) return "fresh";
+  if (ageMin <= i.freshness_sla_minutes * 3) return "aging";
+  return "stale";
+}
+
+/** Open follow-ups across every customer, soonest due first (Command Center queue). */
+export async function fetchOpenWorkItems(limit = 8): Promise<WorkItem[]> {
+  const { data, error } = await getSupabase()
+    .from("work_items")
+    .select("*")
+    .eq("status", "open")
+    .order("due_at", { ascending: true, nullsFirst: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as WorkItem[];
+}
+
+/* ---------- Ninja Van connection (Settings -> Setup -> Connections) ---------- */
+
+export interface LiveNvConnection {
+  id: number;
+  workspace_id: number;
+  status: string;
+  last_success_at: string | null;
+  notes: string | null;
+}
+
+export async function fetchNvConnection(): Promise<LiveNvConnection | null> {
+  const { data, error } = await getSupabase()
+    .from("integration_connections")
+    .select("id, workspace_id, status, last_success_at, notes")
+    .eq("provider", "Ninja Van")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as LiveNvConnection | null) ?? null;
+}
+
+/** Stores the API client id + key in Vault (HQ admin only; the server validates lengths). */
+export async function saveNvConnection(clientId: string, clientKey: string): Promise<void> {
+  const { error } = await getSupabase().rpc("set_nv_connection", {
+    p_client_id: clientId,
+    p_client_key: clientKey,
+  });
+  if (error) throw new Error(error.message);
+}
+
+export async function fetchNvCounts(): Promise<{ shipments: number; events_24h: number; last_event_at: string | null }> {
+  const supabase = getSupabase();
+  const since = new Date(Date.now() - 24 * 3_600_000).toISOString();
+  const [s, e, last] = await Promise.all([
+    supabase.from("nv_shipments").select("id", { count: "exact", head: true }),
+    supabase.from("nv_events").select("id", { count: "exact", head: true }).gte("event_at", since),
+    supabase.from("nv_events").select("event_at").order("event_at", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  if (s.error) throw new Error(s.error.message);
+  if (e.error) throw new Error(e.error.message);
+  if (last.error) throw new Error(last.error.message);
+  return {
+    shipments: s.count ?? 0,
+    events_24h: e.count ?? 0,
+    last_event_at: (last.data as { event_at: string | null } | null)?.event_at ?? null,
+  };
+}
