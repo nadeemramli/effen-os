@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartCard } from "@/components/charts/chart-card";
 import { ChartLegend, ContributionTrend } from "@/components/charts/commercial-charts";
 import { PageBody } from "@/components/shell/page-header";
+import { PrototypeBanner } from "@/components/states/prototype-banner";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
 import { EmptyState } from "@/components/states";
 import { useSession, rangeDays } from "@/hooks/use-session";
@@ -65,6 +66,7 @@ function ReportDetailInner() {
   if (!report) {
     return (
       <PageBody className="max-w-3xl">
+      <PrototypeBanner module="Reports" />
         <EmptyState title="Report not found" description="This report slug is not in the governed library." action={{ label: "Report library", href: "/reports" }} />
       </PageBody>
     );
@@ -333,6 +335,7 @@ function ReportDetailInner() {
 
   return (
     <PageBody className="max-w-5xl">
+      <PrototypeBanner module="Reports" />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">

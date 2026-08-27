@@ -1,11 +1,16 @@
-import { DEMO_NOW } from "@/lib/seed/clock";
 import type { FreshnessState } from "@/lib/domain/enums";
 
-/** All relative time is measured against the fixed demo clock. */
+/**
+ * Relative time against the real wall clock. The seeded dataset used to be
+ * measured against the frozen demo clock, which made every live timestamp
+ * (and, once the demo profile started rolling the seed forward, every seeded
+ * one too) read as nonsense like "in 14d". Seeded timestamps now simply show
+ * their true age; live surfaces were always meant to use the real clock.
+ */
 
 export function formatRelative(iso: string): string {
   const then = new Date(iso).getTime();
-  const diffMs = DEMO_NOW.getTime() - then;
+  const diffMs = Date.now() - then;
   const future = diffMs < 0;
   const abs = Math.abs(diffMs);
   const min = Math.round(abs / 60_000);
@@ -38,7 +43,7 @@ export function formatDateTime(iso: string): string {
 }
 
 export function hoursSince(iso: string): number {
-  return (DEMO_NOW.getTime() - new Date(iso).getTime()) / 3_600_000;
+  return (Date.now() - new Date(iso).getTime()) / 3_600_000;
 }
 
 export function freshnessOf(lastSuccessAt: string | null, slaMinutes: number): FreshnessState {

@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/sheet";
 import { ImpactPreviewDialog } from "@/components/dialogs/impact-preview-dialog";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
+import { PrototypeBanner } from "@/components/states/prototype-banner";
 import { MoneyCell } from "@/components/tables/cells";
 import { useActivePersona, usePermission } from "@/hooks/use-session";
 import {
@@ -62,6 +63,7 @@ function FinanceInner() {
 
   return (
     <PageBody className="max-w-none">
+      <PrototypeBanner module="Finance" />
       <PageHeader
         title="Finance — commission run"
         description="Channel pulls → processed net profit → per-person P&L → tiered commission → approval → release. SQL Accounting stays the ledger; this run exports to it."

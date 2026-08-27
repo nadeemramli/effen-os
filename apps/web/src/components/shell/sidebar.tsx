@@ -28,7 +28,7 @@ interface SidebarProps {
  */
 export function Sidebar({ collapsed, activeSectionKey, pinned, onTogglePin }: SidebarProps) {
   const pathname = usePathname();
-  const { role } = useSession();
+  const { role, authEmail } = useSession();
   const routes = visibleRoutes(role);
   // Animate width only after hydration: a persisted pin must snap into place, not slide.
   const hydrated = useHydrated();
@@ -155,7 +155,9 @@ export function Sidebar({ collapsed, activeSectionKey, pinned, onTogglePin }: Si
       >
         {!collapsed && (
           <p className="min-w-0 flex-1 text-[11px] leading-snug text-muted-foreground">
-            Prototype on synthetic data. No live systems are connected.
+            {authEmail !== null
+              ? "Live workspace. Fighter still books courier and sends notifications."
+              : "Prototype on synthetic data. No live systems are connected."}
           </p>
         )}
         <Tooltip>

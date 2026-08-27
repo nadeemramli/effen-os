@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ImpactPreviewDialog } from "@/components/dialogs/impact-preview-dialog";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
+import { PrototypeBanner } from "@/components/states/prototype-banner";
 import { useActivePersona, usePermission, useSession } from "@/hooks/use-session";
 import type { CreativeBrief } from "@/lib/domain/types";
 import { CREATIVE_DEMAND } from "@/lib/seed/data/ops-modules";
@@ -64,6 +65,7 @@ function CreativeInner() {
 
   return (
     <PageBody className="max-w-none">
+      <PrototypeBanner module="Creative" />
       <PageHeader
         title="Creative"
         description="The Creative Loop: demand from the media plan, briefs through production, launch bound to campaigns, performance feeding the next brief."

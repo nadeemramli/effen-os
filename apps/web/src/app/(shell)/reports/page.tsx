@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowRight, FileBarChart, Lock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
+import { PrototypeBanner } from "@/components/states/prototype-banner";
 import { useSession } from "@/hooks/use-session";
 import { RouteGuard } from "@/lib/rbac/guard";
 import { ROLE_LABELS } from "@/lib/rbac/matrix";
@@ -18,6 +19,7 @@ function ReportsInner() {
 
   return (
     <PageBody className="max-w-4xl">
+      <PrototypeBanner module="Reports" />
       <PageHeader
         title="Reports"
         description="Governed library — every report declares its definitions, grain, lineage, freshness, and export permission."
