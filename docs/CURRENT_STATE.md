@@ -13,6 +13,8 @@ This is the release-status companion to the product and architecture documents. 
 
 > [!note] Program closed — 25 Aug 2026
 > The operational-workspaces program (Customer Base, cohort workspaces, Orders QC, Profit customer economics, fulfilment/CRM and production continuation) shipped Phases 0–8 as one local commit per phase; see [[plans/operational-workspaces-customer-profit|the program plan]] §5 and §8 for what each slice contains and §7 for the owner decisions (D1–D10) that remain provisional. Every status on this page was re-read against the code at the source commit above.
+>
+> **Post-program fix (28 Aug 2026):** the nightly `customer-lifecycle-refresh-daily` job had never completed under cron — the v6 command dropped the session `statement_timeout`, so the 2-minute default killed the run once Phase 5 added `econ_rebuild`. Migration `20260827192252_customer_lifecycle_contract_v9` restores `set statement_timeout = '20min'` on the command; a one-shot catch-up ran 27 Aug 19:23–19:27 UTC and the contract, movement and economics tables are current again.
 
 ## Audit scope and implementation census
 
@@ -21,7 +23,7 @@ This classification comes from a repository-wide audit of routes, client calls, 
 | Area inspected | Inventory at the source commit |
 |---|---|
 | Application | 12 sidebar sections (41 section children across Orders, Customers, Fulfilment, Profit, Inventory, Production), 6 settings entries, and 55 App Router page files |
-| Operational backend | 81 migration files covering 84 recorded migrations, 7 edge functions, and three plain-SQL invariant test files under `supabase/tests/` |
+| Operational backend | 82 migration files covering 85 recorded migrations, 7 edge functions, and three plain-SQL invariant test files under `supabase/tests/` |
 | Automation registry | 28 definitions: 23 live, 1 on hold, 4 planned |
 | Architecture decisions | 9 ADRs; ADR-0002 remains draft, while ADR-0006 activates only its shadow pilot |
 | Growth data platform | 18 warehouse files, 11 infrastructure files, and 1 GitHub Actions workflow |
