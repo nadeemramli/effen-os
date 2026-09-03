@@ -1,0 +1,91 @@
+<!--
+  Fullkit auth email · Phone number changed
+  Subject line (paste into the dashboard "Subject" field):
+    Your Fullkit phone number was changed
+  Source of truth: docs/ops/email-templates — edit here, then re-paste into
+  Supabase → Authentication → Emails → Templates. Inline styles only.
+-->
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <title>Your Fullkit phone number was changed</title>
+  <style>
+    :root { color-scheme: light; supported-color-schemes: light; }
+    body { margin: 0; padding: 0; background: #f6f7f8; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table { border-collapse: collapse; mso-table-lspace: 0; mso-table-rspace: 0; }
+    a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; }
+    @media only screen and (max-width: 620px) {
+      .container { width: 100% !important; }
+      .card { padding: 24px 20px !important; }
+      .outer { padding: 20px 12px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background:#f6f7f8;">
+  <div style="display:none;max-height:0;overflow:hidden;font-size:1px;line-height:1px;color:#f6f7f8;opacity:0;">The phone number on your Fullkit account was changed.&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f6f7f8">
+    <tr>
+      <td align="center" class="outer" style="padding:32px 16px;">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" class="container" style="width:600px;max-width:100%;">
+
+          <!-- Header: F mark + wordmark (transcribed from login-screen.tsx) -->
+          <tr>
+            <td style="padding:0 4px 20px 4px;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td width="36" height="36" align="center" valign="middle" bgcolor="#232833" style="width:36px;height:36px;border-radius:8px;font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:16px;font-weight:600;color:#f4f3ef;">F</td>
+                  <td style="padding-left:10px;">
+                    <div style="font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:16px;line-height:20px;font-weight:600;letter-spacing:-0.2px;color:#16181d;">Fullkit</div>
+                    <div style="font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:12px;line-height:16px;color:#5d6470;">EFFEN International Sdn Bhd</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Card -->
+          <tr>
+            <td bgcolor="#ffffff" class="card" style="background:#ffffff;border:1px solid #e3e5e9;border-radius:8px;padding:32px;">
+              <h1 style="margin:0 0 16px 0;font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:20px;line-height:28px;font-weight:600;color:#16181d;">Your phone number was changed</h1>
+              <p style="margin:0 0 16px 0;font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:15px;line-height:24px;color:#16181d;">The phone number on the Fullkit account for <strong>{{ .Email }}</strong> was just changed.</p>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 20px 0;border:1px solid #e3e5e9;border-radius:8px;">
+                <tr>
+                  <td width="140" style="padding:10px 14px;font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:13px;line-height:20px;color:#5d6470;">Previous number</td>
+                  <td style="padding:10px 14px;font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:13px;line-height:20px;color:#16181d;font-weight:600;word-break:break-all;">{{ .OldPhone }}</td>
+                </tr>
+                <tr>
+                  <td width="140" style="border-top:1px solid #e3e5e9;padding:10px 14px;font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:13px;line-height:20px;color:#5d6470;">New number</td>
+                  <td style="border-top:1px solid #e3e5e9;padding:10px 14px;font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:13px;line-height:20px;color:#16181d;font-weight:600;word-break:break-all;">{{ .Phone }}</td>
+                </tr>
+              </table>
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:8px 0 20px 0;">
+                <tr>
+                  <td bgcolor="#fbf5ec" style="border-left:4px solid #b06000;border-radius:0 6px 6px 0;padding:12px 16px;">
+                    <p style="margin:0;font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:14px;line-height:22px;color:#16181d;"><strong>Was this you?</strong> If so, no action is needed. If not, contact an HQ admin immediately so the account can be locked and re-issued.</p>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:0;font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:15px;line-height:24px;color:#16181d;">Fullkit does not currently use phone numbers for sign-in. If you see this message and did not add a phone number, treat it as suspicious.</p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 4px 0 4px;">
+              <p style="margin:0 0 6px 0;font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:12px;line-height:18px;color:#5d6470;">You received this email because an account for {{ .Email }} exists on Fullkit.</p>
+              <p style="margin:0 0 6px 0;font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:12px;line-height:18px;color:#5d6470;">Fullkit is the internal, invite-only commerce command centre of EFFEN International Sdn Bhd. This is a transactional message; there is nothing to unsubscribe from.</p>
+              <p style="margin:0;font-family:Geist, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Helvetica, Arial, sans-serif;font-size:12px;line-height:18px;color:#5d6470;"><a href="{{ .SiteURL }}" target="_blank" style="color:#5d6470;text-decoration:none;">{{ .SiteURL }}</a></p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -225,7 +225,12 @@ const REGISTRY: AutomationEntry[] = [
     guardrail: "runs itself",
     source: "airbyte cloud · 40 connections",
     status: "live",
-    healthNote: "run state in Airbyte Cloud",
+    link: { href: "/settings/data-health", label: "Pipeline runs" },
+    health: (h) => {
+      const a = h.pipeline?.airbyte as Record<string, unknown> | undefined;
+      if (!a || n(a.observed) === 0) return "no Airbyte notifications received yet — connect the webhook in Setup → Connections";
+      return `${n(a.succeeded_26h)}/${n(a.expected)} connections succeeded 26h · ${n(a.failed_24h)} failed 24h · last complete ${rel(a.last_complete_at)}`;
+    },
   },
   {
     key: "bq_replication",
@@ -236,7 +241,10 @@ const REGISTRY: AutomationEntry[] = [
     guardrail: "runs itself",
     source: "airbyte cloud · supabase-effen-os",
     status: "live",
-    healthNote: "run state in Airbyte Cloud",
+    health: (h) => {
+      const a = h.pipeline?.airbyte as Record<string, unknown> | undefined;
+      return a && n(a.observed) > 0 ? `in the Airbyte ledger · last complete ${rel(a.last_complete_at)}` : "no Airbyte notifications received yet";
+    },
   },
   {
     key: "dbt_build",
@@ -247,7 +255,12 @@ const REGISTRY: AutomationEntry[] = [
     guardrail: "runs itself",
     source: "github actions · dbt.yml",
     status: "live",
-    healthNote: "run state in GitHub Actions",
+    link: { href: "/settings/data-health", label: "Pipeline runs" },
+    health: (h) => {
+      const d = h.pipeline?.dbt as Record<string, unknown> | null | undefined;
+      if (!d) return "no dbt report received yet — add FULLKIT_PIPELINE_WEBHOOK_URL + FULLKIT_PIPELINE_TOKEN to the repo secrets";
+      return `last ${String(d.last_status)} ${rel(d.last_finished_at)} · ${n(d.tests_failed)} tests failed · ${n(d.tests_warned)} warned`;
+    },
   },
   // ── Merchandise & Catalog ─────────────────────────────────────────────────
   {

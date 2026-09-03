@@ -6,12 +6,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { LiveGuard } from "@/components/auth/live-guard";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
 import { FreshnessBadge } from "@/components/status/freshness-badge";
+import { tonePill } from "@/components/status/status-pill";
 import { ErrorState, RefreshChip, SkeletonCards, SkeletonTable } from "@/components/states";
 import { useLiveQuery } from "@/hooks/use-live-query";
 import { slaLabel, statusMeta } from "@/lib/domain/integrations";
+import { EVENT_LABEL, RUN_STATUS_TONE, STAGE_LABEL, type PipelineRuns } from "@/lib/domain/pipeline";
 import { RouteGuard } from "@/lib/rbac/guard";
 import {
   fetchIntegrationConnections,
+  fetchPipelineRuns,
   fetchRecentFailedRuns,
   integrationFreshness,
   type IntegrationFreshness,
@@ -23,18 +26,26 @@ const FRESHNESS_RANK: Record<IntegrationFreshness, number> = { stale: 0, aging: 
 
 /**
  * What can honestly be said about data trust today: per-connection freshness
- * against its SLA (real clock) and every non-success sync run in the last
- * 24 hours. There is no governed data-quality issue register yet, and the
- * page says so rather than scoring one.
+ * against its SLA (real clock), every non-success sync run in the last 24
+ * hours, and the ads-pipeline ledger (Airbyte → dbt → mart-sync) fed by the
+ * pipeline webhook, the Airbyte poller and the dbt report step. There is no
+ * governed data-quality issue register yet, and the page says so rather than
+ * scoring one.
  */
 function DataHealthInner() {
   const q = useLiveQuery(async () => {
-    const [rows, failed] = await Promise.all([fetchIntegrationConnections(), fetchRecentFailedRuns(24, 50)]);
-    return { rows, failed, fetchedAt: Date.now() };
+    const [rows, failed, pipeline] = await Promise.all([
+      fetchIntegrationConnections(),
+      fetchRecentFailedRuns(24, 50),
+      fetchPipelineRuns(48, 80).catch((e: Error) => ({ error: e.message })),
+    ]);
+    return { rows, failed, pipeline, fetchedAt: Date.now() };
   }, []);
   const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
   const failed = q.data?.failed ?? [];
   const fetchedAt = q.data?.fetchedAt ?? 0;
+  const pipeline = q.data?.pipeline && !("error" in q.data.pipeline) ? (q.data.pipeline as PipelineRuns) : null;
+  const pipelineError = q.data?.pipeline && "error" in q.data.pipeline ? q.data.pipeline.error : null;
 
   const graded = useMemo(
     () =>
@@ -54,16 +65,24 @@ function DataHealthInner() {
     { label: "Failed runs 24h", value: String(failed.length), tone: failed.length > 0 ? "text-warning" : "", hint: "non-success sync runs, all sources" },
   ];
 
+  const ab = pipeline?.summary.airbyte ?? null;
+  const dbt = pipeline?.summary.dbt ?? null;
+  const observed = (ab?.observed ?? 0) > 0;
+  const staleConnections = (pipeline?.connections ?? []).filter((c) => c.active && (!c.last_success_at || new Date(c.last_success_at).getTime() < fetchedAt - 26 * 3_600_000));
+
   return (
     <PageBody className="max-w-none">
       <PageHeader
         title="Data health"
-        description="How much the numbers can be trusted right now — source freshness against SLA and the last 24 hours of failed runs, from the live register."
+        description="How much the numbers can be trusted right now — source freshness against SLA, failed runs in the last 24 hours, and the ads-pipeline ledger, all from live tables."
       >
         <div className="flex items-center gap-2">
           {q.refreshing && <RefreshChip />}
           <Link href="/settings/automations" className="text-sm text-info underline-offset-2 hover:underline">
-            Pipeline health
+            Automations
+          </Link>
+          <Link href="/settings/setup/connections" className="text-sm text-info underline-offset-2 hover:underline">
+            Connections
           </Link>
         </div>
       </PageHeader>
@@ -86,6 +105,121 @@ function DataHealthInner() {
               </Card>
             ))}
           </div>
+
+          {/* ---------- ads pipeline ledger ---------- */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">Ads pipeline — Airbyte → dbt → mart-sync</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Airbyte notifications and the 30-minute poller feed the Airbyte rows; the dbt workflow reports its build; mart-sync logs its own runs. Late waves are expected to land the next cycle.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {pipelineError ? (
+                <p className="text-sm text-muted-foreground">Pipeline ledger unavailable: {pipelineError}</p>
+              ) : !pipeline ? null : (
+                <>
+                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                    <div className="rounded-md border px-3 py-2">
+                      <div className="text-[11px] text-muted-foreground">Airbyte connections succeeded, 26h</div>
+                      <div className={cn("tnum mt-0.5 text-base font-semibold", observed && (ab?.stale ?? 0) > 0 && "text-warning")}>
+                        {observed ? `${ab?.succeeded_26h}/${ab?.expected}` : "—"}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">{observed ? `${ab?.failed_24h} failed 24h` : "no notifications received yet"}</div>
+                    </div>
+                    <div className="rounded-md border px-3 py-2">
+                      <div className="text-[11px] text-muted-foreground">Last Airbyte completion</div>
+                      <div className="mt-1">
+                        {ab?.last_complete_at ? <FreshnessBadge lastSuccessAt={ab.last_complete_at} slaMinutes={26 * 60} realClock /> : <span className="text-xs text-muted-foreground">none recorded</span>}
+                      </div>
+                    </div>
+                    <div className="rounded-md border px-3 py-2">
+                      <div className="text-[11px] text-muted-foreground">dbt build</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        {dbt?.last_status ? (
+                          <>
+                            {tonePill({ label: dbt.last_status, tone: dbt.last_status === "success" ? "success" : "destructive" })}
+                            <span className="tnum text-[11px] text-muted-foreground">
+                              {dbt.tests_failed ?? 0} failed · {dbt.tests_warned ?? 0} warned
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">no report yet — add the GitHub secrets</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-md border px-3 py-2">
+                      <div className="text-[11px] text-muted-foreground">mart-sync → ad_daily_facts</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        {pipeline.summary.mart.last_sync_at ? (
+                          <FreshnessBadge lastSuccessAt={pipeline.summary.mart.last_sync_at} slaMinutes={26 * 60} realClock />
+                        ) : (
+                          <span className="text-xs text-muted-foreground">never</span>
+                        )}
+                        {pipeline.summary.mart.last_status && (
+                          <span className="text-[11px] text-muted-foreground">last run {pipeline.summary.mart.last_status}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {observed && staleConnections.length > 0 && (
+                    <div>
+                      <div className="mb-1 text-xs font-medium text-warning">
+                        {staleConnections.length} active connection{staleConnections.length === 1 ? "" : "s"} without a success in 26h
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {staleConnections.map((c) => (
+                          <span key={c.key} className="rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] text-warning" title={c.last_status ?? undefined}>
+                            {c.key}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {pipeline.runs.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      No pipeline runs recorded in the last 48 hours. Connect the Airbyte webhook in Setup → Connections and add the dbt report secrets to start the ledger.
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[860px] text-sm">
+                        <thead>
+                          <tr className="border-b text-left text-xs text-muted-foreground">
+                            <th className="pb-2 font-medium">Finished</th>
+                            <th className="pb-2 font-medium">Stage</th>
+                            <th className="pb-2 font-medium">Connection</th>
+                            <th className="pb-2 font-medium">Event</th>
+                            <th className="pb-2 font-medium">Status</th>
+                            <th className="pb-2 text-right font-medium">Records</th>
+                            <th className="pb-2 font-medium">Via</th>
+                            <th className="pb-2 font-medium">Detail</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pipeline.runs.map((r) => (
+                            <tr key={r.id} className="border-b last:border-0">
+                              <td className="tnum py-2 pr-3 text-xs">{formatDateTime(r.finished_at ?? r.started_at ?? r.received_at)}</td>
+                              <td className="py-2 pr-3 text-xs">{STAGE_LABEL[r.stage]}</td>
+                              <td className="py-2 pr-3 font-mono text-[11px]">{r.connection_key ?? (r.stage === "dbt" ? "dbt build" : "—")}</td>
+                              <td className="py-2 pr-3 text-xs text-muted-foreground">{EVENT_LABEL[r.event_type] ?? r.event_type}</td>
+                              <td className="py-2 pr-3">{tonePill({ label: r.status, tone: RUN_STATUS_TONE[r.status] ?? "neutral" })}</td>
+                              <td className="tnum py-2 pr-3 text-right text-xs">{r.records === null ? "—" : r.records.toLocaleString()}</td>
+                              <td className="py-2 pr-3 text-[11px] text-muted-foreground">{r.received_via}</td>
+                              <td className="max-w-96 py-2 text-xs text-muted-foreground">
+                                {r.error ?? (r.stage === "dbt" && r.summary ? `${String(r.summary.models_ok ?? 0)} models · ${String(r.summary.tests_ok ?? 0)} tests ok` : "")}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <Card>
@@ -131,6 +265,9 @@ function DataHealthInner() {
                   <li>
                     Customer-economics coverage gaps are listed per cell in{" "}
                     <Link href="/profit/definitions-coverage" className="text-info underline-offset-2 hover:underline">Profit → Definitions &amp; coverage</Link>.
+                  </li>
+                  <li>
+                    Airbyte&apos;s own run state is mirrored here only once the notification webhook is connected; until then only its downstream effect in ad_daily_facts is visible.
                   </li>
                 </ul>
               </CardContent>

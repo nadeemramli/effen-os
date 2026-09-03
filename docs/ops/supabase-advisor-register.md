@@ -86,3 +86,7 @@ same review date applies.
       (HaveIBeenPwned check). Clears the remaining security WARN.
 - [ ] Auth → switch DB connection allocation from **fixed 10** to
       **percentage-based**, so Auth scales with any future instance resize.
+- [ ] Auth → Emails: paste the branded templates and enable the security
+      notifications, email confirmation and secure email change — full
+      checklist in [`email-templates/README.md`](email-templates/README.md)
+      (added 2026-08-28, after Resend custom SMTP went live).

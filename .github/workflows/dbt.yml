@@ -43,6 +43,48 @@ jobs:
         if: github.event_name == 'pull_request'
         run: dbt compile --profiles-dir .
 
+      - name: Stamp start
+        if: github.event_name != 'pull_request'
+        run: echo "STARTED_AT=$(date -u +%FT%TZ)" >> "$GITHUB_ENV"
+
       - name: dbt build
         if: github.event_name != 'pull_request'
         run: dbt build --profiles-dir .
+
+      # Report the run to Fullkit's pipeline ledger (pipeline_runs) so Data
+      # health and the nightly routine see dbt state without opening GitHub.
+      # Needs two repository secrets: FULLKIT_PIPELINE_WEBHOOK_URL (the
+      # pipeline-webhook function URL, no token) and FULLKIT_PIPELINE_TOKEN
+      # (issued by set_airbyte_connection). Silent no-op until both exist.
+      - name: Report run to Fullkit
+        if: github.event_name != 'pull_request' && always()
+        env:
+          WEBHOOK_URL: ${{ secrets.FULLKIT_PIPELINE_WEBHOOK_URL }}
+          PIPELINE_TOKEN: ${{ secrets.FULLKIT_PIPELINE_TOKEN }}
+          RUN_STATUS: ${{ job.status }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ] || [ -z "$PIPELINE_TOKEN" ]; then
+            echo "Fullkit pipeline webhook not configured; skipping report"
+            exit 0
+          fi
+          summary=$(jq -c '{
+            models_ok: ([.results[] | select(.unique_id|startswith("model.")) | select(.status=="success")] | length),
+            models_failed: ([.results[] | select(.unique_id|startswith("model.")) | select(.status=="error")] | length),
+            tests_ok: ([.results[] | select(.unique_id|startswith("test.")) | select(.status=="pass")] | length),
+            tests_failed: ([.results[] | select(.unique_id|startswith("test.")) | select(.status=="fail" or .status=="error")] | length),
+            tests_warned: ([.results[] | select(.unique_id|startswith("test.")) | select(.status=="warn")] | length),
+            failed: [.results[] | select(.status=="error" or .status=="fail" or .status=="warn") | .unique_id],
+            elapsed_s: .elapsed_time
+          }' target/run_results.json 2>/dev/null || echo "{}")
+          if [ "$RUN_STATUS" = "success" ]; then status=success; else status=failed; fi
+          body=$(jq -nc \
+            --arg id "$GITHUB_RUN_ID" \
+            --arg st "$status" \
+            --arg started "$STARTED_AT" \
+            --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --argjson summary "$summary" \
+            '{external_id: $id, status: $st, started_at: $started, finished_at: (now | todate), url: $url, summary: $summary}')
+          curl -sS --max-time 30 -X POST "$WEBHOOK_URL?stage=dbt" \
+            -H "Content-Type: application/json" \
+            -H "X-Pipeline-Token: $PIPELINE_TOKEN" \
+            -d "$body" || echo "report failed (non-blocking)"

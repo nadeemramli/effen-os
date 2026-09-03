@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LiveGuard } from "@/components/auth/live-guard";
 import { AiSection } from "@/components/setup/ai-section";
+import { AirbyteSection } from "@/components/setup/airbyte-section";
 import { NinjaVanSection } from "@/components/setup/ninjavan-section";
 import { WhatsAppSection } from "@/components/setup/whatsapp-section";
 import { PageBody, PageHeader } from "@/components/shell/page-header";
@@ -254,6 +255,7 @@ function ConnectionsInner() {
 
       <WhatsAppSection />
       <NinjaVanSection />
+      <AirbyteSection />
 
       <AiSection />
 

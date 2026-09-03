@@ -19,6 +19,7 @@ Start with [Current development state](CURRENT_STATE.md). It is the code-backed 
 - [Marketplace onboarding plan](ops/marketplace-onboarding-plan.md)
 - [SKU mapping register](ops/sku-mapping-register.md)
 - [Supabase advisor register](ops/supabase-advisor-register.md)
+- [Auth email templates and hardening](ops/email-templates/README.md) — the 13 Supabase Auth templates sent via Resend, plus the dashboard/Resend security checklist
 
 ## Architecture decisions
 

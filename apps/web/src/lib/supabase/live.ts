@@ -5,6 +5,7 @@ import type { OrderDraft, OrderQc, OrderQcEvent, WorkspaceMember } from "@/lib/d
 import type { CohortKey, CohortSummary, WorkItem, WorkItemAction, WorkItemSeverity, WorkItemSource } from "@/lib/domain/cohorts";
 import type { CustomerBaseMovement, CustomerLifecycleStates, MovementGrain, MovementMeasure, TransitionPopulation } from "@/lib/domain/lifecycle";
 import type { OrderQueueCounts } from "@/lib/domain/order-views";
+import type { PipelineRuns } from "@/lib/domain/pipeline";
 import { getSupabase } from "./client";
 
 /**
@@ -1486,9 +1487,14 @@ export async function setVariantUnitsPerPack(variantId: number, units: number): 
 export type AutomationHealth = Record<string, Record<string, unknown>>;
 
 export async function fetchAutomationHealth(): Promise<AutomationHealth> {
-  const { data, error } = await getSupabase().rpc("live_automation_health");
-  if (error) throw new Error(error.message);
-  return (data ?? {}) as AutomationHealth;
+  const [health, pipeline] = await Promise.all([
+    getSupabase().rpc("live_automation_health"),
+    getSupabase().rpc("live_pipeline_runs", { p_hours: 48, p_limit: 1 }),
+  ]);
+  if (health.error) throw new Error(health.error.message);
+  // The pipeline ledger is additive: an older database without the RPC still renders the registry.
+  const summary = pipeline.error ? null : ((pipeline.data as { summary?: Record<string, unknown> } | null)?.summary ?? null);
+  return { ...((health.data ?? {}) as AutomationHealth), pipeline: (summary ?? {}) as Record<string, unknown> };
 }
 
 /* ---------- Orders section nav: per-queue counts ---------- */
@@ -2027,4 +2033,37 @@ export async function fetchNvCounts(): Promise<{ shipments: number; events_24h: 
     events_24h: e.count ?? 0,
     last_event_at: (last.data as { event_at: string | null } | null)?.event_at ?? null,
   };
+}
+
+/* ---------- Ads pipeline observability (Airbyte -> dbt -> mart-sync) ---------- */
+
+export async function fetchPipelineRuns(hours = 48, limit = 200): Promise<PipelineRuns> {
+  const { data, error } = await getSupabase().rpc("live_pipeline_runs", { p_hours: hours, p_limit: limit });
+  if (error) throw new Error(error.message);
+  return data as PipelineRuns;
+}
+
+export async function fetchAirbyteConnection(): Promise<LiveIntegration | null> {
+  const { data, error } = await getSupabase()
+    .from("integration_connections")
+    .select(INTEGRATION_COLUMNS)
+    .eq("provider", "Airbyte")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data as LiveIntegration | null) ?? null;
+}
+
+/**
+ * Issues (or re-reads) the webhook token and optionally stores the API
+ * application client in Vault. HQ admin only (server-enforced). Returns the
+ * webhook token so the UI can show the full URL once.
+ */
+export async function saveAirbyteConnection(q: { clientId?: string; clientSecret?: string; workspaceId: string | null }): Promise<string> {
+  const { data, error } = await getSupabase().rpc("set_airbyte_connection", {
+    p_client_id: q.clientId ?? null,
+    p_client_secret: q.clientSecret ?? null,
+    p_workspace_id: q.workspaceId,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
 }
