@@ -3,7 +3,6 @@
 import {
   Bar,
   CartesianGrid,
-  Cell,
   ComposedChart,
   Line,
   ReferenceLine,
@@ -18,6 +17,7 @@ import {
   WITHHOLD_LABELS,
   formatMetric,
   rmFull,
+  scaleToRange,
   type DerivedPeriod,
   type EconMetric,
 } from "@/lib/domain/customer-base-economics";
@@ -29,13 +29,22 @@ const REACTIVATED = "var(--info)";
 const LAPSED = "var(--destructive)";
 const NET = "var(--foreground)";
 
-/** One colour per metric, held constant across the chart, tooltip and table. */
+/** One colour per overlaid series, held constant across toggle, chart, tooltip and table. */
 export const METRIC_COLORS: Record<EconMetric, string> = {
-  ncac: "var(--destructive)",
+  ncac: "var(--chart-5)",
   spend: "var(--warning)",
-  roas: "var(--info)",
+  roas: "var(--chart-3)",
   revenue: "var(--chart-1)",
-  cm3: "var(--success)",
+  cm3: "var(--chart-2)",
+};
+
+/** Dash pattern per series so they stay distinguishable without colour. */
+const METRIC_DASH: Record<EconMetric, string | undefined> = {
+  ncac: undefined,
+  spend: "6 3",
+  roas: "2 3",
+  revenue: undefined,
+  cm3: "8 3 2 3",
 };
 
 export function periodLabel(p: MovementPeriod, grain: MovementGrain): string {
@@ -48,7 +57,66 @@ function n(v: number): string {
   return v.toLocaleString();
 }
 
-function Tip({ active, payload, label }: { active?: boolean; payload?: Array<{ payload: MovementPeriod }>; label?: string }) {
+function pctOf(part: number, whole: number): string {
+  return whole > 0 ? `${((part / whole) * 100).toFixed(0)}%` : "—";
+}
+
+/** Per-metric breakdown rows, so every point can be traced back to its source lines. */
+function econRows(metric: EconMetric, d: DerivedPeriod): Array<[string, string]> {
+  const r = d.raw;
+  const s = r.spend;
+  const ccy = Object.entries(r.revenue_by_currency).filter(([, v]) => Number(v) !== 0);
+  const revenueRows: Array<[string, string]> =
+    ccy.length > 1 || (ccy.length === 1 && ccy[0]![0] !== "MYR")
+      ? ccy.map(([c, v]) => [`Revenue ${c}`, `${c === "MYR" ? "RM" : c} ${Number(v).toLocaleString("en-MY", { maximumFractionDigits: 0 })}`] as [string, string])
+      : [];
+  switch (metric) {
+    case "ncac":
+      return [
+        ["Spend net of WHT", s ? rmFull(s.net) : "—"],
+        ["New (first accepted)", r.new_accepted === null ? "—" : n(r.new_accepted)],
+      ];
+    case "spend":
+      return [
+        ["WHT (Meta)", s ? rmFull(s.wht) : "—"],
+        ["Banned accounts", s ? rmFull(s.banned) : "—"],
+      ];
+    case "roas":
+      return [
+        ["Revenue (MYR)", rmFull(d.revenueMyr)],
+        ["Spend gross", s ? rmFull(s.gross) : "—"],
+        ["Provider ROAS", d.platformRoas === null ? "—" : `${d.platformRoas.toFixed(2)}× (attribution)`],
+      ];
+    case "revenue":
+      return [...revenueRows, ["Orders", `${n(r.orders)} · COD ${pctOf(r.cod_orders, r.orders)}`]];
+    case "cm3":
+      return [
+        ["CM2", rmFull(d.cm2)],
+        ["Ads + WHT", s ? `−${rmFull(s.gross + s.wht)}` : "—"],
+        ["CM3 margin", d.cells.cm3.value !== null && d.revenueMyr > 0 ? pctOf(d.cm3, d.revenueMyr) : "—"],
+      ];
+  }
+}
+
+interface Datum extends MovementPeriod {
+  label: string;
+  lapsed_neg: number;
+  derived: DerivedPeriod | null;
+  /** Scaled 0–100 per overlaid series, keyed `s_<metric>`; null where withheld. */
+  [k: `s_${string}`]: number | null;
+}
+
+function Tip({
+  active,
+  payload,
+  label,
+  overlays,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: Datum }>;
+  label?: string;
+  overlays: EconMetric[];
+}) {
   const p = payload?.[0]?.payload;
   if (!active || !p) return null;
   const rows: Array<[string, string, string?]> = [
@@ -60,7 +128,7 @@ function Tip({ active, payload, label }: { active?: boolean; payload?: Array<{ p
     ["Opening → closing", `${n(p.opening_active)} → ${n(p.closing_active)}`],
   ];
   return (
-    <div className="rounded-md border bg-popover px-2.5 py-2 text-xs shadow-md">
+    <div className="max-w-72 rounded-md border bg-popover px-2.5 py-2 text-xs shadow-md">
       <div className="mb-1 font-medium">
         {label}
         {!p.is_complete && <span className="ml-1 text-muted-foreground">(in progress)</span>}
@@ -72,6 +140,28 @@ function Tip({ active, payload, label }: { active?: boolean; payload?: Array<{ p
           <span className="tnum ml-auto pl-3 font-medium text-foreground">{v}</span>
         </div>
       ))}
+      {overlays.map((m) => {
+        const cell = p.derived?.cells[m];
+        const scaled = p[`s_${m}`];
+        return (
+          <div key={m} className="mt-1.5 border-t pt-1.5">
+            <div className="flex items-center gap-2">
+              <span className="h-0.5 w-3 rounded" style={{ background: METRIC_COLORS[m] }} aria-hidden />
+              <span className="text-muted-foreground">{BASE_METRIC_LABELS[m]}</span>
+              <span className="tnum ml-auto pl-3 font-medium text-foreground">{cell ? formatMetric(m, cell.value) : "—"}</span>
+              {scaled !== null && scaled !== undefined && <span className="tnum text-muted-foreground">({scaled.toFixed(0)})</span>}
+            </div>
+            {cell?.reason && <div className="mt-0.5 pl-5 text-muted-foreground">Withheld: {WITHHOLD_LABELS[cell.reason]}</div>}
+            {!p.derived && <div className="mt-0.5 pl-5 text-muted-foreground">No economics row for this period.</div>}
+            {p.derived && cell?.value !== null && econRows(m, p.derived).map(([k, v]) => (
+              <div key={k} className="flex gap-2 pl-5">
+                <span className="text-muted-foreground">{k}</span>
+                <span className="tnum ml-auto pl-3 text-foreground">{v}</span>
+              </div>
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -79,189 +169,83 @@ function Tip({ active, payload, label }: { active?: boolean; payload?: Array<{ p
 /**
  * Diverging movement chart: new + reactivated above zero, lapsed below, net
  * active change as a line. Clicking a bar opens the exact population.
+ *
+ * Economics series (nCAC, ad spend, ROAS, revenue, CM3) can be overlaid as
+ * lines on a second axis. Their units differ, so each is min–max scaled to
+ * 0–100 within the visible range; the tooltip shows the real value and the
+ * scaled position. Withheld periods leave a gap in the line.
  */
 export function MovementChart({
   periods,
   grain,
   onSelect,
+  overlays = [],
+  economics,
 }: {
   periods: MovementPeriod[];
   grain: MovementGrain;
   onSelect: (period: MovementPeriod, measure: MovementMeasure) => void;
+  overlays?: EconMetric[];
+  economics?: Map<string, DerivedPeriod>;
 }) {
-  const data = periods.map((p) => ({ ...p, label: periodLabel(p, grain), lapsed_neg: -p.lapsed }));
+  const data: Datum[] = periods.map((p) => ({
+    ...p,
+    label: periodLabel(p, grain),
+    lapsed_neg: -p.lapsed,
+    derived: economics?.get(p.period_start) ?? null,
+  }));
+  for (const m of overlays) {
+    const scaled = scaleToRange(data.map((d) => d.derived?.cells[m].value ?? null));
+    data.forEach((d, i) => {
+      d[`s_${m}`] = scaled[i]!;
+    });
+  }
   const summary = periods.length
-    ? `${periods.length} ${grain === "month" ? "months" : "weeks"}: ${n(periods.reduce((a, p) => a + p.new_customers, 0))} new, ${n(periods.reduce((a, p) => a + p.reactivated, 0))} reactivated, ${n(periods.reduce((a, p) => a + p.lapsed, 0))} lapsed`
+    ? `${periods.length} ${grain === "month" ? "months" : "weeks"}: ${n(periods.reduce((a, p) => a + p.new_customers, 0))} new, ${n(periods.reduce((a, p) => a + p.reactivated, 0))} reactivated, ${n(periods.reduce((a, p) => a + p.lapsed, 0))} lapsed${overlays.length ? `; overlaid ${overlays.map((m) => BASE_METRIC_LABELS[m]).join(", ")} scaled 0–100` : ""}`
     : "No periods";
 
   return (
     <div className="h-72 w-full" role="img" aria-label={`Customer movement. ${summary}`}>
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0} stackOffset="sign">
+        <ComposedChart data={data} margin={{ top: 8, right: overlays.length ? 4 : 8, left: 0, bottom: 0 }} barGap={0} stackOffset="sign">
           <CartesianGrid stroke={GRID} vertical={false} />
           <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: GRID }} tick={{ fontSize: 11, fill: MUTED }} interval="preserveStartEnd" />
-          <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: MUTED }} width={44} tickFormatter={(v: number) => n(v)} />
-          <ReferenceLine y={0} stroke={MUTED} />
-          <Tooltip content={<Tip />} cursor={{ fill: "var(--muted)", opacity: 0.4 }} />
-          <Bar dataKey="new_customers" name="New" stackId="flow" fill={NEW} onClick={(d: { payload?: MovementPeriod }) => d.payload && onSelect(d.payload, "new")} cursor="pointer" />
-          <Bar dataKey="reactivated" name="Reactivated" stackId="flow" fill={REACTIVATED} onClick={(d: { payload?: MovementPeriod }) => d.payload && onSelect(d.payload, "reactivated")} cursor="pointer" />
-          <Bar dataKey="lapsed_neg" name="Lapsed" stackId="flow" fill={LAPSED} onClick={(d: { payload?: MovementPeriod }) => d.payload && onSelect(d.payload, "lapsed")} cursor="pointer" />
-          <Line type="monotone" dataKey="net_active_change" name="Net change" stroke={NET} strokeWidth={1.5} dot={{ r: 2 }} activeDot={{ r: 3 }} />
-        </ComposedChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-/* ---------- Economics companion (nCAC · ad spend · ROAS · revenue · CM3) ---------- */
-
-interface EconDatum {
-  label: string;
-  period: MovementPeriod;
-  derived: DerivedPeriod | null;
-  value: number | null;
-}
-
-function pctOf(part: number, whole: number): string {
-  return whole > 0 ? `${((part / whole) * 100).toFixed(0)}%` : "—";
-}
-
-/** Per-metric breakdown rows, so every bar can be traced back to its source lines. */
-function econRows(metric: EconMetric, d: DerivedPeriod): Array<[string, string]> {
-  const r = d.raw;
-  const s = r.spend;
-  const ccy = Object.entries(r.revenue_by_currency).filter(([, v]) => Number(v) !== 0);
-  const revenueRows: Array<[string, string]> = ccy.length > 1 || (ccy.length === 1 && ccy[0]![0] !== "MYR")
-    ? ccy.map(([c, v]) => [`Revenue ${c}`, `${c === "MYR" ? "RM" : c} ${Number(v).toLocaleString("en-MY", { maximumFractionDigits: 0 })}`] as [string, string])
-    : [];
-  switch (metric) {
-    case "ncac":
-      return [
-        ["Spend gross", s ? rmFull(s.gross) : "—"],
-        ["WHT (Meta)", s ? rmFull(s.wht) : "—"],
-        ["Spend net", s ? rmFull(s.net) : "—"],
-        ["New (first accepted)", r.new_accepted === null ? "—" : n(r.new_accepted)],
-        ["New (first delivered)", r.new_customers === null ? "—" : n(r.new_customers)],
-      ];
-    case "spend":
-      return [
-        ["Gross", s ? rmFull(s.gross) : "—"],
-        ["WHT (Meta)", s ? rmFull(s.wht) : "—"],
-        ["Net", s ? rmFull(s.net) : "—"],
-        ["Banned accounts", s ? rmFull(s.banned) : "—"],
-        ["Provider purchases", s ? n(s.purchases) : "—"],
-        ["Fact rows", s ? n(s.fact_rows) : "—"],
-      ];
-    case "roas":
-      return [
-        ["Revenue (MYR)", rmFull(d.revenueMyr)],
-        ...revenueRows,
-        ["Spend gross", s ? rmFull(s.gross) : "—"],
-        ["Provider ROAS", d.platformRoas === null ? "—" : `${d.platformRoas.toFixed(2)}× (attribution)`],
-      ];
-    case "revenue":
-      return [
-        ...revenueRows,
-        ["Orders", n(r.orders)],
-        ["of which COD", `${n(r.cod_orders)} (${pctOf(r.cod_orders, r.orders)})`],
-        ["Revenue / order", r.orders > 0 ? rmFull(d.revenueMyr / r.orders) : "—"],
-      ];
-    case "cm3":
-      return [
-        ["Revenue", rmFull(d.revenueMyr)],
-        ...revenueRows,
-        ["COGS", `−${rmFull(r.cogs_myr)}`],
-        ["Delivery", `−${rmFull(r.delivery_myr)}`],
-        ["Returns", `−${rmFull(r.returns_myr)} (${Number(r.rts_parcels).toFixed(0)} RTS)`],
-        ["COD fees", `−${rmFull(r.cod_myr)}`],
-        ["CM2", rmFull(d.cm2)],
-        ["Ads + WHT", s ? `−${rmFull(s.gross + s.wht)}` : "—"],
-        ["CM3 margin", d.cells.cm3.value !== null && d.revenueMyr > 0 ? pctOf(d.cm3, d.revenueMyr) : "—"],
-        ["SKU coverage", `${(d.coverage * 100).toFixed(1)}%`],
-      ];
-  }
-}
-
-function EconTip({ active, payload, label, metric }: { active?: boolean; payload?: Array<{ payload: EconDatum }>; label?: string; metric: EconMetric }) {
-  const d = payload?.[0]?.payload;
-  if (!active || !d) return null;
-  const cell = d.derived?.cells[metric];
-  return (
-    <div className="rounded-md border bg-popover px-2.5 py-2 text-xs shadow-md">
-      <div className="mb-1 font-medium">
-        {label}
-        {!d.period.is_complete && <span className="ml-1 text-muted-foreground">(in progress)</span>}
-      </div>
-      <div className="flex items-center gap-2">
-        <span className="size-2 rounded-full" style={{ background: METRIC_COLORS[metric] }} aria-hidden />
-        <span className="text-muted-foreground">{BASE_METRIC_LABELS[metric]}</span>
-        <span className="tnum ml-auto pl-3 font-medium text-foreground">{cell ? formatMetric(metric, cell.value) : "—"}</span>
-      </div>
-      {cell?.reason && <div className="mt-0.5 max-w-56 text-muted-foreground">Withheld: {WITHHOLD_LABELS[cell.reason]}</div>}
-      {!d.derived && <div className="mt-0.5 max-w-56 text-muted-foreground">No economics row for this period.</div>}
-      {d.derived && (
-        <div className="mt-1.5 space-y-0.5 border-t pt-1.5">
-          {econRows(metric, d.derived).map(([k, v]) => (
-            <div key={k} className="flex gap-2">
-              <span className="text-muted-foreground">{k}</span>
-              <span className="tnum ml-auto pl-3 text-foreground">{v}</span>
-            </div>
+          <YAxis yAxisId="flow" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: MUTED }} width={44} tickFormatter={(v: number) => n(v)} />
+          {overlays.length > 0 && (
+            <YAxis
+              yAxisId="scaled"
+              orientation="right"
+              domain={[0, 100]}
+              ticks={[0, 50, 100]}
+              tickLine={false}
+              axisLine={false}
+              tick={{ fontSize: 10, fill: MUTED }}
+              width={30}
+              tickFormatter={(v: number) => (v === 0 ? "low" : v === 100 ? "high" : "")}
+            />
+          )}
+          <ReferenceLine yAxisId="flow" y={0} stroke={MUTED} />
+          <Tooltip content={<Tip overlays={overlays} />} cursor={{ fill: "var(--muted)", opacity: 0.4 }} />
+          <Bar yAxisId="flow" dataKey="new_customers" name="New" stackId="flow" fill={NEW} fillOpacity={overlays.length ? 0.55 : 1} onClick={(d: { payload?: MovementPeriod }) => d.payload && onSelect(d.payload, "new")} cursor="pointer" />
+          <Bar yAxisId="flow" dataKey="reactivated" name="Reactivated" stackId="flow" fill={REACTIVATED} fillOpacity={overlays.length ? 0.55 : 1} onClick={(d: { payload?: MovementPeriod }) => d.payload && onSelect(d.payload, "reactivated")} cursor="pointer" />
+          <Bar yAxisId="flow" dataKey="lapsed_neg" name="Lapsed" stackId="flow" fill={LAPSED} fillOpacity={overlays.length ? 0.55 : 1} onClick={(d: { payload?: MovementPeriod }) => d.payload && onSelect(d.payload, "lapsed")} cursor="pointer" />
+          <Line yAxisId="flow" type="monotone" dataKey="net_active_change" name="Net change" stroke={NET} strokeWidth={1.5} dot={{ r: 2 }} activeDot={{ r: 3 }} strokeOpacity={overlays.length ? 0.6 : 1} />
+          {overlays.map((m) => (
+            <Line
+              key={m}
+              yAxisId="scaled"
+              type="monotone"
+              dataKey={`s_${m}`}
+              name={BASE_METRIC_LABELS[m]}
+              stroke={METRIC_COLORS[m]}
+              strokeWidth={2}
+              strokeDasharray={METRIC_DASH[m]}
+              dot={{ r: 2.5, strokeWidth: 0, fill: METRIC_COLORS[m] }}
+              activeDot={{ r: 4 }}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
           ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * The selected economics metric per movement period, on the same x-axis as
- * the movement chart. Withheld periods leave a gap rather than a zero; the
- * tooltip says why. Negative CM3 is drawn in the destructive tone.
- */
-export function EconomicsChart({
-  periods,
-  grain,
-  metric,
-  economics,
-}: {
-  periods: MovementPeriod[];
-  grain: MovementGrain;
-  metric: EconMetric;
-  economics: Map<string, DerivedPeriod>;
-}) {
-  const data: EconDatum[] = periods.map((p) => {
-    const derived = economics.get(p.period_start) ?? null;
-    return { label: periodLabel(p, grain), period: p, derived, value: derived?.cells[metric].value ?? null };
-  });
-  const shown = data.filter((d) => d.value !== null);
-  const withheld = data.length - shown.length;
-  const summary = shown.length
-    ? `${BASE_METRIC_LABELS[metric]} across ${data.length} ${grain === "month" ? "months" : "weeks"}: ${formatMetric(metric, shown[0]!.value, true)} to ${formatMetric(metric, shown[shown.length - 1]!.value, true)}${withheld ? `, ${withheld} withheld` : ""}`
-    : `${BASE_METRIC_LABELS[metric]}: no period has a value in range`;
-  const color = METRIC_COLORS[metric];
-  const hasNegative = shown.some((d) => (d.value ?? 0) < 0);
-
-  return (
-    <div className="h-72 w-full" role="img" aria-label={summary}>
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={0}>
-          <CartesianGrid stroke={GRID} vertical={false} />
-          <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: GRID }} tick={{ fontSize: 11, fill: MUTED }} interval="preserveStartEnd" />
-          <YAxis
-            tickLine={false}
-            axisLine={false}
-            tick={{ fontSize: 11, fill: MUTED }}
-            width={metric === "roas" ? 44 : 64}
-            tickFormatter={(v: number) => formatMetric(metric, v, true)}
-          />
-          {hasNegative && <ReferenceLine y={0} stroke={MUTED} />}
-          {metric === "roas" && <ReferenceLine y={1} stroke={MUTED} strokeDasharray="4 3" label={{ value: "1.0× break-even on spend", position: "insideTopRight", fontSize: 10, fill: MUTED }} />}
-          <Tooltip content={<EconTip metric={metric} />} cursor={{ fill: "var(--muted)", opacity: 0.4 }} />
-          <Bar dataKey="value" name={BASE_METRIC_LABELS[metric]} fill={color} isAnimationActive={false}>
-            {data.map((d) => (
-              <Cell key={d.period.period_start} fill={(d.value ?? 0) < 0 ? LAPSED : color} fillOpacity={d.period.is_complete ? 1 : 0.55} />
-            ))}
-          </Bar>
         </ComposedChart>
       </ResponsiveContainer>
     </div>

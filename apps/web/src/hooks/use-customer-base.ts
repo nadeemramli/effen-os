@@ -1,10 +1,10 @@
 "use client";
 
 import { useMemo } from "react";
-import { parseAsString, parseAsStringLiteral, useQueryState } from "nuqs";
+import { parseAsArrayOf, parseAsString, parseAsStringLiteral, useQueryState } from "nuqs";
 import { useLiveQuery } from "@/hooks/use-live-query";
 import type { CustomerBaseMovement, MovementGrain } from "@/lib/domain/lifecycle";
-import { BASE_METRICS, type BaseMetric, type CustomerBaseEconomics } from "@/lib/domain/customer-base-economics";
+import { ECON_METRICS, type CustomerBaseEconomics, type EconMetric } from "@/lib/domain/customer-base-economics";
 import {
   fetchCustomerBaseEconomics,
   fetchCustomerBaseMovement,
@@ -72,7 +72,8 @@ export function useCustomerBase() {
   const presets = RANGE_PRESETS[grain];
   const [rangeRaw, setRange] = useQueryState("range", parseAsString.withDefault(presets[1]!.key));
   const preset = presets.find((p) => p.key === rangeRaw) ?? presets[1]!;
-  const [metric, setMetric] = useQueryState("metric", parseAsStringLiteral(BASE_METRICS).withDefault("movement"));
+  // Overlaid economics series, e.g. ?series=ncac,cm3 — empty means the plain movement chart.
+  const [seriesRaw, setSeries] = useQueryState("series", parseAsArrayOf(parseAsStringLiteral(ECON_METRICS)).withDefault([]));
 
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
@@ -102,10 +103,11 @@ export function useCustomerBase() {
       range: preset,
       setRange: (key: string) => void setRange(key),
       presets,
-      metric: metric as BaseMetric,
-      setMetric: (m: BaseMetric) => void setMetric(m),
+      /** Overlaid series in toggle order (deduplicated, unknown keys dropped by the parser). */
+      series: ECON_METRICS.filter((m) => seriesRaw.includes(m)) as EconMetric[],
+      setSeries: (next: EconMetric[]) => void setSeries(next.length ? ECON_METRICS.filter((m) => next.includes(m)) : null),
     }),
-    [grain, preset, presets, setGrain, setRange, metric, setMetric],
+    [grain, preset, presets, setGrain, setRange, seriesRaw, setSeries],
   );
 
   return {

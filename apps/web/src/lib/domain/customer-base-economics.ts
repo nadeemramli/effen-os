@@ -10,13 +10,11 @@
 import { FX_TO_MYR } from "@/lib/domain/metrics";
 import type { MovementGrain } from "@/lib/domain/lifecycle";
 
-/** What the movement chart can show. `movement` is the reconciled flow chart itself. */
-export const BASE_METRICS = ["movement", "ncac", "spend", "roas", "revenue", "cm3"] as const;
-export type BaseMetric = (typeof BASE_METRICS)[number];
-export type EconMetric = Exclude<BaseMetric, "movement">;
+/** Series that can be overlaid on the movement chart, in toggle order. */
+export const ECON_METRICS = ["ncac", "spend", "roas", "revenue", "cm3"] as const;
+export type EconMetric = (typeof ECON_METRICS)[number];
 
-export const BASE_METRIC_LABELS: Record<BaseMetric, string> = {
-  movement: "Movement",
+export const BASE_METRIC_LABELS: Record<EconMetric, string> = {
   ncac: "nCAC",
   spend: "Ad spend",
   roas: "ROAS",
@@ -24,15 +22,27 @@ export const BASE_METRIC_LABELS: Record<BaseMetric, string> = {
   cm3: "CM3",
 };
 
-/** Chart title per metric — the same register as the movement title. */
-export const BASE_METRIC_TITLES: Record<BaseMetric, string> = {
-  movement: "Movement — additions above, lapses below, net as a line",
+/** One-line description per series, used in the chart title when overlaid. */
+export const BASE_METRIC_TITLES: Record<EconMetric, string> = {
   ncac: "nCAC — ad spend net of WHT per new customer (first accepted order)",
   spend: "Ad spend — warehouse facts, all platforms, gross of WHT",
   roas: "ROAS — recognized revenue ÷ ad spend (blended, not provider-attributed)",
   revenue: "Revenue — recognized orders (processing + completed), MYR",
   cm3: "CM3 — revenue − COGS − fulfilment − ads − WHT, before fixed costs",
 };
+
+/**
+ * Min–max scale a series to 0–100 within the visible range so unlike units
+ * (RM, ×, RM per customer) can share one axis. Withheld points stay null; a
+ * flat series sits at 50. The tooltip always shows the real value alongside.
+ */
+export function scaleToRange(values: Array<number | null>): Array<number | null> {
+  const present = values.filter((v): v is number => v !== null && Number.isFinite(v));
+  if (present.length === 0) return values.map(() => null);
+  const min = Math.min(...present);
+  const max = Math.max(...present);
+  return values.map((v) => (v === null || !Number.isFinite(v) ? null : max === min ? 50 : ((v - min) / (max - min)) * 100));
+}
 
 export const BASE_METRIC_DEFINITIONS: Record<EconMetric, string> = {
   ncac:

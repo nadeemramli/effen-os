@@ -21,21 +21,20 @@ import {
   type MovementPeriod,
 } from "@/lib/domain/lifecycle";
 import {
-  BASE_METRICS,
   BASE_METRIC_DEFINITIONS,
   BASE_METRIC_LABELS,
   BASE_METRIC_TITLES,
+  ECON_METRICS,
   WITHHOLD_LABELS,
   deriveEconomics,
   formatMetric,
-  type BaseMetric,
   type CustomerBaseEconomics,
   type DerivedPeriod,
   type EconMetric,
 } from "@/lib/domain/customer-base-economics";
 import { fetchLiveBrands, type LiveBrand } from "@/lib/supabase/live";
 import { cn } from "@/lib/utils";
-import { BaseTrendChart, EconomicsChart, METRIC_COLORS, MovementChart, periodLabel } from "./_components/movement-chart";
+import { BaseTrendChart, METRIC_COLORS, MovementChart, periodLabel } from "./_components/movement-chart";
 import { PopulationSheet, type PopulationTarget } from "./_components/population-sheet";
 
 /** A refresh older than a day plus slack is stale; the daily job runs at 01:30 MYT. */
@@ -118,8 +117,7 @@ function CustomerBaseInner() {
   const ok = movement?.status === "ok" ? movement : null;
   const periods = useMemo(() => ok?.periods ?? [], [ok]);
   const econ = useMemo(() => deriveEconomics(economics), [economics]);
-  const metric = controls.metric;
-  const econMetric: EconMetric | null = metric === "movement" ? null : metric;
+  const overlays = controls.series;
   // Cards describe the latest period in range; a partial period is labelled as such.
   const focus: MovementPeriod | null = periods.length ? periods[periods.length - 1]! : null;
   const identityShare = ok ? ok.coverage.orders_with_identity / Math.max(ok.coverage.orders_total, 1) : 1;
@@ -235,39 +233,39 @@ function CustomerBaseInner() {
             <Card className="xl:col-span-3">
               <CardHeader className="flex flex-col gap-2 space-y-0">
                 <div className="flex flex-wrap items-center justify-between gap-2">
+                  <CardTitle className="text-sm font-medium">Movement — additions above, lapses below, net as a line</CardTitle>
+                  <span className="text-[11px] text-muted-foreground">click a bar to open the exact population</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] text-muted-foreground">Overlay</span>
                   <ToggleGroup
-                    type="single"
-                    value={metric}
-                    onValueChange={(v) => v && controls.setMetric(v as BaseMetric)}
+                    type="multiple"
+                    value={overlays}
+                    onValueChange={(v) => controls.setSeries(v as EconMetric[])}
                     className="h-7"
-                    aria-label="Series shown on the chart"
+                    aria-label="Economics series overlaid on the movement chart"
                   >
-                    {BASE_METRICS.map((m) => (
-                      <ToggleGroupItem key={m} value={m} className="h-7 gap-1.5 px-2 text-xs">
-                        {m !== "movement" && <span className="size-1.5 rounded-full" style={{ background: METRIC_COLORS[m] }} aria-hidden />}
+                    {ECON_METRICS.map((m) => (
+                      <ToggleGroupItem key={m} value={m} className="h-7 gap-1.5 px-2 text-xs" title={BASE_METRIC_TITLES[m]}>
+                        <span className="h-0.5 w-3 rounded" style={{ background: METRIC_COLORS[m] }} aria-hidden />
                         {BASE_METRIC_LABELS[m]}
                       </ToggleGroupItem>
                     ))}
                   </ToggleGroup>
-                  <span className="text-[11px] text-muted-foreground">
-                    {econMetric ? "hover a bar for its source lines" : "click a bar to open the exact population"}
-                  </span>
+                  {overlays.length > 0 && (
+                    <span className="text-[11px] text-muted-foreground">each line scaled 0–100 within the range · right axis · hover for real values</span>
+                  )}
                 </div>
-                <CardTitle className="text-sm font-medium">{BASE_METRIC_TITLES[metric]}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 {showTable ? (
                   <PeriodTable periods={periods} grain={controls.grain} onSelect={open} econ={econ} />
-                ) : econMetric ? (
-                  economics || economicsError ? (
-                    <EconomicsChart periods={periods} grain={controls.grain} metric={econMetric} economics={econ} />
-                  ) : (
-                    <Skeleton className="h-72 rounded-xl" />
-                  )
+                ) : overlays.length > 0 && !economics && !economicsError ? (
+                  <Skeleton className="h-72 rounded-xl" />
                 ) : (
-                  <MovementChart periods={periods} grain={controls.grain} onSelect={open} />
+                  <MovementChart periods={periods} grain={controls.grain} onSelect={open} overlays={overlays} economics={econ} />
                 )}
-                {econMetric && <EconomicsFooter metric={econMetric} economics={economics} error={economicsError} periods={periods} econ={econ} />}
+                {overlays.length > 0 && <EconomicsFooter metrics={overlays} economics={economics} error={economicsError} periods={periods} econ={econ} />}
               </CardContent>
             </Card>
             <Card className="xl:col-span-2">
@@ -369,15 +367,15 @@ function PeriodTable({
   );
 }
 
-/** Definition, freshness and scope caveats for the economics series under the chart. */
+/** Definitions, freshness, scaling note and scope caveats for the overlaid series under the chart. */
 function EconomicsFooter({
-  metric,
+  metrics,
   economics,
   error,
   periods,
   econ,
 }: {
-  metric: EconMetric;
+  metrics: EconMetric[];
   economics: CustomerBaseEconomics | null;
   error: string | null;
   periods: MovementPeriod[];
@@ -386,23 +384,44 @@ function EconomicsFooter({
   if (error) {
     return (
       <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-        The economics series could not be loaded, so nothing is shown for {BASE_METRIC_LABELS[metric]}. Movement is unaffected. {error}
+        The economics series could not be loaded, so no overlay is drawn. Movement is unaffected. {error}
       </p>
     );
   }
   if (!economics) return null;
-  const withheld = periods.filter((p) => (econ.get(p.period_start)?.cells[metric].value ?? null) === null);
-  const reasons = new Map<string, number>();
-  for (const p of withheld) {
-    const r = econ.get(p.period_start)?.cells[metric].reason;
-    const k = r ? WITHHOLD_LABELS[r] : "No economics row for this period";
-    reasons.set(k, (reasons.get(k) ?? 0) + 1);
-  }
   const scoped = economics.scope.brand_id !== null || (economics.scope.markets?.length ?? 0) > 0;
   const mixed = periods.some((p) => econ.get(p.period_start)?.mixedCurrency);
+  const usesSpend = metrics.some((m) => m !== "revenue");
+  const usesRevenue = metrics.some((m) => m === "revenue" || m === "roas" || m === "cm3");
   return (
-    <div className="space-y-1 text-[11px] text-muted-foreground">
-      <p>{BASE_METRIC_DEFINITIONS[metric]}</p>
+    <div className="space-y-1.5 text-[11px] text-muted-foreground">
+      <p>
+        Each overlaid line is min–max scaled to 0–100 within the periods in range so unlike units share one axis: “high” is that series’ own maximum in the window, “low” its minimum. Shapes are comparable; heights across series are not. Hover a period for the real values.
+      </p>
+      <ul className="space-y-0.5">
+        {metrics.map((m) => {
+          const withheld = periods.filter((p) => (econ.get(p.period_start)?.cells[m].value ?? null) === null);
+          const reasons = new Map<string, number>();
+          for (const p of withheld) {
+            const r = econ.get(p.period_start)?.cells[m].reason;
+            const k = r ? WITHHOLD_LABELS[r] : "No economics row for this period";
+            reasons.set(k, (reasons.get(k) ?? 0) + 1);
+          }
+          return (
+            <li key={m} className="flex gap-2">
+              <span className="mt-1.5 h-0.5 w-3 shrink-0 rounded" style={{ background: METRIC_COLORS[m] }} aria-hidden />
+              <span>
+                <span className="font-medium text-foreground">{BASE_METRIC_LABELS[m]}.</span> {BASE_METRIC_DEFINITIONS[m]}
+                {withheld.length > 0 && (
+                  <span>
+                    {" "}{withheld.length} of {periods.length} periods withheld: {[...reasons.entries()].map(([k, v]) => `${k} (${v})`).join("; ")}.
+                  </span>
+                )}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
       <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span>
           Orders refreshed <FreshnessBadge lastSuccessAt={economics.commerce_refreshed_at} slaMinutes={FRESHNESS_SLA_MINUTES} realClock />
@@ -411,20 +430,13 @@ function EconomicsFooter({
           Ad spend as of <FreshnessBadge lastSuccessAt={economics.ads_as_of} slaMinutes={FRESHNESS_SLA_MINUTES} realClock />
         </span>
         {economics.rules && <span>Cost rules effective {economics.rules.effective_from}</span>}
-        {economics.policy_version !== null && <span>Denominator: lifecycle policy v{economics.policy_version}</span>}
+        {economics.policy_version !== null && <span>nCAC denominator: lifecycle policy v{economics.policy_version}</span>}
       </p>
-      {(scoped || mixed || withheld.length > 0 || economics.rts_allocated) && (
+      {(scoped || mixed || economics.rts_allocated) && (
         <p>
-          {scoped && (metric === "spend" || metric === "ncac" || metric === "roas" || metric === "cm3") && (
-            <span>Spend with no brand or market attribution is excluded in this scope. </span>
-          )}
-          {mixed && (metric === "revenue" || metric === "roas" || metric === "cm3") && <span>Scope mixes MYR and SGD; SGD converted at ×3.3 for the bar. </span>}
-          {economics.rts_allocated && metric === "cm3" && <span>Unlinked RTS parcels are allocated to MY brands by order share. </span>}
-          {withheld.length > 0 && (
-            <span>
-              {withheld.length} of {periods.length} periods withheld: {[...reasons.entries()].map(([k, v]) => `${k} (${v})`).join("; ")}.
-            </span>
-          )}
+          {scoped && usesSpend && <span>Spend with no brand or market attribution is excluded in this scope. </span>}
+          {mixed && usesRevenue && <span>Scope mixes MYR and SGD; SGD converted at ×3.3. </span>}
+          {economics.rts_allocated && metrics.includes("cm3") && <span>Unlinked RTS parcels are allocated to MY brands by order share. </span>}
         </p>
       )}
     </div>
