@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import HCaptcha from "@hcaptcha/react-hcaptcha";
-import { Loader2, LogIn, MailCheck } from "lucide-react";
+import { ArrowLeft, KeyRound, Loader2, LogIn, MailCheck } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -10,11 +10,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getCaptchaSitekey, getSupabase } from "@/lib/supabase/client";
 
+type Mode = "signin" | "forgot";
+
 export function LoginScreen() {
+  const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState<"password" | "magic" | null>(null);
+  const [busy, setBusy] = useState<"password" | "magic" | "reset" | null>(null);
   const [magicSent, setMagicSent] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const sitekey = getCaptchaSitekey();
@@ -30,6 +34,13 @@ export function LoginScreen() {
     if (!sitekey) return;
     captchaRef.current?.resetCaptcha();
     setCaptchaToken(null);
+  }
+
+  function switchMode(next: Mode) {
+    setMode(next);
+    setError(null);
+    setResetSent(false);
+    resetCaptcha();
   }
 
   async function signInWithPassword(e: React.FormEvent) {
@@ -62,6 +73,183 @@ export function LoginScreen() {
     setBusy(null);
   }
 
+  /* The reset link signs the member in with a recovery session and lands on
+     the app, where AuthGate sees the PASSWORD_RECOVERY event and shows the
+     set-new-password screen. redirectTo must be on the project's redirect
+     allow-list; otherwise GoTrue falls back to the Site URL, which is the
+     same app, so the flow still completes. */
+  async function sendResetLink(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy("reset");
+    setError(null);
+    const { error: err } = await getSupabase().auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/command-center`,
+      captchaToken: captchaToken ?? undefined,
+    });
+    if (err) setError(err.message);
+    else setResetSent(true);
+    resetCaptcha();
+    setBusy(null);
+  }
+
+  const captcha = sitekey ? (
+    <div className="flex justify-center">
+      <HCaptcha
+        ref={captchaRef}
+        sitekey={sitekey}
+        theme={resolvedTheme === "dark" ? "dark" : "light"}
+        onVerify={setCaptchaToken}
+        onExpire={() => setCaptchaToken(null)}
+        onError={() => setCaptchaToken(null)}
+      />
+    </div>
+  ) : null;
+
+  const errorBox = error ? (
+    <p className="rounded-md border border-destructive/25 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+      {error}
+      {!sitekey && error.toLowerCase().includes("captcha") && (
+        <>
+          {" "}
+          This project has CAPTCHA protection enabled but no sitekey is
+          configured — set NEXT_PUBLIC_SUPABASE_CAPTCHA_SITEKEY.
+        </>
+      )}
+    </p>
+  ) : null;
+
+  let body: React.ReactNode;
+  if (magicSent) {
+    body = (
+      <div className="flex flex-col items-center py-4 text-center">
+        <MailCheck className="mb-2 size-7 text-success" aria-hidden />
+        <p className="text-sm font-medium">Check your inbox</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          A sign-in link was sent to {email}. Membership is invite-only —
+          the link works, but only invited emails get workspace access.
+        </p>
+      </div>
+    );
+  } else if (mode === "forgot" && resetSent) {
+    body = (
+      <div className="flex flex-col items-center py-4 text-center">
+        <MailCheck className="mb-2 size-7 text-success" aria-hidden />
+        <p className="text-sm font-medium">Check your inbox</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          If {email} has a Fullkit account, a password reset link is on its
+          way. Open it on this device to choose a new password. The link is
+          single-use and expires after an hour.
+        </p>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="mt-4 gap-1.5"
+          onClick={() => switchMode("signin")}
+        >
+          <ArrowLeft className="size-3.5" aria-hidden />
+          Back to sign in
+        </Button>
+      </div>
+    );
+  } else if (mode === "forgot") {
+    body = (
+      <form onSubmit={sendResetLink} className="space-y-3">
+        <div>
+          <p className="flex items-center gap-1.5 text-sm font-medium">
+            <KeyRound className="size-4" aria-hidden />
+            Reset your password
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Enter the email on your Fullkit account and we&apos;ll send a link
+            to choose a new password.
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="reset-email">Email</Label>
+          <Input
+            id="reset-email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@company.com"
+            autoFocus
+            required
+          />
+        </div>
+        {captcha}
+        {errorBox}
+        <Button type="submit" className="w-full gap-1.5" disabled={busy !== null || !email || captchaPending}>
+          {busy === "reset" ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <MailCheck className="size-4" aria-hidden />}
+          Send reset link
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full gap-1.5"
+          disabled={busy !== null}
+          onClick={() => switchMode("signin")}
+        >
+          <ArrowLeft className="size-3.5" aria-hidden />
+          Back to sign in
+        </Button>
+      </form>
+    );
+  } else {
+    body = (
+      <form onSubmit={signInWithPassword} className="space-y-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@company.com"
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="password">Password</Label>
+            <button
+              type="button"
+              className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              onClick={() => switchMode("forgot")}
+            >
+              Forgot password?
+            </button>
+          </div>
+          <Input
+            id="password"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+        {captcha}
+        {errorBox}
+        <Button type="submit" className="w-full gap-1.5" disabled={busy !== null || !email || !password || captchaPending}>
+          {busy === "password" ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <LogIn className="size-4" aria-hidden />}
+          Sign in
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full"
+          disabled={busy !== null || !email || captchaPending}
+          onClick={sendMagicLink}
+        >
+          {busy === "magic" && <Loader2 className="size-4 animate-spin" aria-hidden />}
+          Email me a sign-in link
+        </Button>
+      </form>
+    );
+  }
+
   return (
     <div className="flex min-h-dvh items-center justify-center bg-background p-6">
       <div className="w-full max-w-sm">
@@ -76,80 +264,7 @@ export function LoginScreen() {
         </div>
         <Card>
           <CardContent className="pt-6">
-            {magicSent ? (
-              <div className="flex flex-col items-center py-4 text-center">
-                <MailCheck className="mb-2 size-7 text-success" aria-hidden />
-                <p className="text-sm font-medium">Check your inbox</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  A sign-in link was sent to {email}. Membership is invite-only —
-                  the link works, but only invited emails get workspace access.
-                </p>
-              </div>
-            ) : (
-              <form onSubmit={signInWithPassword} className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    autoComplete="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@company.com"
-                    required
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="password">Password</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    autoComplete="current-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
-                </div>
-                {sitekey && (
-                  <div className="flex justify-center">
-                    <HCaptcha
-                      ref={captchaRef}
-                      sitekey={sitekey}
-                      theme={resolvedTheme === "dark" ? "dark" : "light"}
-                      onVerify={setCaptchaToken}
-                      onExpire={() => setCaptchaToken(null)}
-                      onError={() => setCaptchaToken(null)}
-                    />
-                  </div>
-                )}
-                {error && (
-                  <p className="rounded-md border border-destructive/25 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
-                    {error}
-                    {!sitekey && error.toLowerCase().includes("captcha") && (
-                      <>
-                        {" "}
-                        This project has CAPTCHA protection enabled but no
-                        sitekey is configured — set
-                        NEXT_PUBLIC_SUPABASE_CAPTCHA_SITEKEY.
-                      </>
-                    )}
-                  </p>
-                )}
-                <Button type="submit" className="w-full gap-1.5" disabled={busy !== null || !email || !password || captchaPending}>
-                  {busy === "password" ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <LogIn className="size-4" aria-hidden />}
-                  Sign in
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  disabled={busy !== null || !email || captchaPending}
-                  onClick={sendMagicLink}
-                >
-                  {busy === "magic" && <Loader2 className="size-4 animate-spin" aria-hidden />}
-                  Email me a sign-in link
-                </Button>
-              </form>
-            )}
+            {body}
             <p className="mt-4 border-t pt-3 text-center text-[11px] text-muted-foreground">
               Access is invite-only. Ask your HQ admin for an invite if sign-in
               succeeds but the workspace stays locked.

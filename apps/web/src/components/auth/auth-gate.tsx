@@ -16,12 +16,14 @@ import {
 } from "@/lib/supabase/client";
 import { ChangePasswordDialog } from "./change-password-dialog";
 import { LoginScreen } from "./login-screen";
+import { RecoveryScreen } from "./recovery-screen";
 
 type GateState =
   | "loading"
   | "signed_out"
   | "no_membership"
   | "must_change_password"
+  | "recovery"
   | "ready";
 
 /**
@@ -32,6 +34,11 @@ type GateState =
  * When active: requires a session, resolves the workspace membership
  * (invite-only — no membership means no access), locks the role for
  * non-admins, and syncs brand/date-range preferences to user_preferences.
+ *
+ * A password-reset link (resetPasswordForEmail) lands here with a recovery
+ * session: supabase-js emits SIGNED_IN and then PASSWORD_RECOVERY. The gate
+ * holds the member on the set-new-password screen until they have chosen
+ * one, instead of letting the SIGNED_IN resolution drop them into the app.
  */
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const active = isAuthRequired();
@@ -48,11 +55,21 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const workspaceIdRef = useRef<number | null>(null);
   const userIdRef = useRef<string | null>(null);
   const hydratedRef = useRef(false);
-  /* Lets the forced-password screen re-run resolution once the gate clears. */
+  /* Set when a recovery link is being completed; resolve() then parks the
+     member on the recovery screen rather than in the app. */
+  const recoveryRef = useRef(false);
+  /* Lets the forced-password and recovery screens re-run resolution once
+     the gate clears. */
   const resolveRef = useRef<((userId: string, email: string | null) => Promise<void>) | null>(null);
 
   useEffect(() => {
     if (!active) return;
+    /* Belt and braces: read the recovery marker off the URL fragment before
+       supabase-js strips it, in case the PASSWORD_RECOVERY event fires before
+       our listener is attached. */
+    if (typeof window !== "undefined" && /[#&]type=recovery(&|$)/.test(window.location.hash)) {
+      recoveryRef.current = true;
+    }
     const supabase = getSupabase();
 
     async function resolve(userId: string, email: string | null) {
@@ -85,6 +102,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         .maybeSingle<ProfileRow>();
       if (profile?.display_name) {
         setAuthSession({ email, name: profile.display_name });
+      }
+      if (recoveryRef.current) {
+        setState("recovery");
+        return;
       }
       if (profile?.password_change_required) {
         setState("must_change_password");
@@ -120,8 +141,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       if (event === "SIGNED_IN" && session?.user) {
         void resolve(session.user.id, session.user.email ?? null);
       }
+      if (event === "PASSWORD_RECOVERY" && session?.user) {
+        recoveryRef.current = true;
+        setUserEmail(session.user.email ?? null);
+        setState("recovery");
+      }
       if (event === "SIGNED_OUT") {
         hydratedRef.current = false;
+        recoveryRef.current = false;
         setAuthSession({ email: null, name: null, roleLocked: false });
         setState("signed_out");
       }
@@ -184,6 +211,22 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           Sign out
         </Button>
       </div>
+    );
+  }
+
+  if (state === "recovery") {
+    return (
+      <RecoveryScreen
+        email={userEmail}
+        onDone={async () => {
+          recoveryRef.current = false;
+          setState("loading");
+          const { data } = await getSupabase().auth.getSession();
+          const user = data.session?.user;
+          if (user) void resolveRef.current?.(user.id, user.email ?? null);
+          else setState("signed_out");
+        }}
+      />
     );
   }
 

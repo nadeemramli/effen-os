@@ -39,7 +39,7 @@ Variable rules (from the Supabase Email Templates guide): `.NewEmail` only in *C
 
 - The web app (`apps/web/src/components/auth/login-screen.tsx`) offers password sign-in and a magic link (`signInWithOtp`, no `emailRedirectTo`), uses the implicit flow and has no callback route. Links therefore stay on `{{ .ConfirmationURL }}` and land on the dashboard **Site URL**, which must be `https://app.effengroup.com` (see URL Configuration below). There is no OTP-entry screen, so the magic-link email is link-first and does not show the code.
 - Reauthentication is code-only (`{{ .Token }}`). It fires before `updateUser({ password })` because *secure password change* is on.
-- Password reset (`05`) has no in-app trigger yet (`resetPasswordForEmail` is not called anywhere). The template is ready for when it exists.
+- Password reset (`05`) is triggered by **Forgot password?** on the login screen (`resetPasswordForEmail` with `redirectTo` = `<origin>/command-center` and the hCaptcha token). The link signs the member in with a recovery session; `AuthGate` catches `PASSWORD_RECOVERY` (and the `type=recovery` fragment) and holds them on `recovery-screen.tsx` until they set a new password via `updateUser({ password })`, which also clears `profiles.password_change_required`. `redirectTo` must be on the redirect allow-list or GoTrue falls back to the Site URL, which is the same app, so the flow still completes.
 - Members are provisioned by HQ with a handed-out password (`supabase/migrations/20260820064147_team_onboarding.sql`); `02-invite-user.html` covers `auth.admin.inviteUserByEmail` if HQ ever switches to dashboard invites.
 - Security notices never contain an action link other than `{{ .SiteURL }}`. The "if this wasn't you" action is *contact an HQ admin*, because HQ, not the user, can lock and re-issue an account.
 - Demo-mode redaction (`apps/web/src/lib/seed/demo-profile.ts`) does not apply: templates live in the dashboard, not the app bundle, and auth mail only reaches invited `@effengroup.com` staff.
@@ -113,7 +113,7 @@ The production app is **`https://app.effengroup.com`**. As of 2026-08-28 email l
 ### App-side follow-ups (out of scope here)
 
 - Add `emailRedirectTo` and a `/auth/confirm` route with `token_hash` verification (PKCE) if links ever need to deep-link into a page; until then links land on Site URL.
-- Wire `resetPasswordForEmail` to a "Forgot password" action so template `05` has a trigger.
+- ~~Wire `resetPasswordForEmail` to a "Forgot password" action so template `05` has a trigger.~~ Done 2026-09-15 (`login-screen.tsx`, `recovery-screen.tsx`, `auth-gate.tsx`). Confirm that *Require current password when changing password* exempts recovery sessions on this project; if it does not, the recovery screen surfaces a "request a fresh link / ask HQ" error instead of updating.
 - Flip `shouldCreateUser` per the decision above.
 
 ## Maintenance
