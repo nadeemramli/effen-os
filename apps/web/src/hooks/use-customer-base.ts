@@ -1,10 +1,16 @@
 "use client";
 
 import { useMemo } from "react";
-import { parseAsString, useQueryState } from "nuqs";
+import { parseAsString, parseAsStringLiteral, useQueryState } from "nuqs";
 import { useLiveQuery } from "@/hooks/use-live-query";
 import type { CustomerBaseMovement, MovementGrain } from "@/lib/domain/lifecycle";
-import { fetchCustomerBaseMovement, fetchWooConnections, type LiveWooConnection } from "@/lib/supabase/live";
+import { BASE_METRICS, type BaseMetric, type CustomerBaseEconomics } from "@/lib/domain/customer-base-economics";
+import {
+  fetchCustomerBaseEconomics,
+  fetchCustomerBaseMovement,
+  fetchWooConnections,
+  type LiveWooConnection,
+} from "@/lib/supabase/live";
 import { useAppStore } from "@/lib/store/provider";
 
 /** Range presets per grain; the value is the number of periods shown. */
@@ -44,11 +50,21 @@ export function rangeFrom(grain: MovementGrain, periods: number, today = new Dat
   return isoDate(d);
 }
 
+interface CustomerBasePayload {
+  movement: CustomerBaseMovement;
+  integrationIn: number[] | null;
+  /** Companion series; null with `economicsError` set when its RPC failed — movement still renders. */
+  economics: CustomerBaseEconomics | null;
+  economicsError: string | null;
+}
+
 /**
  * Customer Base data for the current top-bar scope (brand + markets) and the
- * URL's grain/range. The browser never derives lifecycle numbers itself: it
- * renders what live_customer_base_movement returns, including its
- * `unavailable` reasons.
+ * URL's grain/range/metric. The browser never derives lifecycle numbers itself:
+ * it renders what live_customer_base_movement returns, including its
+ * `unavailable` reasons. The economics companion (nCAC, ad spend, ROAS,
+ * revenue, CM3) is fetched alongside for the same periods and scope; a failure
+ * there is reported on the chart, not allowed to blank the movement.
  */
 export function useCustomerBase() {
   const [grainRaw, setGrain] = useQueryState("grain", parseAsString.withDefault("month"));
@@ -56,22 +72,24 @@ export function useCustomerBase() {
   const presets = RANGE_PRESETS[grain];
   const [rangeRaw, setRange] = useQueryState("range", parseAsString.withDefault(presets[1]!.key));
   const preset = presets.find((p) => p.key === rangeRaw) ?? presets[1]!;
+  const [metric, setMetric] = useQueryState("metric", parseAsStringLiteral(BASE_METRICS).withDefault("movement"));
 
   const liveBrandId = useAppStore((s) => s.session.liveBrandId);
   const liveMarkets = useAppStore((s) => s.session.liveMarkets);
   const marketsKey = liveMarkets.join(",");
 
-  const query = useLiveQuery<{ movement: CustomerBaseMovement; integrationIn: number[] | null }>(async () => {
+  const query = useLiveQuery<CustomerBasePayload>(async () => {
     const conns = await fetchWooConnections();
     const integrationIn = integrationIdsForMarkets(conns, liveMarkets);
-    const movement = await fetchCustomerBaseMovement({
-      grain,
-      from: rangeFrom(grain, preset.periods),
-      to: null,
-      brandId: liveBrandId,
-      integrationIn,
-    });
-    return { movement, integrationIn };
+    const args = { grain, from: rangeFrom(grain, preset.periods), to: null, brandId: liveBrandId, integrationIn };
+    const [movement, econ] = await Promise.all([
+      fetchCustomerBaseMovement(args),
+      fetchCustomerBaseEconomics(args).then(
+        (e) => ({ economics: e, economicsError: null as string | null }),
+        (err: Error) => ({ economics: null, economicsError: err.message }),
+      ),
+    ]);
+    return { movement, integrationIn, ...econ };
   }, [grain, preset.key, liveBrandId, marketsKey]);
 
   const controls = useMemo(
@@ -84,13 +102,17 @@ export function useCustomerBase() {
       range: preset,
       setRange: (key: string) => void setRange(key),
       presets,
+      metric: metric as BaseMetric,
+      setMetric: (m: BaseMetric) => void setMetric(m),
     }),
-    [grain, preset, presets, setGrain, setRange],
+    [grain, preset, presets, setGrain, setRange, metric, setMetric],
   );
 
   return {
     ...query,
     movement: query.data?.movement ?? null,
+    economics: query.data?.economics ?? null,
+    economicsError: query.data?.economicsError ?? null,
     integrationIn: query.data?.integrationIn ?? null,
     brandId: liveBrandId,
     controls,

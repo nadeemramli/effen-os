@@ -20,9 +20,22 @@ import {
   type MovementMeasure,
   type MovementPeriod,
 } from "@/lib/domain/lifecycle";
+import {
+  BASE_METRICS,
+  BASE_METRIC_DEFINITIONS,
+  BASE_METRIC_LABELS,
+  BASE_METRIC_TITLES,
+  WITHHOLD_LABELS,
+  deriveEconomics,
+  formatMetric,
+  type BaseMetric,
+  type CustomerBaseEconomics,
+  type DerivedPeriod,
+  type EconMetric,
+} from "@/lib/domain/customer-base-economics";
 import { fetchLiveBrands, type LiveBrand } from "@/lib/supabase/live";
 import { cn } from "@/lib/utils";
-import { BaseTrendChart, MovementChart, periodLabel } from "./_components/movement-chart";
+import { BaseTrendChart, EconomicsChart, METRIC_COLORS, MovementChart, periodLabel } from "./_components/movement-chart";
 import { PopulationSheet, type PopulationTarget } from "./_components/population-sheet";
 
 /** A refresh older than a day plus slack is stale; the daily job runs at 01:30 MYT. */
@@ -93,7 +106,7 @@ function MovementCard({
 }
 
 function CustomerBaseInner() {
-  const { movement, loading, refreshing, error, reload, integrationIn, brandId, controls } = useCustomerBase();
+  const { movement, economics, economicsError, loading, refreshing, error, reload, integrationIn, brandId, controls } = useCustomerBase();
   const [brands, setBrands] = useState<LiveBrand[]>([]);
   const [target, setTarget] = useState<PopulationTarget | null>(null);
   const [showTable, setShowTable] = useState(false);
@@ -104,6 +117,9 @@ function CustomerBaseInner() {
 
   const ok = movement?.status === "ok" ? movement : null;
   const periods = useMemo(() => ok?.periods ?? [], [ok]);
+  const econ = useMemo(() => deriveEconomics(economics), [economics]);
+  const metric = controls.metric;
+  const econMetric: EconMetric | null = metric === "movement" ? null : metric;
   // Cards describe the latest period in range; a partial period is labelled as such.
   const focus: MovementPeriod | null = periods.length ? periods[periods.length - 1]! : null;
   const identityShare = ok ? ok.coverage.orders_with_identity / Math.max(ok.coverage.orders_total, 1) : 1;
@@ -217,12 +233,41 @@ function CustomerBaseInner() {
 
           <div className="grid gap-4 xl:grid-cols-5">
             <Card className="xl:col-span-3">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0">
-                <CardTitle className="text-sm font-medium">Movement — additions above, lapses below, net as a line</CardTitle>
-                <span className="text-[11px] text-muted-foreground">click a bar to open the exact population</span>
+              <CardHeader className="flex flex-col gap-2 space-y-0">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <ToggleGroup
+                    type="single"
+                    value={metric}
+                    onValueChange={(v) => v && controls.setMetric(v as BaseMetric)}
+                    className="h-7"
+                    aria-label="Series shown on the chart"
+                  >
+                    {BASE_METRICS.map((m) => (
+                      <ToggleGroupItem key={m} value={m} className="h-7 gap-1.5 px-2 text-xs">
+                        {m !== "movement" && <span className="size-1.5 rounded-full" style={{ background: METRIC_COLORS[m] }} aria-hidden />}
+                        {BASE_METRIC_LABELS[m]}
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
+                  <span className="text-[11px] text-muted-foreground">
+                    {econMetric ? "hover a bar for its source lines" : "click a bar to open the exact population"}
+                  </span>
+                </div>
+                <CardTitle className="text-sm font-medium">{BASE_METRIC_TITLES[metric]}</CardTitle>
               </CardHeader>
-              <CardContent>
-                {showTable ? <PeriodTable periods={periods} grain={controls.grain} onSelect={open} /> : <MovementChart periods={periods} grain={controls.grain} onSelect={open} />}
+              <CardContent className="space-y-3">
+                {showTable ? (
+                  <PeriodTable periods={periods} grain={controls.grain} onSelect={open} econ={econ} />
+                ) : econMetric ? (
+                  economics || economicsError ? (
+                    <EconomicsChart periods={periods} grain={controls.grain} metric={econMetric} economics={econ} />
+                  ) : (
+                    <Skeleton className="h-72 rounded-xl" />
+                  )
+                ) : (
+                  <MovementChart periods={periods} grain={controls.grain} onSelect={open} />
+                )}
+                {econMetric && <EconomicsFooter metric={econMetric} economics={economics} error={economicsError} periods={periods} econ={econ} />}
               </CardContent>
             </Card>
             <Card className="xl:col-span-2">
@@ -244,11 +289,40 @@ function CustomerBaseInner() {
   );
 }
 
-function PeriodTable({ periods, grain, onSelect }: { periods: MovementPeriod[]; grain: "month" | "week"; onSelect: (p: MovementPeriod, m: MovementMeasure) => void }) {
+const TABLE_ECON: EconMetric[] = ["spend", "ncac", "roas", "revenue", "cm3"];
+
+/** A composed economics value, or the reason it is withheld — never a fake zero. */
+function EconCell({ metric, row }: { metric: EconMetric; row: DerivedPeriod | undefined }) {
+  const cell = row?.cells[metric];
+  if (cell && cell.value !== null) {
+    return <span className={cn("tnum", metric === "cm3" && (cell.value < 0 ? "text-destructive" : "text-success"))}>{formatMetric(metric, cell.value, true)}</span>;
+  }
+  const label = cell?.reason ? WITHHOLD_LABELS[cell.reason] : "No economics row for this period";
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="cursor-help text-muted-foreground" aria-label={label}>—</span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs text-xs">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function PeriodTable({
+  periods,
+  grain,
+  onSelect,
+  econ,
+}: {
+  periods: MovementPeriod[];
+  grain: "month" | "week";
+  onSelect: (p: MovementPeriod, m: MovementMeasure) => void;
+  econ: Map<string, DerivedPeriod>;
+}) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
-        <caption className="sr-only">Customer base movement by period</caption>
+        <caption className="sr-only">Customer base movement and economics by period</caption>
         <thead className="text-left text-[11px] uppercase tracking-wider text-muted-foreground">
           <tr>
             <th className="py-1.5 pr-2 font-medium">Period</th>
@@ -259,7 +333,12 @@ function PeriodTable({ periods, grain, onSelect }: { periods: MovementPeriod[]; 
             <th className="py-1.5 pr-2 text-right font-medium">Retained</th>
             <th className="py-1.5 pr-2 text-right font-medium">Closing</th>
             <th className="py-1.5 pr-2 text-right font-medium">Net</th>
-            <th className="py-1.5 text-right font-medium">Rate</th>
+            <th className="py-1.5 pr-2 text-right font-medium">Rate</th>
+            {TABLE_ECON.map((m) => (
+              <th key={m} className="border-l py-1.5 pr-2 pl-2 text-right font-medium first:border-l" title={BASE_METRIC_DEFINITIONS[m]}>
+                {BASE_METRIC_LABELS[m]}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody className="divide-y">
@@ -273,12 +352,81 @@ function PeriodTable({ periods, grain, onSelect }: { periods: MovementPeriod[]; 
               <td className="tnum py-1.5 pr-2 text-right"><button type="button" className="underline-offset-2 hover:underline" onClick={() => onSelect(p, "retained")}>{n(p.retained)}</button></td>
               <td className="tnum py-1.5 pr-2 text-right"><button type="button" className="underline-offset-2 hover:underline" onClick={() => onSelect(p, "closing")}>{n(p.closing_active)}</button></td>
               <td className="tnum py-1.5 pr-2 text-right">{p.net_active_change >= 0 ? "+" : "−"}{n(Math.abs(p.net_active_change))}</td>
-              <td className="tnum py-1.5 text-right">{pct(p.net_active_rate)}</td>
+              <td className="tnum py-1.5 pr-2 text-right">{pct(p.net_active_rate)}</td>
+              {TABLE_ECON.map((m) => (
+                <td key={m} className="border-l py-1.5 pr-2 pl-2 text-right">
+                  <EconCell metric={m} row={econ.get(p.period_start)} />
+                </td>
+              ))}
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="mt-2 text-[11px] text-muted-foreground">* period in progress</p>
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        * period in progress · economics columns are MYR (SGD at the display rate), ad spend gross of WHT, nCAC on the first-accepted denominator; — means withheld, hover for the reason.
+      </p>
+    </div>
+  );
+}
+
+/** Definition, freshness and scope caveats for the economics series under the chart. */
+function EconomicsFooter({
+  metric,
+  economics,
+  error,
+  periods,
+  econ,
+}: {
+  metric: EconMetric;
+  economics: CustomerBaseEconomics | null;
+  error: string | null;
+  periods: MovementPeriod[];
+  econ: Map<string, DerivedPeriod>;
+}) {
+  if (error) {
+    return (
+      <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        The economics series could not be loaded, so nothing is shown for {BASE_METRIC_LABELS[metric]}. Movement is unaffected. {error}
+      </p>
+    );
+  }
+  if (!economics) return null;
+  const withheld = periods.filter((p) => (econ.get(p.period_start)?.cells[metric].value ?? null) === null);
+  const reasons = new Map<string, number>();
+  for (const p of withheld) {
+    const r = econ.get(p.period_start)?.cells[metric].reason;
+    const k = r ? WITHHOLD_LABELS[r] : "No economics row for this period";
+    reasons.set(k, (reasons.get(k) ?? 0) + 1);
+  }
+  const scoped = economics.scope.brand_id !== null || (economics.scope.markets?.length ?? 0) > 0;
+  const mixed = periods.some((p) => econ.get(p.period_start)?.mixedCurrency);
+  return (
+    <div className="space-y-1 text-[11px] text-muted-foreground">
+      <p>{BASE_METRIC_DEFINITIONS[metric]}</p>
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span>
+          Orders refreshed <FreshnessBadge lastSuccessAt={economics.commerce_refreshed_at} slaMinutes={FRESHNESS_SLA_MINUTES} realClock />
+        </span>
+        <span>
+          Ad spend as of <FreshnessBadge lastSuccessAt={economics.ads_as_of} slaMinutes={FRESHNESS_SLA_MINUTES} realClock />
+        </span>
+        {economics.rules && <span>Cost rules effective {economics.rules.effective_from}</span>}
+        {economics.policy_version !== null && <span>Denominator: lifecycle policy v{economics.policy_version}</span>}
+      </p>
+      {(scoped || mixed || withheld.length > 0 || economics.rts_allocated) && (
+        <p>
+          {scoped && (metric === "spend" || metric === "ncac" || metric === "roas" || metric === "cm3") && (
+            <span>Spend with no brand or market attribution is excluded in this scope. </span>
+          )}
+          {mixed && (metric === "revenue" || metric === "roas" || metric === "cm3") && <span>Scope mixes MYR and SGD; SGD converted at ×3.3 for the bar. </span>}
+          {economics.rts_allocated && metric === "cm3" && <span>Unlinked RTS parcels are allocated to MY brands by order share. </span>}
+          {withheld.length > 0 && (
+            <span>
+              {withheld.length} of {periods.length} periods withheld: {[...reasons.entries()].map(([k, v]) => `${k} (${v})`).join("; ")}.
+            </span>
+          )}
+        </p>
+      )}
     </div>
   );
 }

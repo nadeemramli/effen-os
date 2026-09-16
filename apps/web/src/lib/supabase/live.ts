@@ -4,6 +4,7 @@ import type { CustomerEconomics } from "@/lib/domain/customer-economics";
 import type { OrderDraft, OrderQc, OrderQcEvent, WorkspaceMember } from "@/lib/domain/order-qc";
 import type { CohortKey, CohortSummary, WorkItem, WorkItemAction, WorkItemSeverity, WorkItemSource } from "@/lib/domain/cohorts";
 import type { CustomerBaseMovement, CustomerLifecycleStates, MovementGrain, MovementMeasure, TransitionPopulation } from "@/lib/domain/lifecycle";
+import type { CustomerBaseEconomics } from "@/lib/domain/customer-base-economics";
 import type { OrderQueueCounts } from "@/lib/domain/order-views";
 import type { PipelineRuns } from "@/lib/domain/pipeline";
 import { getSupabase } from "./client";
@@ -1545,6 +1546,32 @@ export async function fetchCustomerBaseMovement(q: {
   });
   if (error) throw new Error(error.message);
   return data as CustomerBaseMovement;
+}
+
+/**
+ * Companion series for the Customer Base chart toggle (nCAC, ad spend, ROAS,
+ * revenue, CM3): per-period source lines in the same grain, alignment and
+ * scope as the movement periods. Composition happens in
+ * `@/lib/domain/customer-base-economics` with the Profit page's arithmetic.
+ */
+export async function fetchCustomerBaseEconomics(q: {
+  grain: MovementGrain;
+  from: string | null;
+  to: string | null;
+  brandId: number | null;
+  integrationIn: number[] | null;
+  policyVersion?: number | null;
+}): Promise<CustomerBaseEconomics> {
+  const { data, error } = await getSupabase().rpc("live_customer_base_economics", {
+    p_grain: q.grain,
+    p_from: q.from,
+    p_to: q.to,
+    p_brand_id: q.brandId,
+    p_integration_ids: q.integrationIn,
+    p_policy_version: q.policyVersion ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as CustomerBaseEconomics;
 }
 
 /** Exact masked population behind one movement measure; keyset-paginated. */
