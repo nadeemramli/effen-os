@@ -1,11 +1,11 @@
 -- Creative Learning & Poster Production — operational schema v1 (ADR-0010)
 --
--- STATUS: PROPOSED — NOT APPLIED. Per supabase/migrations/README.md a
--- migration file is committed under the version it was recorded with when
--- it ran, so this file lives outside migrations/ until an owner applies it
--- (Supabase MCP apply_migration) and files it under the returned version.
--- Verified locally by supabase/tests/creative_lab.sql on a Postgres 16
--- harness (supabase/tests/creative_lab_harness.sql) — see ADR-0010 §8.
+-- ANNOTATED REFERENCE. Applied 2026-10-01 to effen-os as seven migrations
+-- (supabase/migrations/20261001111055 … 20261001112644_creative_lab_v1_*),
+-- which hold exactly the SQL recorded in the ledger. Change the schema with a
+-- new migration, then mirror it here so the local contract tests
+-- (scripts/creative/test-sql.sh → supabase/tests/creative_lab.sql) keep
+-- covering it. Never run the tests against the project.
 --
 -- Shape (ADR-0010 §4):
 --   * Everything lives in schema `creative`; anon/authenticated get NO
@@ -200,6 +200,11 @@ create table creative.brand_runtime_config (
   economics_currency text check (economics_currency ~ '^[A-Z]{3}$'),
   media_test_budget_amount numeric(14, 4),
   provider_data_approved boolean not null default false,  -- may private assets go to the provider?
+  -- Owner-entered provider prices used for budget reservation and actual
+  -- cost (never hard-coded): {"currency":"USD","image_estimate_per_call":…,
+  -- "image_input_per_mtok":…, "image_output_per_mtok":…, "text_input_per_mtok":…,
+  -- "text_output_per_mtok":…, "source":"…", "as_of":"YYYY-MM-DD"}
+  provider_pricing jsonb not null default '{}'::jsonb,
   version int not null default 1,
   updated_by_membership_id bigint references public.memberships (id),
   updated_at timestamptz not null default now()
@@ -688,6 +693,7 @@ begin
     economics_currency = case when p_patch ? 'economics_currency' then p_patch ->> 'economics_currency' else c.economics_currency end,
     media_test_budget_amount = case when p_patch ? 'media_test_budget_amount' then (p_patch ->> 'media_test_budget_amount')::numeric else c.media_test_budget_amount end,
     provider_data_approved = case when p_patch ? 'provider_data_approved' then (p_patch ->> 'provider_data_approved')::boolean else c.provider_data_approved end,
+    provider_pricing = case when p_patch ? 'provider_pricing' then p_patch -> 'provider_pricing' else c.provider_pricing end,
     version = c.version + 1,
     updated_at = now(),
     updated_by_membership_id = private.creative_member_for_brand(p_brand_id, array['hq_admin'])
@@ -696,6 +702,66 @@ begin
   perform private.creative_audit(v_brand.workspace_id, 'creative.runtime_config_set',
     'brand:' || p_brand_id, null, to_jsonb(v_before), to_jsonb(v_after));
   return jsonb_build_object('changed', true, 'version', v_after.version);
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Provider credentials (Vault), mirroring set_ai_connection/get_ai_secrets.
+-- One key per provider for the workspace; never readable by the browser.
+-- ---------------------------------------------------------------------
+create or replace function private.creative_secret_name(p_provider text)
+returns text language sql immutable set search_path = '' as $$
+  select case lower(p_provider) when 'openai' then 'CREATIVE_OPENAI_API_KEY' end;
+$$;
+
+create or replace function public.creative_set_provider_key(p_provider text, p_api_key text)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare v_ws bigint := (select min(id) from public.workspaces); v_name text; v_secret_id uuid;
+begin
+  if not private.has_role(v_ws, array['hq_admin']) then raise exception 'creative_forbidden'; end if;
+  v_name := private.creative_secret_name(p_provider);
+  if v_name is null then raise exception 'creative_unsupported_provider: %', p_provider; end if;
+  if length(coalesce(p_api_key, '')) < 20 then raise exception 'creative_key_too_short'; end if;
+  -- rotate in place (keeps the secret id); create on first use
+  select id into v_secret_id from vault.secrets where name = v_name;
+  if v_secret_id is null then
+    perform vault.create_secret(p_api_key, v_name, 'Creative lab ' || lower(p_provider) || ' API key');
+  else
+    perform vault.update_secret(v_secret_id, p_api_key, v_name, 'Creative lab ' || lower(p_provider) || ' API key');
+  end if;
+  insert into public.integration_connections (workspace_id, provider, name, category, environment, direction,
+    read_scopes, write_scopes, secret_ref, status, freshness_sla_minutes, notes)
+  select v_ws, 'OpenAI', 'OpenAI — creative lab', 'ai', 'production', 'read',
+    array['images.generate (supporting backgrounds)', 'responses (poster analysis)'], '{}', v_name, 'pending_setup', 1440,
+    'Creative lab provider. Key stored in Vault; calls run only in the generation worker under a batch budget.'
+  where not exists (select 1 from public.integration_connections where secret_ref = v_name);
+  update public.integration_connections set notes = 'Key stored ' || to_char(now(), 'YYYY-MM-DD') ||
+    '. Calls run only in the generation worker under a batch budget.'
+  where secret_ref = v_name;
+  perform private.creative_audit(v_ws, 'creative.provider_key_set', 'provider:' || lower(p_provider),
+    'API key stored in Vault (value not logged)');
+  return jsonb_build_object('provider', lower(p_provider), 'key_set', true);
+end $$;
+
+-- Whether a key is stored — never the key.
+create or replace function public.creative_provider_status()
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare v_ws bigint := (select min(id) from public.workspaces);
+begin
+  if not (private.creative_is_service() or private.has_role(v_ws, array['hq_admin', 'marketing_growth', 'analyst'])) then
+    raise exception 'creative_forbidden';
+  end if;
+  return (select jsonb_agg(jsonb_build_object('provider', p, 'key_set', s.id is not null, 'set_at', s.updated_at))
+          from unnest(array['openai']) p
+          left join vault.secrets s on s.name = private.creative_secret_name(p));
+end $$;
+
+-- Worker only: the key itself.
+create or replace function public.creative_get_provider_key(p_provider text)
+returns text language plpgsql stable security definer set search_path = '' as $$
+begin
+  if not private.creative_is_service() then raise exception 'creative_forbidden'; end if;
+  return (select decrypted_secret from vault.decrypted_secrets
+          where name = private.creative_secret_name(p_provider));
 end $$;
 
 -- Missing owner decisions for a brand, in a fixed vocabulary the UI renders.
@@ -708,6 +774,14 @@ returns text[] language sql stable security definer set search_path = '' as $$
     case when (select batch_budget_amount from c) is null or (select budget_currency from c) is null then 'batch_budget' end,
     case when coalesce(cardinality((select reviewer_membership_ids from c)), 0) = 0 then 'reviewers' end,
     case when not coalesce((select provider_data_approved from c), false) then 'provider_data_approval' end,
+    -- a real (non-fixture) provider needs a stored key and owner-entered prices
+    case when coalesce((select image_provider from c), 'fixture') != 'fixture'
+          and not exists (select 1 from vault.secrets s
+                          where s.name = private.creative_secret_name((select image_provider from c)))
+         then 'provider_credentials' end,
+    case when coalesce((select image_provider from c), 'fixture') != 'fixture'
+          and ((select provider_pricing from c) ->> 'image_estimate_per_call') is null
+         then 'provider_pricing' end,
     case when (select target_cpa from c) is null and (select target_roas from c) is null then 'target_economics' end,
     case when (select media_test_budget_amount from c) is null then 'media_test_budget' end,
     case when not exists (select 1 from creative.approved_claims a
@@ -716,6 +790,19 @@ returns text[] language sql stable security definer set search_path = '' as $$
       where a.brand_id = p_brand_id and a.status = 'approved' and a.kind = 'offer') then 'approved_offer' end
   ], null);
 $$;
+
+-- Current owner decisions for one brand (no secrets live here; the key is in
+-- Vault). version 0 = never configured; pass it back as p_expected_version.
+create or replace function public.creative_runtime_config(p_brand_id bigint)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+begin
+  if not private.creative_can_read(p_brand_id) then raise exception 'creative_forbidden'; end if;
+  return coalesce(
+    (select to_jsonb(c) - 'workspace_id' from creative.brand_runtime_config c where c.brand_id = p_brand_id),
+    jsonb_build_object('brand_id', p_brand_id, 'version', 0, 'reviewer_membership_ids', '[]'::jsonb,
+                       'provider_pricing', '{}'::jsonb, 'provider_data_approved', false))
+    || jsonb_build_object('missing_config', to_jsonb(private.creative_missing_config(p_brand_id)));
+end $$;
 
 -- Readiness for every brand the caller may see.
 create or replace function public.creative_readiness()
@@ -1061,7 +1148,8 @@ begin
   select * into v_cfg from creative.brand_runtime_config where brand_id = p_brand_id;
   -- generation needs these four; economics/claims gate launch, not generation
   v_missing := array(select m from unnest(private.creative_missing_config(p_brand_id)) with ordinality u(m, o)
-    where m = any (array['image_provider_model', 'batch_budget', 'reviewers', 'provider_data_approval'])
+    where m = any (array['image_provider_model', 'batch_budget', 'reviewers', 'provider_data_approval',
+                         'provider_credentials', 'provider_pricing'])
     order by o);
   if cardinality(v_missing) > 0 then
     raise exception 'creative_config_missing: %', array_to_string(v_missing, ',');
@@ -1106,6 +1194,33 @@ begin
     jsonb_build_object('requested', v_count, 'budget', v_cfg.batch_budget_amount, 'currency', v_cfg.budget_currency));
   return jsonb_build_object('changed', true, 'batch_id', v_batch_id, 'requested', v_count,
     'stage_limit', least(v_stages[1], v_count));
+end $$;
+
+-- Worker only: the immutable generation context for one manifest — kit
+-- tokens, the exact packshot/logo assets (refs, not bytes), approved claim
+-- ids, the per-candidate cap and the owner-entered provider pricing.
+create or replace function public.creative_worker_context(p_context_manifest_id bigint)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare v_m creative.context_manifests; v_cfg creative.brand_runtime_config;
+begin
+  if not private.creative_is_service() then raise exception 'creative_forbidden'; end if;
+  select * into v_m from creative.context_manifests where id = p_context_manifest_id;
+  if v_m.id is null then raise exception 'creative_unknown_manifest'; end if;
+  select * into v_cfg from creative.brand_runtime_config where brand_id = v_m.brand_id;
+  return jsonb_build_object(
+    'context_manifest_id', v_m.id,
+    'manifest_sha256', v_m.manifest_sha256,
+    'brand_id', v_m.brand_id,
+    'tokens', (select tokens from creative.brand_kit_versions where id = v_m.kit_version_id),
+    'assets', (select coalesce(jsonb_agg(jsonb_build_object('sha256', r.sha256, 'storage_ref', r.storage_ref,
+                 'mime_type', r.mime_type, 'width', r.width, 'height', r.height) order by r.id), '[]'::jsonb)
+               from creative.raw_assets r where r.id = any (v_m.raw_asset_ids)),
+    'approved_claim_ids', to_jsonb(v_m.claim_ids),
+    'max_cost_per_candidate', v_cfg.max_cost_per_candidate,
+    'image_provider', v_cfg.image_provider,
+    'image_model', v_cfg.image_model,
+    'provider_data_approved', coalesce(v_cfg.provider_data_approved, false),
+    'provider_pricing', coalesce(v_cfg.provider_pricing, '{}'::jsonb));
 end $$;
 
 -- Recompute batch status after any job/review transition.
@@ -1525,10 +1640,14 @@ begin
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public' and p.proname like 'creative\_%'
   loop
-    execute format('revoke all on function %s from public, anon', f.sig);
+    -- Supabase's default privileges grant EXECUTE on new public functions to
+    -- anon/authenticated directly, so revoke from both, then grant back only
+    -- the user-facing RPCs below.
+    execute format('revoke all on function %s from public, anon, authenticated', f.sig);
     execute format('grant execute on function %s to service_role', f.sig);
     if f.proname not in ('creative_upsert_image_facts', 'creative_upsert_ad_facts', 'creative_claim_jobs',
-                         'creative_complete_job', 'creative_fail_job', 'creative_record_qa') then
+                         'creative_complete_job', 'creative_fail_job', 'creative_record_qa',
+                         'creative_get_provider_key', 'creative_worker_context') then
       execute format('grant execute on function %s to authenticated', f.sig);
     end if;
   end loop;

@@ -1,7 +1,7 @@
 -- LOCAL HARNESS ONLY — never run against the Supabase project.
 --
 -- Recreates, on a bare Postgres 16, the minimum of Supabase + Fullkit
--- foundation that supabase/proposed/creative_lab_v1.sql depends on, with
+-- foundation that supabase/reference/creative_lab_v1.sql depends on, with
 -- the same definitions as production (auth.uid() reads the JWT claims
 -- GUCs; is_workspace_member/has_role copied from slice1/catalog_live).
 -- Used by scripts/creative/test-sql.sh:
@@ -89,3 +89,43 @@ returns boolean language sql stable security definer set search_path = '' as $$
     and m.user_id = (select auth.uid()) and m.status = 'active' and m.role_key = any (allowed));
 $$;
 grant execute on function private.has_role(bigint, text[]) to authenticated;
+
+-- Supabase Vault stand-in (same surface the RPCs use: vault.secrets,
+-- vault.create_secret, vault.decrypted_secrets). Plaintext locally.
+create schema if not exists vault;
+create table if not exists vault.secrets (
+  id uuid primary key default gen_random_uuid(),
+  name text unique,
+  description text,
+  secret text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create or replace function vault.create_secret(new_secret text, new_name text default null, new_description text default '')
+returns uuid language sql as $$
+  insert into vault.secrets (name, description, secret) values (new_name, new_description, new_secret) returning id;
+$$;
+create or replace function vault.update_secret(secret_id uuid, new_secret text default null, new_name text default null, new_description text default null)
+returns void language sql as $$
+  update vault.secrets set secret = coalesce(new_secret, secret), name = coalesce(new_name, name),
+    description = coalesce(new_description, description), updated_at = now() where id = secret_id;
+$$;
+create or replace view vault.decrypted_secrets as select id, name, description, secret as decrypted_secret, created_at, updated_at from vault.secrets;
+revoke all on schema vault from public, anon, authenticated;
+
+create table public.integration_connections (
+  id bigint generated always as identity primary key,
+  workspace_id bigint not null references public.workspaces (id),
+  provider text not null,
+  name text not null,
+  category text not null,
+  environment text not null default 'production',
+  direction text not null,
+  read_scopes text[] not null default '{}',
+  write_scopes text[] not null default '{}',
+  secret_ref text,
+  status text not null default 'pending_setup',
+  freshness_sla_minutes integer not null default 60,
+  notes text,
+  created_at timestamptz not null default now()
+);

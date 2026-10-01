@@ -1,10 +1,21 @@
 # Supabase advisor register
 
-**Last sweep: 2026-08-25** (Phase 8 hardening, after migrations
+**Last sweep: 2026-10-01** (creative lab v1; previous full sweep 2026-08-25) (Phase 8 hardening, after migrations
 `20260824190819` → `20260825075212`). Run the security + performance
 advisors after every migration; update this register when a finding is
 fixed or an acceptance changes. Findings not listed here should be treated
 as new.
+
+## Sweep 2026-10-01 — creative lab v1 (ADR-0010, migrations `20261001111055` → `20261001113238`)
+
+New lints from the `creative` schema are all of classes already accepted below:
+
+| Finding | Disposition |
+|---|---|
+| 24× INFO `rls_enabled_no_policy` on `creative.*` | **Accepted — intended deny-all.** The schema has no `anon`/`authenticated` grants (not even USAGE); every read and write goes through a `public.creative_*` RPC. Verified live: no user table grants, and `authenticated` lacks USAGE on `creative`. |
+| 25× WARN `authenticated_security_definer_function_executable` (`public.creative_*`) | **Accepted — same shape as the RPC acceptance below.** Each function sets `search_path = ''`, gates role **and brand scope** on its first lines (`private.creative_can_read/can_write/is_admin`, or a named reviewer), and is revoked from `anon`. The 8 worker/sync RPCs (`creative_claim_jobs`, `_complete_job`, `_fail_job`, `_record_qa`, `_upsert_image_facts`, `_upsert_ad_facts`, `_get_provider_key`, `_worker_context`) are revoked from `authenticated` as well — verified live — and also check the service-role JWT internally. |
+| ~32× INFO unindexed FKs on `creative.*` (audit/actor columns: `*_membership_id`, `workspace_id`, snapshot/manifest refs) | **Accepted until volume exists** — empty tables, single workspace. Revisit with the first batches (≈100 candidates per batch). |
+| ~15× INFO unused index on `creative.*` | **Expected** — created 2026-10-01, no traffic yet. |
 
 ## Sweep 2026-08-25 — findings and disposition
 

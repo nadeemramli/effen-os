@@ -428,4 +428,61 @@ begin
   raise notice 'ok: reviewed learning, playbook revision, lineage chain, audit';
 end $$;
 
+-- ---------------------------------------------------------------------
+-- 9. Real provider (OpenAI): key in Vault, never readable by users;
+--    generation refused until key + owner pricing exist
+-- ---------------------------------------------------------------------
+do $$
+declare r jsonb; v int;
+begin
+  perform t.as_user('00000000-0000-0000-0000-00000000000b');
+  perform t.expect_error($q$ select public.creative_set_provider_key('openai', 'sk-test-0123456789abcdefghij') $q$, 'creative_forbidden');
+  perform t.expect_error($q$ select public.creative_get_provider_key('openai') $q$, 'permission denied');
+  r := public.creative_provider_status();
+  if (r -> 0 ->> 'key_set')::boolean then raise exception 'no key yet: %', r; end if;
+
+  -- switch Lipidri (brand 2) to openai: credentials + pricing become blockers
+  perform t.as_user('00000000-0000-0000-0000-00000000000a');
+  perform public.creative_set_runtime_config(2, '{"image_provider":"openai","image_model":"model-under-test",
+    "batch_budget_amount":10,"budget_currency":"USD","reviewer_membership_ids":[6],"provider_data_approved":true}');
+  perform t.expect_error($q$ select public.creative_set_provider_key('anthropic-images', 'x0123456789012345678901') $q$, 'creative_unsupported_provider');
+  perform t.as_owner();
+  if not (private.creative_missing_config(2) @> array['provider_credentials', 'provider_pricing']) then
+    raise exception 'openai without key/pricing must be blocked: %', private.creative_missing_config(2); end if;
+
+  perform t.as_user('00000000-0000-0000-0000-00000000000a');
+  perform public.creative_set_provider_key('openai', 'sk-test-old-0123456789abcdef');
+  perform public.creative_set_provider_key('openai', 'sk-test-0123456789abcdefghij');  -- rotation
+  perform t.as_owner();
+  if (select count(*) from vault.secrets where name = 'CREATIVE_OPENAI_API_KEY') != 1 then
+    raise exception 'rotation must update in place'; end if;
+  select version into v from creative.brand_runtime_config where brand_id = 2;
+  perform t.as_user('00000000-0000-0000-0000-00000000000a');
+  perform public.creative_set_runtime_config(2, '{"provider_pricing":{"currency":"USD","image_estimate_per_call":0.05,"source":"owner","as_of":"2026-10-01"}}', v);
+  perform t.as_owner();
+  if private.creative_missing_config(2) && array['provider_credentials', 'provider_pricing'] then
+    raise exception 'key + pricing should clear: %', private.creative_missing_config(2); end if;
+  if (select count(*) from public.integration_connections where secret_ref = 'CREATIVE_OPENAI_API_KEY') != 1 then
+    raise exception 'connection row must be registered once'; end if;
+  if exists (select 1 from public.audit_events where action = 'creative.provider_key_set' and (detail like '%sk-test%' or after_data::text like '%sk-test%')) then
+    raise exception 'key leaked into audit'; end if;
+
+  perform t.as_user('00000000-0000-0000-0000-00000000000c');      -- scoped to Lipidri
+  r := public.creative_runtime_config(2);
+  if r ->> 'image_provider' != 'openai' or not (r -> 'missing_config' ? 'target_economics') then raise exception 'config read wrong: %', r; end if;
+  perform t.expect_error($q$ select public.creative_runtime_config(1) $q$, 'creative_forbidden');
+  perform t.as_user('00000000-0000-0000-0000-00000000000d');      -- analyst sees status, not key
+  r := public.creative_provider_status();
+  if not (r -> 0 ->> 'key_set')::boolean or r::text like '%sk-test%' then raise exception 'status wrong or leaks: %', r; end if;
+  perform t.as_service();
+  if public.creative_get_provider_key('openai') != 'sk-test-0123456789abcdefghij' then raise exception 'worker cannot read key'; end if;
+  r := public.creative_worker_context(1);
+  if r ->> 'manifest_sha256' is null or jsonb_array_length(r -> 'assets') != 2 or r -> 'tokens' is null or r ->> 'image_provider' != 'fixture' then
+    raise exception 'worker context incomplete: %', r; end if;
+  perform t.as_user('00000000-0000-0000-0000-00000000000a');
+  perform t.expect_error($q$ select public.creative_worker_context(1) $q$, 'permission denied');
+  perform t.as_owner();
+  raise notice 'ok: provider key in vault (admin-set, worker-read only), pricing + credential gates, worker context';
+end $$;
+
 select 'creative_lab: all contract tests passed' as result;

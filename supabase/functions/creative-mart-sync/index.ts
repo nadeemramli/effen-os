@@ -1,6 +1,6 @@
 // creative-mart-sync — serving copy of the creative read contract
 // (ADR-0010). PROPOSED: not deployed, no cron. Needs, in order:
-//   1. supabase/proposed/creative_lab_v1.sql applied (target RPCs);
+//   1. creative schema applied (done 2026-10-01: migrations 20261001111055…112644);
 //   2. dbt creative models enabled (var creative_media_enabled) and built;
 //   3. sa-mart-sync granted read on the two new marts (it already reads
 //      marts.*; no new credential).
