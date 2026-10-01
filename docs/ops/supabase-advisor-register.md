@@ -53,7 +53,8 @@ The linter cannot see inside a function; these are intentional. Verified
 - EXECUTE granted to `authenticated` + `service_role` only — `anon` and
   `PUBLIC` are revoked (verified via `has_function_privilege`).
 - DEFINER is the point: they read `private.*` objects (e.g. the
-  `customers_read` materialized view, which cannot carry RLS) or write
+  `customers_read` read model — a matview until 2026-10-01, now an
+  incrementally maintained table with no grants or RLS) or write
   Vault secrets. INVOKER would break them, and direct table grants would
   be worse.
 

@@ -209,7 +209,7 @@ const REGISTRY: AutomationEntry[] = [
     key: "customers_mv",
     dept: "Data & Integrations",
     name: "Customer read-model refresh",
-    what: "Rebuilds the customer 360 identity model from the order mirror (concurrent refresh, no read downtime).",
+    what: "Keeps the customer 360 identity model current from the order mirror. Order writes queue the affected customers; each run recomputes only those (plus a weekly full rebuild as drift insurance).",
     trigger: "cron · 15 min",
     guardrail: "runs itself",
     source: "pg_cron · customers-read-refresh",
