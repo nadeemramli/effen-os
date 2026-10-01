@@ -1,5 +1,9 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  Images,
+  Kanban,
+  Layers,
+  Trophy,
   Activity,
   AudioWaveform,
   BadgeDollarSign,
@@ -487,6 +491,13 @@ export const ROUTES: RouteDef[] = [
     group: "Growth",
     status: "live",
     permission: "marketing.view",
+    childGroups: ["Poster lab"],
+    children: [
+      { key: "creative-pipeline", label: "Creative pipeline", path: "/creative", isDefault: true, icon: Kanban, status: "live", blurb: "Prototype brief → launch board" },
+      { key: "creative-lab-readiness", label: "Brand readiness", path: "/creative/lab/readiness", icon: Layers, group: "Poster lab", status: "live", blurb: "Kits, packshots, owner decisions" },
+      { key: "creative-lab-leaderboard", label: "Image leaderboard", path: "/creative/lab/leaderboard", icon: Trophy, group: "Poster lab", status: "live", blurb: "Single-image ads by comparable cohort" },
+      { key: "creative-lab-batches", label: "Batches", path: "/creative/lab/batches", icon: Images, group: "Poster lab", status: "live", blurb: "100-candidate plans, pilot gates, lineage" },
+    ],
   },
   {
     key: "catalog",

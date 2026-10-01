@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "check:seed": "pnpm dlx tsx src/lib/seed/__check__.ts"
+    "check:seed": "pnpm dlx tsx src/lib/seed/__check__.ts",
+    "test:creative": "pnpm dlx tsx --test src/lib/creative-lab/__tests__/*.test.ts"
   },
   "dependencies": {
     "@hcaptcha/react-hcaptcha": "^2.1.0",
