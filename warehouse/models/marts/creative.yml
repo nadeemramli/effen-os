@@ -1,0 +1,44 @@
+version: 2
+
+# ADR-0010 creative read contract. All models are gated by
+# var('creative_media_enabled') until the field audit has been reviewed.
+
+models:
+  - name: mart_creative_ad_daily
+    description: >
+      One row per date × ad. Same deduplicated insight rows as
+      mart_ads_daily (sums match per day), plus creative binding, format,
+      exact image hash (single-image only), comparability context and
+      data maturity.
+    columns:
+      - name: date
+        tests: [not_null]
+      - name: ad_id
+        tests: [not_null]
+      - name: spend
+        tests: [not_null]
+      - name: creative_format
+        tests:
+          - not_null
+          - accepted_values:
+              values: [single_image, carousel, dynamic, video, existing_post, unknown]
+      - name: binding_status
+        tests:
+          - not_null
+          - accepted_values:
+              values: [bound, ad_not_in_catalog, creative_not_in_catalog, creative_missing, conflicting_creative]
+      - name: data_maturity
+        tests:
+          - accepted_values:
+              values: [maturing, settled]
+
+  - name: mart_creative_image_daily
+    description: >
+      One row per date × account × image_hash × comparability cohort,
+      single-image ads only. Sums of bound single-image ad rows; never an
+      allocation of carousel/dynamic/video totals.
+    columns:
+      - name: image_hash
+        tests: [not_null]
+      - name: ads
+        tests: [not_null]

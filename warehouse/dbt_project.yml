@@ -9,6 +9,13 @@ test-paths: ["tests"]
 target-path: target
 clean-targets: [target, dbt_packages]
 
+vars:
+  # ADR-0010: creative-media models stay disabled in the nightly build until
+  # analyses/creative_media_field_audit.sql has been run against raw and its
+  # Q1/Q4 answers reviewed. Enable per run with
+  #   dbt build --select tag:creative --vars '{creative_media_enabled: true}'
+  creative_media_enabled: false
+
 models:
   effen_warehouse:
     staging:
