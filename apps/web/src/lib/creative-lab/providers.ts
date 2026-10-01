@@ -1,10 +1,14 @@
 /**
- * Provider adapters (ADR-0010 §7). Production model choice is owner
- * configuration (creative.brand_runtime_config), so the code ships with
- * the interfaces and a deterministic, zero-cost FIXTURE adapter only.
- * Asking for any other provider fails with the precise blocked step
- * instead of silently falling back or fabricating output.
+ * Provider adapters (ADR-0010 §7). Model choice and prices are owner
+ * configuration (creative.brand_runtime_config); keys live in Vault.
+ * Asking for a provider that is unconfigured, unapproved, keyless or
+ * unadapted fails with the precise blocked step instead of silently
+ * falling back or fabricating output.
+ *
+ * Adapters: fixture (zero cost, deterministic) and openai (owner decision
+ * 2026-10-01; see openai.ts).
  */
+import { OpenAIImageProvider, OpenAIPosterAnalyzer, type FetchLike, type ProviderPricing } from "./openai";
 
 export interface BackgroundRequest {
   prompt: string;
@@ -74,12 +78,44 @@ export interface ProviderConfig {
   image_provider: string | null;
   image_model: string | null;
   provider_data_approved: boolean;
+  /** Owner-entered prices (creative.brand_runtime_config.provider_pricing). */
+  provider_pricing?: Partial<ProviderPricing> | null;
 }
 
-/** Registry of real adapters. Empty until an owner chooses a provider. */
-const ADAPTERS: Record<string, (model: string) => ImageProvider> = {};
+export interface ProviderSecrets {
+  /** From Vault via public.creative_get_provider_key (service role only). */
+  apiKey?: string | null;
+  fetch?: FetchLike;
+  quality?: string;
+}
 
-export function createImageProvider(cfg: ProviderConfig): ImageProvider {
+function requirePricing(provider: string, p: Partial<ProviderPricing> | null | undefined): ProviderPricing {
+  if (!p || typeof p.image_estimate_per_call !== "number" || !p.currency) {
+    throw new ProviderUnavailableError(provider, "provider_pricing.image_estimate_per_call/currency not set — budget reservation needs an owner-entered estimate");
+  }
+  return p as ProviderPricing;
+}
+
+function requireKey(provider: string, key: string | null | undefined): string {
+  if (!key) {
+    throw new ProviderUnavailableError(provider, "no API key — worker: an HQ admin stores it in Vault (Poster lab → readiness); CLI: set OPENAI_API_KEY");
+  }
+  return key;
+}
+
+/** Real adapters. The image request sends only a text prompt (no brand assets). */
+const ADAPTERS: Record<string, (cfg: ProviderConfig, s: ProviderSecrets) => ImageProvider> = {
+  openai: (cfg, s) =>
+    new OpenAIImageProvider({
+      apiKey: requireKey("openai", s.apiKey),
+      model: cfg.image_model!,
+      pricing: requirePricing("openai", cfg.provider_pricing),
+      fetch: s.fetch,
+      quality: s.quality,
+    }),
+};
+
+export function createImageProvider(cfg: ProviderConfig, secrets: ProviderSecrets = {}): ImageProvider {
   if (!cfg.image_provider || !cfg.image_model) {
     throw new ProviderUnavailableError("(unset)", "owner has not configured image_provider/image_model in creative.brand_runtime_config");
   }
@@ -91,5 +127,31 @@ export function createImageProvider(cfg: ProviderConfig): ImageProvider {
   if (!make) {
     throw new ProviderUnavailableError(cfg.image_provider, `no adapter implemented for "${cfg.image_provider}" — add one in providers.ts with a no-network fixture test before enabling paid calls`);
   }
-  return make(cfg.image_model);
+  return make(cfg, secrets);
+}
+
+export interface AnalyzerConfig {
+  analysis_provider: string | null;
+  analysis_model: string | null;
+  provider_data_approved: boolean;
+  provider_pricing?: Partial<ProviderPricing> | null;
+}
+
+/** Poster analysis sends the poster's bytes to the provider: data approval is mandatory. */
+export function createPosterAnalyzer(cfg: AnalyzerConfig, secrets: ProviderSecrets = {}): OpenAIPosterAnalyzer {
+  if (!cfg.analysis_provider || !cfg.analysis_model) {
+    throw new ProviderUnavailableError("(unset)", "owner has not configured analysis_provider/analysis_model");
+  }
+  if (cfg.analysis_provider !== "openai") {
+    throw new ProviderUnavailableError(cfg.analysis_provider, `no analysis adapter for "${cfg.analysis_provider}"`);
+  }
+  if (!cfg.provider_data_approved) {
+    throw new ProviderUnavailableError("openai", "provider_data_approved is false: poster images may not be sent to OpenAI");
+  }
+  return new OpenAIPosterAnalyzer({
+    apiKey: requireKey("openai", secrets.apiKey),
+    model: cfg.analysis_model,
+    pricing: requirePricing("openai", cfg.provider_pricing),
+    fetch: secrets.fetch,
+  });
 }

@@ -34,7 +34,7 @@ Start with [Current development state](CURRENT_STATE.md). It is the code-backed 
 | [0007 — Address identity](decisions/0007-address-identity.md) | Accepted and live; marketplace half withdrawn 21 Aug 2026 |
 | [0008 — Commerce daily spine](decisions/0008-commerce-daily-spine.md) | Accepted and live |
 | [0009 — Marketplace ISV posture](decisions/0009-marketplace-isv-posture.md) | Accepted; registration not submitted, no connector built |
-| [0010 — Creative learning and poster production](decisions/0010-creative-learning-poster-production.md) | Proposed; schema/marts gated and unapplied, fixtures only |
+| [0010 — Creative learning and poster production](decisions/0010-creative-learning-poster-production.md) | Accepted in part: creative schema applied 2026-10-01, OpenAI chosen as provider; marts, media bucket, sync and worker not yet released |
 
 ADR-0006 activates a narrow shadow phase from ADR-0002; it does not approve ADR-0002’s full write-side cutover.
 

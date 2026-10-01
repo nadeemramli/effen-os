@@ -12,6 +12,7 @@ import { HANDOVER_INVENTORY, useLabSource } from "@/lib/creative-lab/ui/source";
 import { RouteGuard } from "@/lib/rbac/guard";
 import { CreativeNotProvisionedError, fetchCreativeReadiness } from "@/lib/supabase/creative-lab";
 import { FixtureBanner, NotProvisioned, Pill } from "../_components/lab-banners";
+import { OwnerConfigPanel } from "../_components/owner-config-panel";
 
 const ALL_MISSING = Object.keys(MISSING_CONFIG_LABELS) as MissingConfigKey[];
 
@@ -135,7 +136,12 @@ function LiveReadiness() {
     return q.error.includes("not available") ? <NotProvisioned /> : <ErrorState title="Readiness failed to load" description={q.error} retry={() => void q.reload()} />;
   }
   if (q.loading || !q.data) return <SkeletonTable rows={6} />;
-  return <ReadinessTable rows={q.data} fixture={false} />;
+  return (
+    <>
+      <ReadinessTable rows={q.data} fixture={false} />
+      <OwnerConfigPanel rows={q.data} onSaved={() => void q.reload()} />
+    </>
+  );
 }
 
 function LabReadinessInner() {

@@ -24,7 +24,7 @@ export function NotProvisioned({ detail }: { detail?: string }) {
       </div>
       <p className="mt-1 text-muted-foreground">
         {detail ?? "The creative schema and RPCs from ADR-0010 have not been applied."} Release steps, each needing owner
-        authorisation: apply <code>supabase/proposed/creative_lab_v1.sql</code>; run the warehouse field audit and enable{" "}
+        authorisation: apply the <code>creative_lab_v1</code> migrations; run the warehouse field audit and enable{" "}
         <code>creative_media_enabled</code>; deploy <code>creative-mart-sync</code>. Nothing on this page is inferred
         in the meantime.
       </p>

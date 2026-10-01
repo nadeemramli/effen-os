@@ -1,7 +1,7 @@
 /**
  * In-memory JobQueue with the SAME semantics as the proposed SQL RPCs
  * (creative_claim_jobs / complete_job / fail_job / record_qa /
- * advance_stage in supabase/proposed/creative_lab_v1.sql). Used by tests
+ * advance_stage in supabase/reference/creative_lab_v1.sql). Used by tests
  * and the no-paid-call fixture pipeline; supabase/tests/creative_lab.sql
  * is the authority on the real behaviour.
  */

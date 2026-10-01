@@ -1,6 +1,6 @@
 # ADR-0010 — Creative learning and poster production: contracts and architecture
 
-**Date:** 2026-10-01 · **Status: Proposed.** Code, tests and migrations are on branch `claude/intelligent-hopper-yaocg6`. Nothing is applied to production, deployed or scheduled.
+**Date:** 2026-10-01 · **Status: Accepted in part.** The Supabase schema (R2) is applied to the effen-os project, and OpenAI is the chosen provider (owner decision, 2026-10-01). The warehouse marts, the media bucket, the sync and the worker are not yet released. Code is on branch `claude/intelligent-hopper-yaocg6`.
 
 ## Context
 
@@ -143,7 +143,19 @@ All thresholds are **provisional configuration** and are labelled that way in th
   - the candidate is not a fixture.
 
   QA never approves anything.
-- **Providers.** Only interfaces and a zero-cost deterministic **fixture** adapter ship. Asking for any real provider raises `ProviderUnavailableError` naming the exact blocked step. This covers three cases: the provider is unset, `provider_data_approved` is false, or no adapter exists.
+- **Providers.** OpenAI is the creative-lab provider (owner decision, 2026-10-01). The other adapter is the zero-cost deterministic **fixture**. See `apps/web/src/lib/creative-lab/openai.ts`.
+  - **Backgrounds** use `POST /v1/images/generations`. The request carries a text prompt only: no packshot or brand asset is sent, and the product is never generated.
+  - **Poster analysis** uses `POST /v1/responses` with an `input_image` and a strict JSON schema. It *does* send the poster bytes, so it requires `provider_data_approved`. The model cannot set the image identity or `observed_by`; our side sets them.
+  - **The key** lives in Supabase Vault (`CREATIVE_OPENAI_API_KEY`).
+    - An HQ admin stores it from `/creative/lab/readiness` through `creative_set_provider_key`. It is write-only from the browser.
+    - Rotation updates the secret in place.
+    - Only the service role reads it, through `creative_get_provider_key`.
+    - It is never in an env var on the worker path, never logged, and redacted from error text.
+  - **Models and prices** are owner configuration (`brand_runtime_config.image_model`, `analysis_model`, `provider_pricing`) and are never defaulted.
+    - The batch reserves `image_estimate_per_call` before each call.
+    - Actual cost is computed from the response's token usage × the owner-entered rates. Without rates, the estimate is booked and labelled `configured_estimate`.
+  - **Retries.** 408, 409, 429, 5xx and network errors are retryable. Retries stay bounded by `max_attempts`, and a failed call books no cost.
+  - **Gates.** `ProviderUnavailableError` still names the exact blocked step when any of these is missing: provider or model, data approval, key, or pricing. Readiness lists `provider_credentials` and `provider_pricing` as generation blockers.
 
 ### 8. 100-candidate batches — `batch-plan-v1`
 
@@ -200,11 +212,11 @@ The archiver (release step R3) completes the proof by fetching those bytes and r
 | Step | Change | Risk / reversibility | Evidence to collect |
 |---|---|---|---|
 | R1 | Run the field audit. Then `dbt build --select tag:creative --vars '{creative_media_enabled: true}'`, and flip the default once green. | New views and tables only. `mart_ads_daily` is untouched. Revert by switching the var off. | Q1–Q6 output; all `tag:creative` tests green. |
-| R2 | Apply `supabase/proposed/creative_lab_v1.sql` through MCP `apply_migration`, then file it under `supabase/migrations/<version>_creative_lab_v1.sql`. | Additive schema plus RPCs. Rollback is `drop schema creative cascade` and dropping the `public.creative_*` functions. | `supabase/tests/creative_lab.sql` passes on a branch DB; advisors are clean. |
-| R3 | Provision a private GCS bucket `effen-creative-media` (uniform access, versioning, no public ACL) with a writer SA for the archiver and worker. Build the archiver: `image_url` → SHA-256 → `gs://…/sha256/<hash>`. | New infrastructure (Terraform). The data is private brand material. | The one-ad proof stored as bytes with its SHA-256. |
-| R4 | Deploy `creative-mart-sync` and grant `sa-mart-sync` read on the two marts. Add a cron after `mart-sync`. | Read-only into BigQuery; writes only creative serving tables. | Row counts match the marts for the window. |
+| R2 ✅ | **Applied 2026-10-01** as migrations `20261001111055` → `20261001112644` and `20261001113238` (`creative_lab_v1_*`). The annotated source is `supabase/reference/creative_lab_v1.sql`. | Additive only: schema `creative` plus 33 `public.creative_*` RPCs. Rollback is `drop schema creative cascade` and dropping `public.creative_*` and `private.creative_*`. | Contract suite passes on both the reference and the replayed applied files (`scripts/creative/test-sql.sh [--applied]`). Live checks: 24 tables with RLS and no user grants; anon cannot execute anything; 8 RPCs are service-role only; a read-only smoke test as HQ admin returns all 15 brands with their missing decisions. Advisors show only the accepted classes (see register). |
+| R3 | `terraform apply` of `infra/prod/creative.tf` (validated offline, not applied). It reuses the private landing bucket under `creative/` and creates `sa-creative-worker` with create and read access to that prefix only (no delete or overwrite), plus a Secret Manager slot for the Supabase service-role key. Then build the worker image and set `creative_worker_image`. Then build the archiver: `image_url` → SHA-256 → `gs://…/creative/sha256/<hash>`. | New infrastructure. The data is private brand material. | The one-ad proof stored as bytes with its SHA-256; one fixture-provider tick end to end. |
+| R4 | Deploy `creative-mart-sync` and add a cron after `mart-sync`. No IAM change is needed, because `sa-mart-sync` already reads the whole `marts` dataset. Blocked on R1. | Read-only into BigQuery; writes only creative serving tables. | Row counts match the marts for the window. |
 | R5 | Import brand kits with `scripts/creative/import-brand-kit.mts --root <creative> --all` (dry run, then `--apply`). Kits land as DRAFT; the owner approves each one. | Metadata and hashes only; bytes go through R3. | Checksum verification report; 33 PNGs across 5 brands, as reported. |
-| R6 | Owner configures provider, model, budget, reviewers, claims and offer, target economics and media budget. Implement one real provider adapter, with a no-network fixture test. Deploy the worker as a Cloud Run job. | Paid calls start here, bounded by the batch budget. | Pilot of 5 candidates for Adipocyde MY, then 20, then 100. |
+| R6 | The OpenAI adapter is built and tested with a mocked transport. The owner, on `/creative/lab/readiness`, stores the OpenAI key and sets the image and vision model ids, price estimates or rates, batch ceiling, reviewers, data approval, claims and offer, target economics and media budget. Then run the Cloud Run job. | Paid calls start here, bounded by the batch budget. `api.openai.com` is not reachable from the build sandbox, so the first live call happens in the owner's environment. | One `analyze-poster.mts` call on a real Adipocyde poster; then a pilot of 5 for Adipocyde MY, then 20, then 100. |
 
 **Rough cost basis for R6 (for the owner's decision; not configured).** About 100 candidates per batch. Only `generated:` backgrounds call a paid model, and the fixture plan uses them in 2 of 100 slots. Brand-colour backgrounds cost nothing. So batch cost ≈ (slots with generated backgrounds × per-image price) + analysis calls. The ceiling is enforced by the reservation logic regardless of the estimate.
 
@@ -223,5 +235,8 @@ The archiver (release step R3) completes the proof by fetching those bytes and r
 
 - **O1.** Reconcile with `01-system-spec.md` (acceptance contract) and `03-poster-sop-template.md`. The SOP section order is provisional.
 - **O2.** Airbyte Meta source settings live in the UI, not Terraform. These settings are the attribution windows, `action_breakdowns` and thumbnail fetching. Confirm whether `attribution_setting` is landed (Q5). Add `images` and `videos` streams only if Q1 shows `image_url` is missing or unusable.
-- **O3.** Owner decisions are surfaced on `/creative/lab/readiness` and are not defaulted. They are: provider/model, per-brand batch budget and currency, reviewers, approved claims and offer, target CPA/ROAS, media-test budget, and provider data approval.
+- **O3.** Owner decisions are surfaced on `/creative/lab/readiness`, where an HQ admin edits them; they are versioned and audited, and never defaulted.
+  - **Decided:** the provider is OpenAI.
+  - **Still open:** the image and vision model ids and their prices; per-brand batch budget and currency; reviewers; approved claims and offer; target CPA/ROAS; media-test budget; and data approval for sending posters to OpenAI.
+- **O5.** The Supabase MCP asks for user confirmation on statements it considers destructive. That prompt cannot reach a remote session, so such a migration times out instead of running. Key rotation was therefore written as `vault.update_secret` (in place) rather than delete-and-create. Future migrations that genuinely need a destructive statement should be applied from the dashboard or a local session.
 - **O4.** Which 7 of the 15 brand folders are the "detailed website-derived drafts" is not recorded in the repo. The importer infers completeness from `guidelines.md` + `tokens.colors` and never promotes a kit.

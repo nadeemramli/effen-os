@@ -10,6 +10,8 @@ export const MISSING_CONFIG_LABELS: Record<MissingConfigKey, { label: string; bl
   batch_budget: { label: "Per-batch spend ceiling", blocks: "generation" },
   reviewers: { label: "Named reviewers", blocks: "generation" },
   provider_data_approval: { label: "Approval to send private assets to the provider", blocks: "generation" },
+  provider_credentials: { label: "Provider API key (stored in Vault)", blocks: "generation" },
+  provider_pricing: { label: "Provider price estimate per call", blocks: "generation" },
   analysis_provider_model: { label: "Poster-analysis provider and model", blocks: "analysis" },
   approved_copy: { label: "Approved product claims / copy", blocks: "launch" },
   approved_offer: { label: "Approved offer", blocks: "launch" },

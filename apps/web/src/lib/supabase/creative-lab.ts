@@ -1,9 +1,9 @@
 /**
- * Creative Lab read/write contracts against the PROPOSED creative schema
- * (supabase/proposed/creative_lab_v1.sql, ADR-0010). Every call is an RPC;
+ * Creative Lab read/write contracts against the creative schema
+ * (supabase/migrations/*_creative_lab_v1_*.sql, ADR-0010). Every call is an RPC;
  * the browser never reads creative.* tables, BigQuery or Meta directly.
  *
- * Until the migration is applied the RPCs do not exist; callers get a
+ * On a project without the schema the RPCs do not exist; callers get a
  * `CreativeNotProvisionedError` and render that state — never fixtures
  * dressed up as live data.
  */
@@ -55,3 +55,49 @@ export const fetchCreativeBatches = (brandId: number) => creativeRpc<CreativeBat
 
 export const fetchCandidateLineage = (candidateId: number) =>
   creativeRpc<Record<string, unknown>>("creative_candidate_lineage", { p_candidate_id: candidateId });
+
+/* ---------- provider key + owner decisions ---------- */
+
+export interface ProviderStatus {
+  provider: string;
+  key_set: boolean;
+  set_at: string | null;
+}
+
+export const fetchProviderStatus = () => creativeRpc<ProviderStatus[]>("creative_provider_status");
+
+/** HQ admin only. The key goes straight to Vault; it is never returned to any client. */
+export const setProviderKey = (provider: "openai", apiKey: string) =>
+  creativeRpc<{ provider: string; key_set: boolean }>("creative_set_provider_key", { p_provider: provider, p_api_key: apiKey });
+
+export interface RuntimeConfig {
+  brand_id: number;
+  version: number; // 0 = never configured
+  image_provider: string | null;
+  image_model: string | null;
+  analysis_provider: string | null;
+  analysis_model: string | null;
+  batch_budget_amount: number | null;
+  budget_currency: string | null;
+  max_cost_per_candidate: number | null;
+  reviewer_membership_ids: number[];
+  target_cpa: number | null;
+  target_roas: number | null;
+  economics_currency: string | null;
+  media_test_budget_amount: number | null;
+  provider_data_approved: boolean;
+  provider_pricing: Record<string, number | string>;
+  updated_at?: string;
+  missing_config: string[];
+}
+
+export const fetchRuntimeConfig = (brandId: number) =>
+  creativeRpc<RuntimeConfig>("creative_runtime_config", { p_brand_id: brandId });
+
+/** HQ admin only; optimistic concurrency on `version` (0 → first write, no check). */
+export const setRuntimeConfig = (brandId: number, patch: Record<string, unknown>, version: number) =>
+  creativeRpc<{ changed: boolean; version: number }>("creative_set_runtime_config", {
+    p_brand_id: brandId,
+    p_patch: patch,
+    p_expected_version: version > 0 ? version : null,
+  });

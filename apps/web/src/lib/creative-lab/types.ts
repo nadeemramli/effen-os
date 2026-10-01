@@ -75,6 +75,8 @@ export type MissingConfigKey =
   | "batch_budget"
   | "reviewers"
   | "provider_data_approval"
+  | "provider_credentials"
+  | "provider_pricing"
   | "target_economics"
   | "media_test_budget"
   | "approved_copy"

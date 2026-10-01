@@ -64,7 +64,8 @@ export interface WorkerDeps {
   queue: JobQueue;
   loadContext(manifestId: number): Promise<GenerationContext>;
   store: BlobStore;
-  provider: ImageProvider;
+  /** A fixed provider, or one resolved per job from its context (provider/model/pricing per brand). */
+  provider: ImageProvider | ((ctx: GenerationContext, job: ClaimedJob) => ImageProvider);
   leaseSeconds?: number;
 }
 
@@ -85,6 +86,7 @@ export async function runTick(deps: WorkerDeps, limit = 5): Promise<TickReport> 
     let cost = 0;
     try {
       const ctx = await deps.loadContext(job.context_manifest_id);
+      const provider = typeof deps.provider === "function" ? deps.provider(ctx, job) : deps.provider;
       const spec = job.variant_spec;
       const packshot = ctx.assets.get(spec.packshot_sha256);
       if (!packshot) throw new Error(`packshot ${spec.packshot_sha256} not in context manifest`);
@@ -100,11 +102,11 @@ export async function runTick(deps: WorkerDeps, limit = 5): Promise<TickReport> 
           seed: `${ctx.manifestSha256}:${job.slot_index}`,
           palette: Object.values(ctx.tokens.colors ?? {}).filter((x): x is string => !!x),
         };
-        const est = deps.provider.estimateCost(req);
+        const est = provider.estimateCost(req);
         if (ctx.maxCostPerCandidate != null && est > ctx.maxCostPerCandidate) {
           throw new Error(`estimated cost ${est} exceeds per-candidate cap ${ctx.maxCostPerCandidate}; provider not called`);
         }
-        const bg = await deps.provider.generateBackground(req);
+        const bg = await provider.generateBackground(req);
         cost += bg.costAmount;
         const bgSha = await sha256Hex(bg.bytes);
         backgroundHref = await deps.store.put(bg.bytes, bg.contentType, bgSha);
@@ -128,8 +130,8 @@ export async function runTick(deps: WorkerDeps, limit = 5): Promise<TickReport> 
       const done = await deps.queue.complete(job.job_id, deps.workerId, {
         output_sha256: sha,
         output_ref: ref,
-        provider: deps.provider.id,
-        model: deps.provider.model,
+        provider: provider.id,
+        model: provider.model,
         prompt,
         config: { compose: composed.format, layout: spec.layout, background: spec.background },
         cost_amount: cost,
